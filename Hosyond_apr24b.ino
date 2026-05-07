@@ -7,6 +7,7 @@
 #include "anubis_rgb565.h"
 
   TFT_eSPI tft = TFT_eSPI();
+  TFT_eSprite stickBaseSprite = TFT_eSprite(&tft);
   FT6336U touchPanel;
 
   enum Screen {
@@ -33,6 +34,10 @@
   BTN_TRIM,
   BTN_FAILSAFE,
   BTN_DRIVE_TYPE,
+  BTN_DRIVE_TANK,
+  BTN_DRIVE_CAR,
+  BTN_DRIVE_OMNI,
+  BTN_DRIVE_X_DRONE,
   BTN_MODEL_NAME,
   BTN_OPTION_2,
   BTN_OPTION_3,
@@ -43,7 +48,9 @@
   enum DriveType {
   DRIVE_TANK,
   DRIVE_CAR,
-  DRIVE_QUAD_X
+  DRIVE_OMNI,
+  DRIVE_X_DRONE,
+  DRIVE_QUAD_X = DRIVE_X_DRONE
   };
 
   #define MAX_MODELS 4
@@ -77,6 +84,7 @@
   bool uiNeedsRedraw = true;
   bool touchActive = false;
   bool waitingForRelease = false;
+  bool screenChangePending = false;
   bool screenAwake = true;
   bool fullRedraw = true;
   Screen nextScreen;
@@ -93,6 +101,10 @@
   #define BRIGHTNESS_ON   255
   #define BRIGHTNESS_DIM   60
   #define BRIGHTNESS_OFF    0
+
+  #define TARGET_FPS 24
+  #define MAIN_FRAME_INTERVAL_MS (1000UL / TARGET_FPS)
+  #define TOUCH_POLL_INTERVAL_MS 16
 
   // ===== UI LAYOUT =====
   #define BTN_HEIGHT 50
@@ -129,6 +141,14 @@
   #define TRIM_CENTER_Y 140
   #define TRIM_SIZE     80
   #define TRIM_BTN_SIZE 28
+
+  #define DRIVE_BTN_W 94
+  #define DRIVE_BTN_H 82
+  #define DRIVE_BTN_X1 20
+  #define DRIVE_BTN_X2 126
+  #define DRIVE_BTN_Y1 58
+  #define DRIVE_BTN_Y2 148
+  #define DRIVE_TOUCH_PAD 8
 
   // ==== SPLASH SCREEN ====
   #define ANUBIS_WIDTH 160
@@ -174,6 +194,14 @@
 
   bool isInside(int x, int y, int bx, int by, int bw, int bh);
   int mapTouch(int val, int in_min, int in_max, int out_min, int out_max);
+  void setScreen(Screen screen);
+  void queueScreenButton(ButtonID button, Screen screen);
+  void saveKeyboardBufferToModelSlot();
+  bool modelSlotUninitialized(int i);
+  void drawDriveTypeScreen();
+  void drawDriveTypeOption(int x, int y, int w, int h, const char* label, DriveType drive, ButtonID button);
+  void drawDriveTypeOptionIcon(int x, int y, int w, int h, DriveType drive, uint16_t iconColor);
+  void drawOmniIcon(int x, int y, int w, int h, uint16_t iconColor);
   void drawSplash();
 
   void initModelDefaults(int i) {
@@ -274,10 +302,21 @@ void setup() {
   loadModels();
 
   // FIRST BOOT CHECK
+  bool initializedAnyModel = false;
+
   for (int i = 0; i < MAX_MODELS; i++) {
-  initModelDefaults(i);
+    if (modelSlotUninitialized(i)) {
+      initModelDefaults(i);
+      initializedAnyModel = true;
+    }
+    else {
+      models[i].name[19] = '\0';
+    }
   }
-  saveModels();
+
+  if (initializedAnyModel) {
+    saveModels();
+  }
 
   // sync names
   for (int i = 0; i < 4; i++) {
@@ -294,6 +333,7 @@ void setup() {
   }
 
 void loop() {
+  unsigned long now = millis();
     
   if (currentScreen != lastScreen) {
 
@@ -303,9 +343,24 @@ void loop() {
     lastScreen = currentScreen;
   }
 
-  // read raw
-  int rawX = touchPanel.read_touch1_x();
-  int rawY = touchPanel.read_touch1_y();
+  static int rawX = 0;
+  static int rawY = 0;
+  static uint8_t touchCount = 0;
+  static unsigned long lastTouchPollTime = 0;
+
+  if (now - lastTouchPollTime >= TOUCH_POLL_INTERVAL_MS) {
+    touchCount = touchPanel.read_touch_number();
+
+    if (touchCount > 0 && touchCount <= 2) {
+      rawX = touchPanel.read_touch1_x();
+      rawY = touchPanel.read_touch1_y();
+    }
+    else {
+      touchCount = 0;
+    }
+
+    lastTouchPollTime = now;
+  }
 
   bool select = digitalRead(2) == LOW;
   bool down  = digitalRead(3) == LOW;
@@ -314,19 +369,20 @@ void loop() {
 
   bool userActive = false;
 
-  leftThrottle  = sin(millis() / 500.0);
-  rightThrottle = cos(millis() / 500.0);
-  leftY  = cos(millis() / 500.0);
-  rightY = sin(millis() / 500.0);
+  leftThrottle  = sin(now / 500.0);
+  rightThrottle = cos(now / 500.0);
+  leftY  = cos(now / 500.0);
+  rightY = sin(now / 500.0);
 
-  m1 = (sin(millis() / 400.0) + 1) / 2;
-  m2 = (cos(millis() / 400.0) + 1) / 2;
-  m3 = (sin(millis() / 600.0) + 1) / 2;
-  m4 = (cos(millis() / 600.0) + 1) / 2;
+  m1 = (sin(now / 400.0) + 1) / 2;
+  m2 = (cos(now / 400.0) + 1) / 2;
+  m3 = (sin(now / 600.0) + 1) / 2;
+  m4 = (cos(now / 600.0) + 1) / 2;
 
   static float lastLX = 0;
   static float lastRX = 0;
   static unsigned long lastDpadTime = 0;
+  static unsigned long lastMainFrameTime = 0;
 
   if (keyboardActive) {
 
@@ -367,8 +423,10 @@ void loop() {
   }
 }
 
-  if (abs(leftThrottle - lastLX) > 0.005 ||
-      abs(rightThrottle - lastRX) > 0.005) {
+  if (currentScreen == SCREEN_MAIN &&
+      now - lastMainFrameTime >= MAIN_FRAME_INTERVAL_MS &&
+      (abs(leftThrottle - lastLX) > 0.005 ||
+       abs(rightThrottle - lastRX) > 0.005)) {
 
     uiNeedsRedraw = true;
 
@@ -390,16 +448,13 @@ void loop() {
 
       if (down) {
         selectedButton = BTN_MENU;
-        fullRedraw = true;
         uiNeedsRedraw = true;
         didInput = true;
       }
 
       if (select && selectedButton == BTN_MENU) {
-        currentScreen = SCREEN_MENU;
+        setScreen(SCREEN_MENU);
         selectedButton = BTN_NONE;
-        fullRedraw = true;
-        uiNeedsRedraw = true;
         didInput = true;
       }
     }
@@ -419,22 +474,19 @@ void loop() {
       }
 
     if (left) {
-      currentScreen = SCREEN_MAIN;
+      setScreen(SCREEN_MAIN);
       selectedButton = BTN_NONE;
-      fullRedraw = true;
-      uiNeedsRedraw = true;
       didInput = true;
       userActive = true;
     }
 
     if (select) {
 
-      if (selectedButton == BTN_BACK) currentScreen = SCREEN_MAIN;
-      else if (selectedButton == BTN_CTRL) currentScreen = SCREEN_CONTROLLER_SETTINGS;
-      else if (selectedButton == BTN_MODEL) currentScreen = SCREEN_MODEL_SETTINGS;
+      if (selectedButton == BTN_BACK) setScreen(SCREEN_MAIN);
+      else if (selectedButton == BTN_CTRL) setScreen(SCREEN_CONTROLLER_SETTINGS);
+      else if (selectedButton == BTN_MODEL) setScreen(SCREEN_MODEL_SETTINGS);
 
       selectedButton = BTN_NONE;
-      uiNeedsRedraw = true;
       didInput = true;
       userActive = true;
     }
@@ -446,24 +498,7 @@ void loop() {
   }
 
   // ===== TOUCH DETECTION =====
-  static int lastRawX = 0;
-  static int lastRawY = 0;
-  static unsigned long lastTouchTime = 0;
-
-  bool isTouching = false;
-
-  // detect movement
-  if (abs(rawX - lastRawX) > 3 || abs(rawY - lastRawY) > 3) {
-    lastTouchTime = millis();
-  }
-
-  // consider "touching" for 100ms after last movement
-  if (millis() - lastTouchTime < 100) {
-    isTouching = true;
-  }
-
-  lastRawX = rawX;
-  lastRawY = rawY;
+  bool isTouching = (touchCount > 0);
 
   int x = mapTouch(rawX, 0, 240, 0, 240);
   int y = mapTouch(rawY, 320, 0, 320, 0);
@@ -494,24 +529,31 @@ if (!isTouching && waitingForRelease) {
   waitingForRelease = false;
   pressedButton = BTN_NONE;
 
-  if (nextScreen == SCREEN_REVERSE) {
-    reverseNeedsRedraw = true;
-    for (int i = 0; i < 5; i++) reverseChannelDirty[i] = true;
-  }
-
-  if (nextScreen == SCREEN_TRIM) {
-    trimNeedsRedraw = true;
-    trimDirty = true;
-  }
-
-  if (nextScreen == SCREEN_FAILSAFE) {
-    failsafeNeedsRedraw = true;
-    for (int i = 0; i < 5; i++) failsafeDirty[i] = true;
-  }
-
-  if (nextScreen != currentScreen) {
-    currentScreen = nextScreen;
+  if (currentScreen == SCREEN_DRIVE_TYPE) {
     fullRedraw = true;
+  }
+
+  if (screenChangePending) {
+    if (nextScreen == SCREEN_REVERSE) {
+      reverseNeedsRedraw = true;
+      for (int i = 0; i < 5; i++) reverseChannelDirty[i] = true;
+    }
+
+    if (nextScreen == SCREEN_TRIM) {
+      trimNeedsRedraw = true;
+      trimDirty = true;
+    }
+
+    if (nextScreen == SCREEN_FAILSAFE) {
+      failsafeNeedsRedraw = true;
+      for (int i = 0; i < 5; i++) failsafeDirty[i] = true;
+    }
+
+    if (nextScreen != currentScreen) {
+      setScreen(nextScreen);
+    }
+
+    screenChangePending = false;
   }
 
   uiNeedsRedraw = true;
@@ -535,6 +577,8 @@ if (!isTouching && waitingForRelease) {
       fpsLastTime = millis();
     }
 
+    tft.startWrite();
+
     if (currentScreen == SCREEN_MAIN) {
 
       if (fullRedraw) {
@@ -547,6 +591,7 @@ if (!isTouching && waitingForRelease) {
 
     drawMainScreenDynamic();
     drawTopBarDynamic();
+    lastMainFrameTime = millis();
     }
     else {
 
@@ -585,6 +630,10 @@ if (!isTouching && waitingForRelease) {
           drawModelNameStatic();
           modelNameNeedsRedraw = true;
           break;
+
+          case SCREEN_DRIVE_TYPE:
+          drawDriveTypeScreen();
+          break;
         }
           
         drawTopBarStatic();
@@ -605,6 +654,8 @@ if (!isTouching && waitingForRelease) {
       }
     drawTopBarDynamic();
     }
+
+    tft.endWrite();
 
     uiNeedsRedraw = false;
   }
@@ -919,6 +970,135 @@ void drawMenuScreen() {
   drawButtonBubble(20, 190, 200, BTN_HEIGHT, "Mixing", false, false, 100);
 }
 
+void drawDriveTypeScreen() {
+  tft.fillScreen(COLOR_BG);
+
+  drawButtonBubble(
+    BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
+    "BACK",
+    pressedButton == BTN_BACK,
+    selectedButton == BTN_BACK,
+    BACK_TEXT_OFFSET);
+
+  tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
+
+  tft.setTextFont(2);
+  tft.setTextColor(COLOR_TEXT);
+  tft.drawCentreString("Drive Type", 120, 38, 2);
+
+  drawDriveTypeOption(DRIVE_BTN_X1, DRIVE_BTN_Y1, DRIVE_BTN_W, DRIVE_BTN_H,
+                      "Tank", DRIVE_TANK, BTN_DRIVE_TANK);
+  drawDriveTypeOption(DRIVE_BTN_X2, DRIVE_BTN_Y1, DRIVE_BTN_W, DRIVE_BTN_H,
+                      "Car", DRIVE_CAR, BTN_DRIVE_CAR);
+  drawDriveTypeOption(DRIVE_BTN_X1, DRIVE_BTN_Y2, DRIVE_BTN_W, DRIVE_BTN_H,
+                      "Omni", DRIVE_OMNI, BTN_DRIVE_OMNI);
+  drawDriveTypeOption(DRIVE_BTN_X2, DRIVE_BTN_Y2, DRIVE_BTN_W, DRIVE_BTN_H,
+                      "X-Drone", DRIVE_X_DRONE, BTN_DRIVE_X_DRONE);
+}
+
+void drawDriveTypeOption(int x, int y, int w, int h, const char* label,
+                         DriveType drive, ButtonID button) {
+
+  bool active = (currentDrive == drive);
+  bool pressed = (pressedButton == button);
+
+  uint16_t baseColor = active ? COLOR_ACCENT : COLOR_PANEL;
+  uint16_t textColor = active ? COLOR_BG : COLOR_TEXT;
+  uint16_t iconColor = active ? COLOR_BG : COLOR_ACCENT;
+  uint16_t outlineColor = active ? COLOR_ACCENT_HI : COLOR_ACCENT;
+
+  int drawY = pressed ? y + 2 : y;
+  int radius = 10;
+
+  for (int i = 0; i < h; i++) {
+    int shade = map(i, 0, h, 18, -18);
+
+    uint8_t r = (baseColor >> 11) & 0x1F;
+    uint8_t g = (baseColor >> 5)  & 0x3F;
+    uint8_t b = baseColor & 0x1F;
+
+    int nr = constrain(r + shade / 2, 0, 31);
+    int ng = constrain(g + shade,     0, 63);
+    int nb = constrain(b + shade / 2, 0, 31);
+
+    uint16_t lineColor = (nr << 11) | (ng << 5) | nb;
+
+    int xOffset = 0;
+
+    if (i < radius) {
+      int dy = radius - i;
+      xOffset = radius - sqrt(radius * radius - dy * dy);
+    }
+    else if (i >= h - radius) {
+      int dy = i - (h - radius);
+      xOffset = radius - sqrt(radius * radius - dy * dy);
+    }
+
+    tft.drawFastHLine(x + xOffset, drawY + i, w - (2 * xOffset), lineColor);
+  }
+
+  tft.drawRoundRect(x, drawY, w, h, radius, outlineColor);
+  tft.drawFastHLine(x + radius, drawY + h - 2, w - (2 * radius), TFT_DARKGREY);
+  tft.drawFastVLine(x + w - 2, drawY + radius, h - (2 * radius), TFT_DARKGREY);
+
+  for (int i = 0; i < 5; i++) {
+    uint16_t c = fadeColor(COLOR_ACCENT_HI, 1.0 - (i * 0.16));
+    tft.drawFastHLine(x + radius + i, drawY + 5 + i, w - (2 * radius) - (2 * i), c);
+  }
+
+  if (active) {
+    tft.drawRoundRect(x + 2, drawY + 2, w - 4, h - 4, radius - 2, COLOR_ACCENT_HI);
+  }
+
+  tft.setTextFont(2);
+  tft.setTextColor(textColor);
+  tft.drawCentreString(label, x + w / 2, drawY + 8, 2);
+
+  drawDriveTypeOptionIcon(x + 12, drawY + 30, w - 24, h - 38, drive, iconColor);
+}
+
+void drawDriveTypeOptionIcon(int x, int y, int w, int h, DriveType drive, uint16_t iconColor) {
+  if (drive == DRIVE_TANK) {
+    drawTankIcon(x, y, w, h, iconColor);
+  }
+  else if (drive == DRIVE_X_DRONE) {
+    drawQuadXIcon(x, y, w, h, iconColor);
+  }
+  else if (drive == DRIVE_CAR) {
+    int iconX = x + (w / 2) - 24;
+    int iconY = y + (h / 2) - 24;
+    drawCarIcon(iconX, iconY, 2, iconColor);
+  }
+  else if (drive == DRIVE_OMNI) {
+    drawOmniIcon(x, y, w, h, iconColor);
+  }
+}
+
+void drawOmniIcon(int x, int y, int w, int h, uint16_t iconColor) {
+  int cx = x + w / 2;
+  int cy = y + h / 2;
+  int r = min(w, h) / 4;
+
+  tft.drawCircle(cx, cy, r, iconColor);
+  tft.drawCircle(cx, cy, r + 4, iconColor);
+
+  tft.drawLine(cx, y + 2, cx, cy - r - 5, iconColor);
+  tft.drawLine(cx, y + 2, cx - 4, y + 8, iconColor);
+  tft.drawLine(cx, y + 2, cx + 4, y + 8, iconColor);
+
+  tft.drawLine(cx, y + h - 2, cx, cy + r + 5, iconColor);
+  tft.drawLine(cx, y + h - 2, cx - 4, y + h - 8, iconColor);
+  tft.drawLine(cx, y + h - 2, cx + 4, y + h - 8, iconColor);
+
+  tft.drawLine(x + 2, cy, cx - r - 5, cy, iconColor);
+  tft.drawLine(x + 2, cy, x + 8, cy - 4, iconColor);
+  tft.drawLine(x + 2, cy, x + 8, cy + 4, iconColor);
+
+  tft.drawLine(x + w - 2, cy, cx + r + 5, cy, iconColor);
+  tft.drawLine(x + w - 2, cy, x + w - 8, cy - 4, iconColor);
+  tft.drawLine(x + w - 2, cy, x + w - 8, cy + 4, iconColor);
+}
+
 void closeKeyboard() {
   if (!keyboardActive) return;
 
@@ -936,6 +1116,60 @@ int mapTouch(int val, int in_min, int in_max, int out_min, int out_max) {
 }
 bool isInside(int x, int y, int bx, int by, int bw, int bh) {
   return (x > bx && x < bx + bw && y > by && y < by + bh);
+}
+
+void setScreen(Screen screen) {
+  if (currentScreen == screen) return;
+
+  currentScreen = screen;
+  lastScreen = screen;
+  fullRedraw = true;
+  uiNeedsRedraw = true;
+  screenChangePending = false;
+}
+
+void queueScreenButton(ButtonID button, Screen screen) {
+  if (waitingForRelease) return;
+
+  pressedButton = button;
+  nextScreen = screen;
+  waitingForRelease = true;
+  screenChangePending = true;
+  uiNeedsRedraw = true;
+}
+
+void saveKeyboardBufferToModelSlot() {
+  if (keyboardBuffer.length() == 0) return;
+
+  int targetModel = selectedModelIndex;
+  if (targetModel < 0 || targetModel >= MAX_MODELS) {
+    targetModel = activeModel;
+  }
+
+  if (modelNames[targetModel].length() == 0) {
+    initModelDefaults(targetModel);
+  }
+
+  strncpy(models[targetModel].name, keyboardBuffer.c_str(), 19);
+  models[targetModel].name[19] = '\0';
+  modelNames[targetModel] = keyboardBuffer;
+
+  activeModel = targetModel;
+  selectedModelIndex = targetModel;
+  currentModelName = String(models[targetModel].name);
+
+  trimRenderX = models[targetModel].trimX[currentTrimPage];
+  trimRenderY = models[targetModel].trimY[currentTrimPage];
+
+  saveModels();
+}
+
+bool modelSlotUninitialized(int i) {
+  for (int c = 0; c < 20; c++) {
+    if ((uint8_t)models[i].name[c] != 0xFF) return false;
+  }
+
+  return true;
 }
 
 void saveModels() {
@@ -961,26 +1195,22 @@ void loadModels() {
 // !!!!==== TOUCH HANDELING ====!!!!
 void handleTouch(int x, int y) {
 
-  if (keyboardActive && handleKeyboardTouch(x, y)) return;
+  if (keyboardActive) {
+    handleKeyboardTouch(x, y);
+    return;
+  }
 
   // ===== MAIN =====
   if (currentScreen == SCREEN_MAIN) {
 
     if (isInside(x, y, MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H)) {
-      pressedButton = BTN_MENU;
-      waitingForRelease = true;
-      nextScreen = SCREEN_MENU;
-      fullRedraw = true;
-      uiNeedsRedraw = true;
+      queueScreenButton(BTN_MENU, SCREEN_MENU);
       return;
     }
 
     if (isInside(x, y, modelPanelX, modelPanelY, modelPanelW, modelPanelH)) {
-      pressedButton = BTN_DRIVE_TYPE;
-      waitingForRelease = true;
-      nextScreen = SCREEN_MODEL_SETTINGS;
-      selectedButton = BTN_DRIVE_TYPE;
-      uiNeedsRedraw = true;
+      if (!waitingForRelease) selectedButton = BTN_DRIVE_TYPE;
+      queueScreenButton(BTN_DRIVE_TYPE, SCREEN_MODEL_SETTINGS);
       return;
     }
   }
@@ -989,27 +1219,17 @@ void handleTouch(int x, int y) {
   else if (currentScreen == SCREEN_MENU) {
 
     if (isInside(x, y, 10, FOOTER_Y + 5, 100, BTN_HEIGHT)) {
-      pressedButton = BTN_BACK;
-      waitingForRelease = true;
-      nextScreen = SCREEN_MAIN;
-      fullRedraw = true;
-      uiNeedsRedraw = true;
+      queueScreenButton(BTN_BACK, SCREEN_MAIN);
       return;
     }
 
     else if (isInside(x, y, CTRL_BTN_X, 60, CTRL_BTN_W, CTRL_BTN_H)) {
-      pressedButton = BTN_CTRL;
-      waitingForRelease = true;
-      nextScreen = SCREEN_CONTROLLER_SETTINGS;
-      uiNeedsRedraw = true;
+      queueScreenButton(BTN_CTRL, SCREEN_CONTROLLER_SETTINGS);
       return;
     }
 
     else if (isInside(x, y, MODEL_BTN_X, 150, MODEL_BTN_W, MODEL_BTN_H)) {
-      pressedButton = BTN_MODEL;
-      waitingForRelease = true;
-      nextScreen = SCREEN_MODEL_SETTINGS;
-      uiNeedsRedraw = true;
+      queueScreenButton(BTN_MODEL, SCREEN_MODEL_SETTINGS);
       return;
     }
   }
@@ -1018,34 +1238,22 @@ void handleTouch(int x, int y) {
   else if (currentScreen == SCREEN_CONTROLLER_SETTINGS) {
 
     if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
-      pressedButton = BTN_BACK;
-      waitingForRelease = true;
-      nextScreen = SCREEN_MENU;
-      uiNeedsRedraw = true;
+      queueScreenButton(BTN_BACK, SCREEN_MENU);
       return;
     }
 
     else if (isInside(x, y, 20, 50, 200, BTN_HEIGHT)) {
-      pressedButton = BTN_REVERSE;
-      waitingForRelease = true;
-      nextScreen = SCREEN_REVERSE;
-      uiNeedsRedraw = true;
+      queueScreenButton(BTN_REVERSE, SCREEN_REVERSE);
       return;
     }
 
     else if (isInside(x, y, 20, 120, 200, BTN_HEIGHT)) {
-      pressedButton = BTN_TRIM;
-      waitingForRelease = true;
-      nextScreen = SCREEN_TRIM;
-      uiNeedsRedraw = true;
+      queueScreenButton(BTN_TRIM, SCREEN_TRIM);
       return;
     }
 
     else if (isInside(x, y, 20, 190, 200, BTN_HEIGHT)) {
-      pressedButton = BTN_FAILSAFE;
-      waitingForRelease = true;
-      nextScreen = SCREEN_FAILSAFE;
-      uiNeedsRedraw = true;
+      queueScreenButton(BTN_FAILSAFE, SCREEN_FAILSAFE);
       return;
     }
   }
@@ -1055,25 +1263,20 @@ void handleTouch(int x, int y) {
 
   // ===== BACK =====
   if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
-    pressedButton = BTN_BACK;
-    waitingForRelease = true;
-    nextScreen = SCREEN_MENU;
-    uiNeedsRedraw = true;
+    queueScreenButton(BTN_BACK, SCREEN_MENU);
     return;
   }
 
   // ===== MODEL NAME =====
   else if (isInside(x, y, 20, 50, 200, BTN_HEIGHT)) {
-    pressedButton = BTN_MODEL_NAME;   // or BTN_MODEL_NAME if you want to define it
-    waitingForRelease = true;
-    nextScreen = SCREEN_MODEL_NAME;
-    uiNeedsRedraw = true;
+    queueScreenButton(BTN_MODEL_NAME, SCREEN_MODEL_NAME);
     return;
   }
 
   // ===== DRIVE TYPE =====
   else if (isInside(x, y, 20, 120, 200, BTN_HEIGHT)) {
-    // (future)
+    queueScreenButton(BTN_DRIVE_TYPE, SCREEN_DRIVE_TYPE);
+    return;
   }
 
   // ===== MIXING =====
@@ -1082,14 +1285,70 @@ void handleTouch(int x, int y) {
   }
 }
 
+  // ===== DRIVE TYPE =====
+  else if (currentScreen == SCREEN_DRIVE_TYPE) {
+
+    if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
+      queueScreenButton(BTN_BACK, SCREEN_MODEL_SETTINGS);
+      return;
+    }
+
+    if (!waitingForRelease) {
+
+      if (isInside(x, y,
+                   DRIVE_BTN_X1 - DRIVE_TOUCH_PAD,
+                   DRIVE_BTN_Y1 - DRIVE_TOUCH_PAD,
+                   DRIVE_BTN_W + (DRIVE_TOUCH_PAD * 2),
+                   DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
+        currentDrive = DRIVE_TANK;
+        pressedButton = BTN_DRIVE_TANK;
+        selectedButton = BTN_DRIVE_TANK;
+      }
+      else if (isInside(x, y,
+                        DRIVE_BTN_X2 - DRIVE_TOUCH_PAD,
+                        DRIVE_BTN_Y1 - DRIVE_TOUCH_PAD,
+                        DRIVE_BTN_W + (DRIVE_TOUCH_PAD * 2),
+                        DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
+        currentDrive = DRIVE_CAR;
+        pressedButton = BTN_DRIVE_CAR;
+        selectedButton = BTN_DRIVE_CAR;
+      }
+      else if (isInside(x, y,
+                        DRIVE_BTN_X1 - DRIVE_TOUCH_PAD,
+                        DRIVE_BTN_Y2 - DRIVE_TOUCH_PAD,
+                        DRIVE_BTN_W + (DRIVE_TOUCH_PAD * 2),
+                        DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
+        currentDrive = DRIVE_OMNI;
+        pressedButton = BTN_DRIVE_OMNI;
+        selectedButton = BTN_DRIVE_OMNI;
+      }
+      else if (isInside(x, y,
+                        DRIVE_BTN_X2 - DRIVE_TOUCH_PAD,
+                        DRIVE_BTN_Y2 - DRIVE_TOUCH_PAD,
+                        DRIVE_BTN_W + (DRIVE_TOUCH_PAD * 2),
+                        DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
+        currentDrive = DRIVE_X_DRONE;
+        pressedButton = BTN_DRIVE_X_DRONE;
+        selectedButton = BTN_DRIVE_X_DRONE;
+      }
+      else {
+        return;
+      }
+
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      waitingForRelease = true;
+    }
+
+    return;
+  }
+
   // ===== REVERSE =====
   else if (currentScreen == SCREEN_REVERSE) {
 
     if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
 
-  pressedButton = BTN_BACK;
-  waitingForRelease = true;
-  nextScreen = SCREEN_CONTROLLER_SETTINGS;
+  queueScreenButton(BTN_BACK, SCREEN_CONTROLLER_SETTINGS);
 
 
   return;
@@ -1141,9 +1400,7 @@ void handleTouch(int x, int y) {
 
     if (!waitingForRelease) {
 
-      nextScreen = SCREEN_CONTROLLER_SETTINGS;
-
-      waitingForRelease = true;
+      queueScreenButton(BTN_BACK, SCREEN_CONTROLLER_SETTINGS);
     }
 
     return;
@@ -1243,9 +1500,7 @@ void handleTouch(int x, int y) {
 
   if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
 
-    pressedButton = BTN_BACK;
-    waitingForRelease = true;
-    nextScreen = SCREEN_CONTROLLER_SETTINGS;
+    queueScreenButton(BTN_BACK, SCREEN_CONTROLLER_SETTINGS);
     return;
   }
 
@@ -1279,9 +1534,7 @@ void handleTouch(int x, int y) {
 
     // ===== BACK =====
     if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
-      pressedButton = BTN_BACK;
-      waitingForRelease = true;
-      nextScreen = SCREEN_MODEL_SETTINGS;
+      queueScreenButton(BTN_BACK, SCREEN_MODEL_SETTINGS);
       return;
     }
 
@@ -1310,8 +1563,21 @@ void handleTouch(int x, int y) {
 
         if (!waitingForRelease) {
 
+          selectedModelIndex = i;
+
+          if (modelNames[i].length() == 0) {
+            keyboardBuffer = "";
+            keyboardActive = true;
+            keyboardNeedsRedraw = true;
+            inputBoxSelected = true;
+            modelNameDirty = true;
+            modelNameNeedsRedraw = true;
+            uiNeedsRedraw = true;
+            waitingForRelease = true;
+            return;
+          }
+
           activeModel = i;
-selectedModelIndex = i;
 
 currentModelName = String(models[i].name);
 
@@ -1345,12 +1611,12 @@ waitingForRelease = true;
     }
 
     // ===== DELETE BUTTONS =====
-    int y = 130;
+    int rowY = 130;
 
     for (int i = 0; i < 4; i++) {
 
     int bx = 200;
-    int by = y - 2;
+    int by = rowY - 2;
     int bw = 25;
     int bh = 18;
 
@@ -1376,24 +1642,25 @@ waitingForRelease = true;
         }
       return;
       }
-      y += 25;
+      rowY += 25;
     }
 
-    // ===== TAP ABOVE KEYBOARD CLOSES IT ===== 
-    if (keyboardActive && y < kbY) {
-      if (!waitingForRelease) {
-        closeKeyboard();
-        inputBoxSelected = false;
-        waitingForRelease = true;
-      }
-    return;
-    }
   }
 }
 
 bool handleKeyboardTouch(int x, int y) {
 
   if (!keyboardActive) return false;
+
+  if (y < kbY) {
+    if (!waitingForRelease) {
+      closeKeyboard();
+      inputBoxSelected = false;
+      waitingForRelease = true;
+    }
+
+    return true;
+  }
 
   for (int r = 0; r < KB_ROWS; r++) {
     for (int c = 0; c < KB_COLS; c++) {
@@ -1434,35 +1701,7 @@ bool handleKeyboardTouch(int x, int y) {
           else if (strcmp(key, "OK") == 0) {
 
             if (keyboardBuffer.length() > 0) {
-
-              // ===== SHIFT LIST (UI) =====
-              for (int i = 3; i > 0; i--) {
-                modelNames[i] = modelNames[i - 1];
-              }
-
-              modelNames[0] = keyboardBuffer;
-
-              // ===== SHIFT MODELS (REAL DATA) =====
-              for (int i = 3; i > 0; i--) {
-                models[i] = models[i - 1];
-              }
-
-              // ===== INIT NEW MODEL =====
-              initModelDefaults(0);
-
-              // set name into struct
-              strncpy(models[0].name, keyboardBuffer.c_str(), 19);
-              models[0].name[19] = '\0';
-
-              // SET ACTIVE MODEL (THIS IS THE LINE YOU ASKED ABOUT)
-              activeModel = 0;
-              currentModelName = String(models[0].name);
-
-              // sync trim render immediately (prevents jump)
-              trimRenderX = models[0].trimX[currentTrimPage];
-              trimRenderY = models[0].trimY[currentTrimPage];
-
-              saveModels();
+              saveKeyboardBufferToModelSlot();
             }
 
             // ===== CLEAR INPUT =====
@@ -1497,7 +1736,7 @@ bool handleKeyboardTouch(int x, int y) {
     }
   }
 
-  return false;
+  return true;
 }
 
 // ==== SPLASH SCREEN ====
@@ -1517,9 +1756,7 @@ bool handleKeyboardTouch(int x, int y) {
 
   // wait, then switch screens
   if (millis() - splashStartTime > 3000) {
-    currentScreen = SCREEN_MAIN;
-    fullRedraw = true;
-    uiNeedsRedraw = true;
+    setScreen(SCREEN_MAIN);
   }
 }
 
@@ -1546,6 +1783,14 @@ void drawMainScreenStatic() {
 
   // divider
   tft.drawFastVLine(panelX + panelW / 2, modelY + 10, modelH - 20, COLOR_ACCENT);
+
+  drawButtonBubble(
+    MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H,
+    "MENU",
+    pressedButton == BTN_MENU,
+    selectedButton == BTN_MENU,
+    55
+  );
 }
 
 void drawModelPanelSemiStatic() {
@@ -1574,9 +1819,17 @@ void drawModelPanelSemiStatic() {
   if (currentDrive == DRIVE_TANK) {
     drawTankIcon(iconX, iconY, iconW, iconH, COLOR_ACCENT);
   } 
-    else {
+  else if (currentDrive == DRIVE_X_DRONE) {
     drawQuadXIcon(iconX, iconY, iconW, iconH, COLOR_ACCENT);
-    }
+  }
+  else if (currentDrive == DRIVE_CAR) {
+    drawCarIcon(iconX + (iconW / 2) - 36, iconY + (iconH / 2) - 36, 3, COLOR_ACCENT);
+  }
+  else if (currentDrive == DRIVE_OMNI) {
+    drawOmniIcon(iconX + 10, iconY + 8, iconW - 20, iconH - 16, COLOR_ACCENT);
+  }
+
+  drawRightPanel(panelX + panelW / 2, modelY, panelW / 2, modelH);
 }
 
 // ==== DYNAMIC MAIN SCREEN ====
@@ -1653,10 +1906,6 @@ int iconX = panelX + 10;
 int iconY = modelY + 10;
 int iconW = (panelW - 20) / 2;
 int iconH = modelH - 20;
-int rightX = panelX + panelW / 2;
-int rightW = panelW / 2;
-
-drawRightPanel(rightX, modelY, rightW, modelH);
 
 if (currentDrive == DRIVE_TANK) {
 
@@ -1694,14 +1943,21 @@ if (abs(leftThrottle - lastLeft) > 0.01 ||
 }
 
   // ===== MENU BUTTON =====
-  // redraw only this button (it handles its own visuals)
-  drawButtonBubble(
-    MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-    "MENU",
-    pressedButton == BTN_MENU,
-    selectedButton == BTN_MENU,
-    55
-  );
+  static ButtonID lastMenuPressed = BTN_NONE;
+  static ButtonID lastMenuSelected = BTN_NONE;
+
+  if (pressedButton != lastMenuPressed || selectedButton != lastMenuSelected) {
+    drawButtonBubble(
+      MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H,
+      "MENU",
+      pressedButton == BTN_MENU,
+      selectedButton == BTN_MENU,
+      55
+    );
+
+    lastMenuPressed = pressedButton;
+    lastMenuSelected = selectedButton;
+  }
 }
 
 void drawTankIcon(int x, int y, int w, int h, uint16_t iconColor) {
@@ -2037,7 +2293,7 @@ uint16_t throttleColor(float t) {
   return tft.color565(r, g, b);
 }
 
-void drawStickBase(int x, int y, int size) {
+void drawStickBaseDirect(int x, int y, int size) {
 
   int radius = 10;
 
@@ -2081,6 +2337,71 @@ void drawStickBase(int x, int y, int size) {
   tft.drawFastVLine(cx, y + 10, size - 20, COLOR_ACCENT);
 
   tft.drawCircle(cx, cy, 15, COLOR_PANEL);
+}
+
+void drawStickBase(int x, int y, int size) {
+
+  static bool spriteReady = false;
+  static int spriteSize = 0;
+
+  if (!spriteReady || spriteSize != size) {
+    if (spriteReady) {
+      stickBaseSprite.deleteSprite();
+      spriteReady = false;
+    }
+
+    stickBaseSprite.setColorDepth(16);
+
+    if (stickBaseSprite.createSprite(size, size) == nullptr) {
+      drawStickBaseDirect(x, y, size);
+      return;
+    }
+
+    int radius = 10;
+
+    for (int i = 0; i < size; i++) {
+
+      int shade = map(i, 0, size, 10, -15);
+
+      uint8_t r = (COLOR_PANEL >> 11) & 0x1F;
+      uint8_t g = (COLOR_PANEL >> 5)  & 0x3F;
+      uint8_t b = COLOR_PANEL & 0x1F;
+
+      int nr = constrain(r + shade / 2, 0, 31);
+      int ng = constrain(g + shade,     0, 63);
+      int nb = constrain(b + shade / 2, 0, 31);
+
+      uint16_t c = (nr << 11) | (ng << 5) | nb;
+
+      int xOffset = 0;
+
+      if (i < radius) {
+        int dy = radius - i;
+        xOffset = radius - sqrt(radius * radius - dy * dy);
+      }
+      else if (i >= size - radius) {
+        int dy = i - (size - radius);
+        xOffset = radius - sqrt(radius * radius - dy * dy);
+      }
+
+      stickBaseSprite.drawFastHLine(xOffset, i, size - (2 * xOffset), c);
+    }
+
+    stickBaseSprite.drawRoundRect(0, 0, size, size, radius, COLOR_ACCENT);
+    stickBaseSprite.drawRoundRect(2, 2, size - 4, size - 4, radius, TFT_DARKGREY);
+
+    int cx = size / 2;
+    int cy = size / 2;
+
+    stickBaseSprite.drawFastHLine(10, cy, size - 20, COLOR_ACCENT);
+    stickBaseSprite.drawFastVLine(cx, 10, size - 20, COLOR_ACCENT);
+    stickBaseSprite.drawCircle(cx, cy, 15, COLOR_PANEL);
+
+    spriteReady = true;
+    spriteSize = size;
+  }
+
+  stickBaseSprite.pushSprite(x, y);
 }
 
 void drawStickKnob(int x, int y, int size, int posX, int posY) {
@@ -2576,26 +2897,7 @@ void handleKeyboardSelect() {
   else if (strcmp(key, "OK") == 0) {
 
     if (keyboardBuffer.length() > 0) {
-
-      for (int i = 3; i > 0; i--) {
-        modelNames[i] = modelNames[i - 1];
-        models[i] = models[i - 1];
-      }
-
-      initModelDefaults(0);
-
-      strncpy(models[0].name, keyboardBuffer.c_str(), 19);
-      models[0].name[19] = '\0';
-
-      modelNames[0] = keyboardBuffer;
-
-      activeModel = 0;
-      currentModelName = String(models[0].name);
-
-      trimRenderX = models[0].trimX[currentTrimPage];
-      trimRenderY = models[0].trimY[currentTrimPage];
-
-      saveModels();
+      saveKeyboardBufferToModelSlot();
     }
 
     keyboardBuffer = "";
