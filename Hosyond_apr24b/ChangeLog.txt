@@ -1,0 +1,7 @@
+changelog 5/7/26
+
+cutdown high-cost redraws on main screen
+fixed keyboard behavior
+changed saved model behavior
+added Drive Type screen
+fixed touch recognition
