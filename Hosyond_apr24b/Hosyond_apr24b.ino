@@ -3,12 +3,16 @@
 #include <TFT_eSPI.h>
 #include <math.h>
 #include <EEPROM.h>
+#include <driver/i2s.h>
 
 #include "anubis_rgb565.h"
+#include "volume_icon_rgb565.h"
 
   #define EEPROM_SIZE 512
   #define MIX_STORAGE_VERSION 2
   #define EEPROM_MIX_VERSION_ADDR (EEPROM_SIZE - 1)
+  #define MIX_CHANNEL_MASK 0x0F
+  #define MIX_REVERSE_SEPARATE_FLAG 0x80
 
   TFT_eSPI tft = TFT_eSPI();
   TFT_eSprite stickBaseSprite = TFT_eSprite(&tft);
@@ -132,22 +136,61 @@
   #define TOUCH_POLL_INTERVAL_MS 16
   #define TOPBAR_UPDATE_INTERVAL_MS 250
   #define MODEL_NAME_HOLD_MS 700
+  #define VOLUME_HOLD_MS 700
+
+  #define AUDIO_ENABLE_PIN 1
+  #define AUDIO_MCLK_PIN   4
+  #define AUDIO_BCLK_PIN   5
+  #define AUDIO_DOUT_PIN   6
+  #define AUDIO_WS_PIN     7
+  #define AUDIO_PORT       I2S_NUM_0
+  #define AUDIO_SAMPLE_RATE 16000
+  #define BATTERY_ADC_PIN 9
+  #define BATTERY_DIVIDER_RATIO 2.0f
+  #define BATTERY_PRESENT_MIN_V 2.50f
+  #define BATTERY_EMPTY_V 3.30f
+  #define BATTERY_FULL_V 4.20f
+  #define BATTERY_SAMPLE_INTERVAL_MS 500
+  #define BATTERY_CHARGE_WINDOW_MS 8000
+  #define BATTERY_CHARGING_DELTA_V 0.018f
+  #define BATTERY_CHARGING_HOLD_MS 15000
+
+  // ==== BOTTOM NAV BAR ====
+  #define FOOTER_H 36
+  #define FOOTER_Y (320 - FOOTER_H)
+  #define NAV_BTN_HEIGHT 30
+  #define NAV_BTN_Y_OFFSET 3
 
   // ===== UI LAYOUT =====
   #define BTN_HEIGHT 50
   #define BTN_RADIUS 12
 
   // Menu button
-  #define MENU_BTN_X 50
-  #define MENU_BTN_Y 260
+  #define MENU_BTN_X 36
+  #define MENU_BTN_Y (FOOTER_Y + NAV_BTN_Y_OFFSET)
   #define MENU_BTN_W 140
-  #define MENU_BTN_H BTN_HEIGHT
+  #define MENU_BTN_H NAV_BTN_HEIGHT
+
+  #define VOL_ICON_X 188
+  #define VOL_ICON_Y (FOOTER_Y + NAV_BTN_Y_OFFSET)
+  #define VOL_ICON_W 42
+  #define VOL_ICON_H NAV_BTN_HEIGHT
+
+  #define VOL_POPUP_X 188
+  #define VOL_POPUP_Y 154
+  #define VOL_POPUP_W 38
+  #define VOL_POPUP_H 118
+  #define VOL_STEP_BTN_H 20
+  #define VOL_BAR_X (VOL_POPUP_X + 12)
+  #define VOL_BAR_Y (VOL_POPUP_Y + VOL_STEP_BTN_H + 8)
+  #define VOL_BAR_W 14
+  #define VOL_BAR_H 62
 
   // Back button
   #define BACK_BTN_X 10
-  #define BACK_BTN_Y (FOOTER_Y + 5)
+  #define BACK_BTN_Y (FOOTER_Y + NAV_BTN_Y_OFFSET)
   #define BACK_BTN_W 100
-  #define BACK_BTN_H BTN_HEIGHT
+  #define BACK_BTN_H NAV_BTN_HEIGHT
 
   // Menu screen buttons
   #define MENU_BTN_HEIGHT 70
@@ -183,19 +226,20 @@
   #define MIX_TAB_GAP      8
   #define MIX_TAB_X(i)     (16 + ((i) * (MIX_TAB_W + MIX_TAB_GAP)))
 
-  #define MIX_FIELD_X      128
+  #define MIX_FIELD_X      120
   #define MIX_FIELD_W      92
   #define MIX_FIELD_H      28
-  #define MIX_MINUS_X      128
-  #define MIX_PLUS_X       194
+  #define MIX_MINUS_X      120
+  #define MIX_PLUS_X       186
   #define MIX_ADJUST_W     26
-  #define MIX_VALUE_X      158
+  #define MIX_VALUE_X      150
   #define MIX_VALUE_W      32
-  #define MIX_ROW_ENABLE_Y 96
-  #define MIX_ROW_SOURCE_Y 128
-  #define MIX_ROW_DEST_Y   160
-  #define MIX_ROW_RATE_Y   192
-  #define MIX_ROW_OFFS_Y   224
+  #define MIX_ROW_ENABLE_Y 84
+  #define MIX_ROW_SOURCE_Y 118
+  #define MIX_ROW_DEST_Y   146
+  #define MIX_ROW_LINK_Y   174
+  #define MIX_ROW_RATE_Y   210
+  #define MIX_ROW_OFFS_Y   242
 
   #define MIX_NUMPAD_X     10
   #define MIX_NUMPAD_Y     118
@@ -218,10 +262,6 @@
   // ==== SPLASH SCREEN ====
   #define ANUBIS_WIDTH 160
   #define ANUBIS_HEIGHT 160
-
-  // ==== BOTTOM NAV BAR ====
-  #define FOOTER_Y 260
-  #define FOOTER_H 60
 
   #define MAX_MODELS 4
 
@@ -254,6 +294,22 @@
   bool failsafeNeedsRedraw = true;
   bool failsafeDirty[5] = { true, true, true, true, true };
   bool mixingNeedsRedraw = true;
+  bool audioReady = false;
+  bool uiMuted = false;
+  uint8_t uiVolumeLevel = 6;
+  bool batteryPresent = false;
+  bool batteryCharging = false;
+  unsigned long lastBatterySampleTime = 0;
+  float batteryFilteredVoltage = 0.0f;
+  bool batteryFilterInitialized = false;
+  unsigned long batteryChargeWindowStart = 0;
+  float batteryChargeWindowVoltage = 0.0f;
+  unsigned long batteryChargingHoldUntil = 0;
+  bool volumePopupVisible = false;
+  bool volumePopupNeedsRedraw = true;
+  bool pendingVolumeHoldActive = false;
+  unsigned long pendingVolumeHoldStart = 0;
+  bool pendingVolumeHoldTriggered = false;
   int selectedMixIndex = 0;
   bool mixNumpadActive = false;
   bool mixNumpadNeedsRedraw = false;
@@ -276,6 +332,12 @@
   void initDefaultMixSlot(int modelIndex, int mixIndex);
   bool sanitizeModelMixes(int modelIndex);
   bool sanitizeModelDriveType(int modelIndex);
+  uint8_t getMixSource(const MixData &mix);
+  void setMixSource(MixData &mix, uint8_t source);
+  uint8_t getMixDestination(const MixData &mix);
+  void setMixDestination(MixData &mix, uint8_t destination);
+  bool isMixReverseLinked(const MixData &mix);
+  void setMixReverseLinked(MixData &mix, bool linked);
   void openMixNumpad(bool editRate);
   void closeMixNumpad(bool commitValue);
   bool handleMixNumpadTouch(int x, int y);
@@ -291,16 +353,55 @@
   void drawTrimButtons();
   void drawMixingStatic();
   void drawMixingDynamic();
+  void initAudioOutput();
+  void playUiClick();
+  void drawVolumeIcon();
+  void drawVolumePopup();
+  bool isInsideVolumePopup(int x, int y);
+  int getUiVolumeLevelFromTouchY(int y);
+  void setUiVolumeLevel(int level);
+  void updateBatteryState();
   void drawSplash();
   DriveType getModelDriveType(int modelIndex);
   void setModelDriveType(int modelIndex, DriveType driveType);
   TankControlMode getModelTankMode(int modelIndex);
   void setModelTankMode(int modelIndex, TankControlMode tankMode);
 
+  uint8_t getMixSource(const MixData &mix) {
+    return mix.source & MIX_CHANNEL_MASK;
+  }
+
+  void setMixSource(MixData &mix, uint8_t source) {
+    mix.source = (mix.source & MIX_REVERSE_SEPARATE_FLAG) | (source & MIX_CHANNEL_MASK);
+  }
+
+  uint8_t getMixDestination(const MixData &mix) {
+    return mix.destination & MIX_CHANNEL_MASK;
+  }
+
+  void setMixDestination(MixData &mix, uint8_t destination) {
+    mix.destination = destination & MIX_CHANNEL_MASK;
+  }
+
+  bool isMixReverseLinked(const MixData &mix) {
+    return (mix.source & MIX_REVERSE_SEPARATE_FLAG) == 0;
+  }
+
+  void setMixReverseLinked(MixData &mix, bool linked) {
+    if (linked) {
+      mix.source &= ~MIX_REVERSE_SEPARATE_FLAG;
+    } else {
+      mix.source |= MIX_REVERSE_SEPARATE_FLAG;
+    }
+  }
+
   void initDefaultMixSlot(int modelIndex, int mixIndex) {
     models[modelIndex].mixes[mixIndex].enabled = false;
-    models[modelIndex].mixes[mixIndex].source = mixIndex % 5;
-    models[modelIndex].mixes[mixIndex].destination = (mixIndex + 1) % 5;
+    models[modelIndex].mixes[mixIndex].source = 0;
+    models[modelIndex].mixes[mixIndex].destination = 0;
+    setMixSource(models[modelIndex].mixes[mixIndex], mixIndex % 5);
+    setMixDestination(models[modelIndex].mixes[mixIndex], (mixIndex + 1) % 5);
+    setMixReverseLinked(models[modelIndex].mixes[mixIndex], true);
     models[modelIndex].mixes[mixIndex].rate = 0;
     models[modelIndex].mixes[mixIndex].offset = 0;
   }
@@ -343,15 +444,19 @@
       for (int mixIndex = 0; mixIndex < MIX_COUNT; mixIndex++) {
         MixData &mix = models[modelIndex].mixes[mixIndex];
         if (!mix.enabled) continue;
-        if (mix.source >= 5 || mix.destination >= 5) continue;
+        if (!isMixReverseLinked(mix)) continue;
 
-        if (linked[mix.source] && !linked[mix.destination]) {
-          linked[mix.destination] = true;
+        uint8_t source = getMixSource(mix);
+        uint8_t destination = getMixDestination(mix);
+        if (source >= 5 || destination >= 5) continue;
+
+        if (linked[source] && !linked[destination]) {
+          linked[destination] = true;
           changed = true;
         }
 
-        if (linked[mix.destination] && !linked[mix.source]) {
-          linked[mix.source] = true;
+        if (linked[destination] && !linked[source]) {
+          linked[source] = true;
           changed = true;
         }
       }
@@ -374,10 +479,14 @@
 
     for (int mixIndex = 0; mixIndex < MIX_COUNT; mixIndex++) {
       MixData &mix = models[modelIndex].mixes[mixIndex];
+      uint8_t source = getMixSource(mix);
+      uint8_t destination = getMixDestination(mix);
 
       bool invalid =
-        (mix.source > 4) ||
-        (mix.destination > 4) ||
+        ((mix.source & ~(MIX_CHANNEL_MASK | MIX_REVERSE_SEPARATE_FLAG)) != 0) ||
+        ((mix.destination & ~MIX_CHANNEL_MASK) != 0) ||
+        (source > 4) ||
+        (destination > 4) ||
         (mix.rate < -100) || (mix.rate > 100) ||
         (mix.offset < -100) || (mix.offset > 100);
 
@@ -393,8 +502,8 @@
         changed = true;
       }
 
-      if (mix.destination == mix.source) {
-        mix.destination = (mix.destination + 1) % 5;
+      if (destination == source) {
+        setMixDestination(mix, (destination + 1) % 5);
         changed = true;
       }
     }
@@ -589,6 +698,9 @@ void setup() {
 
   pinMode(45, OUTPUT);
   digitalWrite(45, HIGH);
+  pinMode(BATTERY_ADC_PIN, INPUT);
+  analogReadResolution(12);
+  analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
 
   pinMode(2, INPUT_PULLUP);
   pinMode(3, INPUT_PULLUP);
@@ -605,6 +717,7 @@ void setup() {
   splashStartTime = millis();
 
   EEPROM.begin(EEPROM_SIZE);
+  initAudioOutput();
 
   loadModels();
 
@@ -705,6 +818,7 @@ void loop() {
   rightThrottle = cos(now / 500.0);
   leftY  = cos(now / 500.0);
   rightY = sin(now / 500.0);
+  updateBatteryState();
 
   m1 = (sin(now / 400.0) + 1) / 2;
   m2 = (cos(now / 400.0) + 1) / 2;
@@ -749,6 +863,7 @@ void loop() {
     }
 
     if (didInput) {
+      playUiClick();
       lastDpadTime = millis();
     }
 
@@ -1226,13 +1341,15 @@ void loop() {
     if (down || left || right || select) dpadFocusVisible = true;
 
     if (down) {
-      focusIndex = (focusIndex + 1) % 14;
+      focusIndex = (focusIndex + 1) % 15;
       mixingNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
     }
 
     MixData &mix = models[activeModel].mixes[selectedMixIndex];
+    uint8_t source = getMixSource(mix);
+    uint8_t destination = getMixDestination(mix);
 
     if (left && focusIndex == 0) {
       setScreen(SCREEN_MODEL_SETTINGS);
@@ -1254,53 +1371,68 @@ void loop() {
       didInput = true;
     }
     else if (focusIndex == 6 && (select || left || right)) {
-      if (left) mix.source = (mix.source + 4) % 5;
-      else mix.source = (mix.source + 1) % 5;
-      if (mix.source == mix.destination) mix.destination = (mix.destination + 1) % 5;
+      if (left) source = (source + 4) % 5;
+      else source = (source + 1) % 5;
+      setMixSource(mix, source);
+      if (source == destination) {
+        destination = (destination + 1) % 5;
+        setMixDestination(mix, destination);
+      }
       saveModels();
       mixingNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
     }
     else if (focusIndex == 7 && (select || left || right)) {
-      if (left) mix.destination = (mix.destination + 4) % 5;
-      else mix.destination = (mix.destination + 1) % 5;
-      if (mix.destination == mix.source) mix.destination = (mix.destination + 1) % 5;
+      if (left) destination = (destination + 4) % 5;
+      else destination = (destination + 1) % 5;
+      setMixDestination(mix, destination);
+      if (destination == source) {
+        destination = (destination + 1) % 5;
+        setMixDestination(mix, destination);
+      }
       saveModels();
       mixingNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
     }
     else if (focusIndex == 8 && (select || left || right)) {
+      setMixReverseLinked(mix, !isMixReverseLinked(mix));
+      saveModels();
+      mixingNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+    else if (focusIndex == 9 && (select || left || right)) {
       mix.rate = constrain(mix.rate - 1, -100, 100);
       saveModels();
       mixingNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
     }
-    else if (focusIndex == 9 && select) {
+    else if (focusIndex == 10 && select) {
       openMixNumpad(true);
       didInput = true;
     }
-    else if (focusIndex == 10 && (select || left || right)) {
+    else if (focusIndex == 11 && (select || left || right)) {
       mix.rate = constrain(mix.rate + 1, -100, 100);
       saveModels();
       mixingNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
     }
-    else if (focusIndex == 11 && (select || left || right)) {
+    else if (focusIndex == 12 && (select || left || right)) {
       mix.offset = constrain(mix.offset - 1, -100, 100);
       saveModels();
       mixingNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
     }
-    else if (focusIndex == 12 && select) {
+    else if (focusIndex == 13 && select) {
       openMixNumpad(false);
       didInput = true;
     }
-    else if (focusIndex == 13 && (select || left || right)) {
+    else if (focusIndex == 14 && (select || left || right)) {
       mix.offset = constrain(mix.offset + 1, -100, 100);
       saveModels();
       mixingNeedsRedraw = true;
@@ -1310,6 +1442,7 @@ void loop() {
   }
 
     if (didInput) {
+      playUiClick();
       lastDpadTime = millis();
       userActive = true;
     }
@@ -1335,6 +1468,21 @@ void loop() {
     uiNeedsRedraw = true;
   }
 
+  if (isTouching &&
+      currentScreen == SCREEN_MAIN &&
+      pendingVolumeHoldActive &&
+      !pendingVolumeHoldTriggered &&
+      (millis() - pendingVolumeHoldStart >= VOLUME_HOLD_MS)) {
+    bool wasVisible = volumePopupVisible;
+    pendingVolumeHoldTriggered = true;
+    uiMuted = !uiMuted;
+    volumePopupVisible = false;
+    volumePopupNeedsRedraw = true;
+    if (wasVisible) fullRedraw = true;
+    uiNeedsRedraw = true;
+    if (!uiMuted) playUiClick();
+  }
+
     // ===== DPAD =====
   if (select || down || left || right) {
 
@@ -1355,6 +1503,20 @@ void loop() {
 
 // ===== RELEASE → ACTION =====
 if (!isTouching && waitingForRelease) {
+  if (currentScreen == SCREEN_MAIN && pendingVolumeHoldActive) {
+    if (!pendingVolumeHoldTriggered) {
+      volumePopupVisible = !volumePopupVisible;
+      volumePopupNeedsRedraw = true;
+      playUiClick();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+    }
+
+    pendingVolumeHoldActive = false;
+    pendingVolumeHoldStart = 0;
+    pendingVolumeHoldTriggered = false;
+  }
+
   if (currentScreen == SCREEN_MODEL_NAME && pendingModelHoldIndex >= 0) {
     if (!pendingModelHoldTriggered) {
       selectModelSlot(pendingModelHoldIndex);
@@ -1564,6 +1726,9 @@ if (!isTouching && waitingForRelease) {
       touchActive = false;
 
     if (!waitingForRelease) {
+      pendingVolumeHoldActive = false;
+      pendingVolumeHoldStart = 0;
+      pendingVolumeHoldTriggered = false;
       pendingModelHoldIndex = -1;
       pendingModelHoldStart = 0;
       pendingModelHoldTriggered = false;
@@ -1592,6 +1757,146 @@ if (!isTouching && waitingForRelease) {
   uiNeedsRedraw = true;
 }
   }  
+}
+
+void initAudioOutput() {
+  pinMode(AUDIO_ENABLE_PIN, OUTPUT);
+  digitalWrite(AUDIO_ENABLE_PIN, LOW);
+
+  i2s_config_t config = {};
+  config.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
+  config.sample_rate = AUDIO_SAMPLE_RATE;
+  config.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  config.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
+  config.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
+  config.dma_buf_count = 4;
+  config.dma_buf_len = 128;
+  config.use_apll = false;
+  config.tx_desc_auto_clear = true;
+  config.fixed_mclk = AUDIO_SAMPLE_RATE * 256;
+
+  i2s_pin_config_t pins = {};
+  pins.mck_io_num = AUDIO_MCLK_PIN;
+  pins.bck_io_num = AUDIO_BCLK_PIN;
+  pins.ws_io_num = AUDIO_WS_PIN;
+  pins.data_out_num = AUDIO_DOUT_PIN;
+  pins.data_in_num = I2S_PIN_NO_CHANGE;
+
+  esp_err_t installResult = i2s_driver_install(AUDIO_PORT, &config, 0, NULL);
+  if (installResult != ESP_OK) {
+    audioReady = false;
+    return;
+  }
+
+  esp_err_t pinResult = i2s_set_pin(AUDIO_PORT, &pins);
+  if (pinResult != ESP_OK) {
+    i2s_driver_uninstall(AUDIO_PORT);
+    audioReady = false;
+    return;
+  }
+
+  i2s_zero_dma_buffer(AUDIO_PORT);
+  audioReady = true;
+}
+
+void playUiClick() {
+  if (!audioReady || uiMuted || uiVolumeLevel == 0) return;
+
+  const int durationMs = 18;
+  const int toneHz = 1400;
+  const int totalSamples = (AUDIO_SAMPLE_RATE * durationMs) / 1000;
+  const int chunkSamples = 64;
+  const float amplitude = 220.0f * uiVolumeLevel;
+  const float phaseStep = 2.0f * PI * ((float)toneHz / (float)AUDIO_SAMPLE_RATE);
+  float phase = 0.0f;
+  int16_t buffer[chunkSamples * 2];
+
+  for (int writtenSamples = 0; writtenSamples < totalSamples; writtenSamples += chunkSamples) {
+    int samplesThisChunk = min(chunkSamples, totalSamples - writtenSamples);
+
+    for (int i = 0; i < samplesThisChunk; i++) {
+      int16_t sample = (int16_t)(sinf(phase) * amplitude);
+      buffer[i * 2] = sample;
+      buffer[i * 2 + 1] = sample;
+      phase += phaseStep;
+      if (phase > (2.0f * PI)) phase -= (2.0f * PI);
+    }
+
+    size_t bytesWritten = 0;
+    i2s_write(AUDIO_PORT, buffer, samplesThisChunk * sizeof(int16_t) * 2, &bytesWritten, portMAX_DELAY);
+  }
+}
+
+bool isInsideVolumePopup(int x, int y) {
+  return isInside(x, y, VOL_POPUP_X, VOL_POPUP_Y, VOL_POPUP_W, VOL_POPUP_H);
+}
+
+int getUiVolumeLevelFromTouchY(int y) {
+  int clampedY = constrain(y, VOL_BAR_Y, VOL_BAR_Y + VOL_BAR_H);
+  float normalized = (float)(VOL_BAR_Y + VOL_BAR_H - clampedY) / (float)VOL_BAR_H;
+  return constrain((int)roundf(normalized * 10.0f), 0, 10);
+}
+
+void setUiVolumeLevel(int level) {
+  uiVolumeLevel = constrain(level, 0, 10);
+  volumePopupNeedsRedraw = true;
+  uiNeedsRedraw = true;
+}
+
+void updateBatteryState() {
+  unsigned long now = millis();
+  if (now - lastBatterySampleTime < BATTERY_SAMPLE_INTERVAL_MS) return;
+  lastBatterySampleTime = now;
+
+  uint32_t totalMv = 0;
+  const int sampleCount = 8;
+  for (int i = 0; i < sampleCount; i++) {
+    totalMv += analogReadMilliVolts(BATTERY_ADC_PIN);
+  }
+
+  float adcVoltage = ((float)totalMv / (float)sampleCount) / 1000.0f;
+  float measuredBatteryVoltage = adcVoltage * BATTERY_DIVIDER_RATIO;
+
+  if (!batteryFilterInitialized) {
+    batteryFilteredVoltage = measuredBatteryVoltage;
+    batteryChargeWindowVoltage = measuredBatteryVoltage;
+    batteryChargeWindowStart = now;
+    batteryFilterInitialized = true;
+  } else {
+    batteryFilteredVoltage = (batteryFilteredVoltage * 0.82f) + (measuredBatteryVoltage * 0.18f);
+  }
+
+  batteryVoltage = batteryFilteredVoltage;
+  batteryPresent = (batteryVoltage >= BATTERY_PRESENT_MIN_V);
+
+  if (!batteryPresent) {
+    batteryCharging = false;
+    batteryChargingHoldUntil = 0;
+    batteryLevel = 0;
+    batteryChargeWindowVoltage = batteryVoltage;
+    batteryChargeWindowStart = now;
+    return;
+  }
+
+  batteryLevel = constrain((int)roundf(
+    ((batteryVoltage - BATTERY_EMPTY_V) / (BATTERY_FULL_V - BATTERY_EMPTY_V)) * 100.0f), 0, 100);
+
+  if (batteryChargeWindowStart == 0) {
+    batteryChargeWindowStart = now;
+    batteryChargeWindowVoltage = batteryVoltage;
+  }
+
+  if (now - batteryChargeWindowStart >= BATTERY_CHARGE_WINDOW_MS) {
+    float deltaV = batteryVoltage - batteryChargeWindowVoltage;
+    if (deltaV >= BATTERY_CHARGING_DELTA_V) {
+      batteryChargingHoldUntil = now + BATTERY_CHARGING_HOLD_MS;
+    }
+    batteryChargeWindowStart = now;
+    batteryChargeWindowVoltage = batteryVoltage;
+  }
+
+  batteryCharging = (batteryChargingHoldUntil > now);
 }
 
 // !!!---- DRAWING ----!!!
@@ -1779,8 +2084,8 @@ void drawMenuScreen() {
 
   // ===== BACK BUTTON (BOTTOM LEFT) =====
   drawButtonBubble(
-    10, FOOTER_Y + 5,
-    100, BTN_HEIGHT,
+    BACK_BTN_X, BACK_BTN_Y,
+    BACK_BTN_W, BACK_BTN_H,
     "BACK",
     pressedButton == BTN_BACK,
     dpadFocusVisible && selectedButton == BTN_BACK,
@@ -2121,6 +2426,7 @@ void setScreen(Screen screen) {
 void queueScreenButton(ButtonID button, Screen screen) {
   if (waitingForRelease) return;
 
+  playUiClick();
   pressedButton = button;
   nextScreen = screen;
   waitingForRelease = true;
@@ -2200,6 +2506,53 @@ void handleTouch(int x, int y) {
 
   // ===== MAIN =====
   if (currentScreen == SCREEN_MAIN) {
+    if (isInside(x, y, VOL_ICON_X, VOL_ICON_Y, VOL_ICON_W, VOL_ICON_H)) {
+      if (!waitingForRelease) {
+        pendingVolumeHoldActive = true;
+        pendingVolumeHoldStart = millis();
+        pendingVolumeHoldTriggered = false;
+        waitingForRelease = true;
+      }
+      return;
+    }
+
+    if (volumePopupVisible && !isInsideVolumePopup(x, y)) {
+      volumePopupVisible = false;
+      volumePopupNeedsRedraw = true;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      waitingForRelease = true;
+      return;
+    }
+
+    if (volumePopupVisible && isInsideVolumePopup(x, y)) {
+      if (isInside(x, y, VOL_POPUP_X + 6, VOL_POPUP_Y + 4, VOL_POPUP_W - 12, VOL_STEP_BTN_H)) {
+        if (waitingForRelease) return;
+        setUiVolumeLevel(uiVolumeLevel + 1);
+        uiMuted = false;
+        playUiClick();
+        waitingForRelease = true;
+      }
+      else if (isInside(x, y, VOL_POPUP_X + 6, VOL_POPUP_Y + VOL_POPUP_H - VOL_STEP_BTN_H - 4,
+                        VOL_POPUP_W - 12, VOL_STEP_BTN_H)) {
+        if (waitingForRelease) return;
+        setUiVolumeLevel(uiVolumeLevel - 1);
+        playUiClick();
+        waitingForRelease = true;
+      }
+      else if (isInside(x, y, VOL_BAR_X - 6, VOL_BAR_Y, VOL_BAR_W + 12, VOL_BAR_H)) {
+        int newLevel = getUiVolumeLevelFromTouchY(y);
+        if (newLevel != uiVolumeLevel || uiMuted) {
+          setUiVolumeLevel(newLevel);
+          uiMuted = false;
+          playUiClick();
+        }
+      }
+      else {
+        return;
+      }
+      return;
+    }
 
     if (isInside(x, y, MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H)) {
       queueScreenButton(BTN_MENU, SCREEN_MENU);
@@ -2216,7 +2569,7 @@ void handleTouch(int x, int y) {
   // ===== MENU =====
   else if (currentScreen == SCREEN_MENU) {
 
-    if (isInside(x, y, 10, FOOTER_Y + 5, 100, BTN_HEIGHT)) {
+    if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
       queueScreenButton(BTN_BACK, SCREEN_MAIN);
       return;
     }
@@ -2305,21 +2658,30 @@ void handleTouch(int x, int y) {
     }
 
     MixData &mix = models[activeModel].mixes[selectedMixIndex];
+    uint8_t source = getMixSource(mix);
+    uint8_t destination = getMixDestination(mix);
 
     if (isInside(x, y, MIX_FIELD_X, MIX_ROW_ENABLE_Y, MIX_FIELD_W, MIX_FIELD_H)) {
       mix.enabled = !mix.enabled;
     }
     else if (isInside(x, y, MIX_FIELD_X, MIX_ROW_SOURCE_Y, MIX_FIELD_W, MIX_FIELD_H)) {
-      mix.source = (mix.source + 1) % 5;
-      if (mix.source == mix.destination) {
-        mix.destination = (mix.destination + 1) % 5;
+      source = (source + 1) % 5;
+      setMixSource(mix, source);
+      if (source == destination) {
+        destination = (destination + 1) % 5;
+        setMixDestination(mix, destination);
       }
     }
     else if (isInside(x, y, MIX_FIELD_X, MIX_ROW_DEST_Y, MIX_FIELD_W, MIX_FIELD_H)) {
-      mix.destination = (mix.destination + 1) % 5;
-      if (mix.destination == mix.source) {
-        mix.destination = (mix.destination + 1) % 5;
+      destination = (destination + 1) % 5;
+      setMixDestination(mix, destination);
+      if (destination == source) {
+        destination = (destination + 1) % 5;
+        setMixDestination(mix, destination);
       }
+    }
+    else if (isInside(x, y, MIX_FIELD_X, MIX_ROW_LINK_Y, MIX_FIELD_W, MIX_FIELD_H)) {
+      setMixReverseLinked(mix, !isMixReverseLinked(mix));
     }
     else if (isInside(x, y, MIX_VALUE_X, MIX_ROW_RATE_Y, MIX_VALUE_W, MIX_FIELD_H)) {
       openMixNumpad(true);
@@ -2526,7 +2888,7 @@ void handleTouch(int x, int y) {
   }
 
   // ===== NEXT =====
-  if (isInside(x, y, 130, BACK_BTN_Y, 100, BTN_HEIGHT)) {
+  if (isInside(x, y, 130, BACK_BTN_Y, 100, BACK_BTN_H)) {
 
     if (!waitingForRelease) {
 
@@ -2922,6 +3284,48 @@ bool handleMixNumpadTouch(int x, int y) {
   }
 }
 
+void drawVolumeIcon() {
+  tft.fillRoundRect(VOL_ICON_X, VOL_ICON_Y, VOL_ICON_W, VOL_ICON_H, 8, COLOR_PANEL);
+  tft.drawRoundRect(VOL_ICON_X, VOL_ICON_Y, VOL_ICON_W, VOL_ICON_H, 8, COLOR_ACCENT);
+
+  int iconX = VOL_ICON_X + ((VOL_ICON_W - volumeIconWidth) / 2);
+  int iconY = VOL_ICON_Y + ((VOL_ICON_H - volumeIconHeight) / 2);
+  tft.pushImage(iconX, iconY, volumeIconWidth, volumeIconHeight, volumeIcon);
+
+  if (uiMuted) {
+    tft.drawLine(VOL_ICON_X + 27, VOL_ICON_Y + 8, VOL_ICON_X + 36, VOL_ICON_Y + 21, COLOR_ACCENT_HI);
+    tft.drawLine(VOL_ICON_X + 36, VOL_ICON_Y + 8, VOL_ICON_X + 27, VOL_ICON_Y + 21, COLOR_ACCENT_HI);
+  }
+}
+
+void drawVolumePopup() {
+  if (!volumePopupVisible) return;
+
+  tft.fillRoundRect(VOL_POPUP_X, VOL_POPUP_Y, VOL_POPUP_W, VOL_POPUP_H, 10, COLOR_PANEL);
+  tft.drawRoundRect(VOL_POPUP_X, VOL_POPUP_Y, VOL_POPUP_W, VOL_POPUP_H, 10, COLOR_ACCENT);
+
+  tft.fillRoundRect(VOL_POPUP_X + 6, VOL_POPUP_Y + 4, VOL_POPUP_W - 12, VOL_STEP_BTN_H, 6, COLOR_ACCENT);
+  tft.drawCentreString("+", VOL_POPUP_X + (VOL_POPUP_W / 2), VOL_POPUP_Y + 5, 2);
+
+  tft.fillRoundRect(VOL_BAR_X, VOL_BAR_Y, VOL_BAR_W, VOL_BAR_H, 6, COLOR_BG);
+  tft.drawRoundRect(VOL_BAR_X, VOL_BAR_Y, VOL_BAR_W, VOL_BAR_H, 6, COLOR_ACCENT);
+
+  int fillH = (uiMuted ? 0 : (uiVolumeLevel * VOL_BAR_H) / 10);
+  if (fillH > 0) {
+    tft.fillRoundRect(VOL_BAR_X + 3, VOL_BAR_Y + VOL_BAR_H - fillH + 2,
+                      VOL_BAR_W - 6, max(4, fillH - 4), 3, COLOR_ACCENT_HI);
+  }
+
+  int knobY = VOL_BAR_Y + VOL_BAR_H - ((uiMuted ? 0 : uiVolumeLevel) * VOL_BAR_H) / 10;
+  knobY = constrain(knobY, VOL_BAR_Y + 5, VOL_BAR_Y + VOL_BAR_H - 5);
+  tft.fillCircle(VOL_BAR_X + (VOL_BAR_W / 2), knobY, 5, uiMuted ? COLOR_TEXT : COLOR_ACCENT_HI);
+
+  tft.fillRoundRect(VOL_POPUP_X + 6, VOL_POPUP_Y + VOL_POPUP_H - VOL_STEP_BTN_H - 4,
+                    VOL_POPUP_W - 12, VOL_STEP_BTN_H, 6, COLOR_ACCENT);
+  tft.drawCentreString("-", VOL_POPUP_X + (VOL_POPUP_W / 2),
+                       VOL_POPUP_Y + VOL_POPUP_H - VOL_STEP_BTN_H - 2, 2);
+}
+
 // ==== STATIC MAIN SCREEN ====
 void drawMainScreenStatic() {
 
@@ -2953,6 +3357,9 @@ void drawMainScreenStatic() {
     selectedButton == BTN_MENU,
     55
   );
+
+  drawVolumeIcon();
+  drawVolumePopup();
 }
 
 void drawModelPanelSemiStatic() {
@@ -3023,6 +3430,10 @@ static int lastRX = 0, lastRY = 0;
 static int lastLatency = -1;
 static float lastVoltage = -1;
 static String lastModel = "";
+static bool lastMutedIconState = false;
+static bool lastVolumePopupState = false;
+static int lastVolumePopupLevel = -1;
+static bool lastVolumePopupMutedState = false;
 
 if (espNowLatency != lastLatency ||
     abs(batteryVoltage - lastVoltage) > 0.01 ||
@@ -3133,6 +3544,24 @@ if (abs(tankLeftOutput - lastLeft) > 0.01 ||
     lastMenuPressed = pressedButton;
     lastMenuSelected = selectedButton;
   }
+
+  if (uiMuted != lastMutedIconState || volumePopupVisible != lastVolumePopupState) {
+    drawVolumeIcon();
+    lastMutedIconState = uiMuted;
+  }
+
+  if (volumePopupVisible &&
+      (volumePopupNeedsRedraw ||
+       !lastVolumePopupState ||
+       lastVolumePopupLevel != uiVolumeLevel ||
+       lastVolumePopupMutedState != uiMuted)) {
+    drawVolumePopup();
+    volumePopupNeedsRedraw = false;
+  }
+
+  lastVolumePopupState = volumePopupVisible;
+  lastVolumePopupLevel = uiVolumeLevel;
+  lastVolumePopupMutedState = uiMuted;
 }
 
 void drawTankIcon(int x, int y, int w, int h, uint16_t iconColor) {
@@ -3248,8 +3677,13 @@ void drawRightPanel(int x, int y, int w, int h) {
 
   tft.setCursor(x + 14, lineY + 15);
   tft.setTextColor(COLOR_ACCENT);
-  tft.print(batteryVoltage, 2);
-  tft.print(" V");
+  if (batteryPresent) {
+    tft.print(batteryVoltage, 2);
+    tft.print(" V");
+    if (batteryCharging) tft.print(" +");
+  } else {
+    tft.print("No Batt");
+  }
 }
 
 void drawCenteredBar(int x, int y, int w, int h, float value) {
@@ -3323,7 +3757,7 @@ void drawBottomBar(int x, int y, int w, int h, float value) {
     }
   }
 
-  void drawBattery(int x, int y, int level) {
+  void drawBattery(int x, int y, int level, bool present, bool charging) {
   // level = 0–100
 
   int w = 24;
@@ -3335,6 +3769,12 @@ void drawBottomBar(int x, int y, int w, int h, float value) {
 
   // terminal
   tft.fillRect(x + w, y + (h / 3), 3, h / 3, COLOR_TEXT);
+
+  if (!present) {
+    tft.drawLine(x + 4, y + 3, x + w - 4, y + h - 3, COLOR_ACCENT_HI);
+    tft.drawLine(x + w - 4, y + 3, x + 4, y + h - 3, COLOR_ACCENT_HI);
+    return;
+  }
 
   // ===== FILL WIDTH =====
   int fillWidth = map(level, 0, 100, 0, w - (padding * 2));
@@ -3354,6 +3794,13 @@ void drawBottomBar(int x, int y, int w, int h, float value) {
     2,
     color
   );
+
+  if (charging) {
+    int boltX = x + 9;
+    int boltY = y + 1;
+    tft.fillTriangle(boltX + 3, boltY, boltX, boltY + 5, boltX + 4, boltY + 5, COLOR_BG);
+    tft.fillTriangle(boltX + 3, boltY + 10, boltX + 2, boltY + 5, boltX + 6, boltY + 5, COLOR_BG);
+  }
 }
 
 void drawTopBarStatic() {
@@ -3378,8 +3825,10 @@ void drawTopBarDynamic() {
   static unsigned long lastBlinkTime = 0;
   static bool blinkState = true;
   static bool lastBlinkState = true;
+  static bool lastBatteryPresent = true;
+  static bool lastBatteryCharging = false;
 
-  if (batteryLevel < 10) {
+  if (batteryPresent && !batteryCharging && batteryLevel < 10) {
     if (millis() - lastBlinkTime >= 1000) {
       blinkState = !blinkState;
       lastBlinkTime = millis();
@@ -3391,13 +3840,15 @@ void drawTopBarDynamic() {
 
   if (signalStrength != lastSignal ||
     batteryLevel != lastBattery ||
-    blinkState != lastBlinkState) {
+    blinkState != lastBlinkState ||
+    batteryPresent != lastBatteryPresent ||
+    batteryCharging != lastBatteryCharging) {
 
     tft.fillRect(140, 5, 100, 25, COLOR_BG);
 
     drawSignalBars(150, 10, signalStrength);
     if (blinkState) {
-      drawBattery(200, 10, batteryLevel);
+      drawBattery(200, 10, batteryLevel, batteryPresent, batteryCharging);
     }
     else {
     // clear battery area when "off"
@@ -3407,11 +3858,12 @@ void drawTopBarDynamic() {
     lastSignal = signalStrength;
     lastBattery = batteryLevel;
     lastBlinkState = blinkState;
+    lastBatteryPresent = batteryPresent;
+    lastBatteryCharging = batteryCharging;
   }
 
   // simulate (keep this outside the condition)
   signalStrength = (millis() / 1000) % 5;
-  batteryLevel = (sin(millis() / 2000.0) * 50) + 50;
 }
 
 uint16_t fadeColor(uint16_t color, float factor) {
@@ -3804,7 +4256,7 @@ void drawTrimStatic() {
 
   // NEXT button (right side)
   const char* navLabel = (currentTrimPage == 0) ? "NEXT" : "PREV";
-  drawButtonBubble(130, BACK_BTN_Y, 100, BTN_HEIGHT, navLabel, false, (dpadFocusVisible && focusIndex == 1), 40);
+  drawButtonBubble(130, BACK_BTN_Y, 100, BACK_BTN_H, navLabel, false, (dpadFocusVisible && focusIndex == 1), 40);
 
   tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
 
@@ -4246,6 +4698,9 @@ void drawMixingDynamic() {
 
   char valueText[12];
   MixData &mix = models[activeModel].mixes[selectedMixIndex];
+  uint8_t source = getMixSource(mix);
+  uint8_t destination = getMixDestination(mix);
+  bool reverseLinked = isMixReverseLinked(mix);
 
   tft.fillRect(0, 38, 240, FOOTER_Y - 44, COLOR_BG);
 
@@ -4269,19 +4724,19 @@ void drawMixingDynamic() {
   tft.setTextColor(COLOR_ACCENT_HI);
   if (mix.enabled) {
     snprintf(valueText, sizeof(valueText), "CH%d > CH%d",
-             mix.source + 1, mix.destination + 1);
+             source + 1, destination + 1);
   } else {
     snprintf(valueText, sizeof(valueText), "Mix %d Disabled", selectedMixIndex + 1);
   }
-  tft.drawCentreString(valueText, 120, 78, 2);
+  tft.drawCentreString(valueText, 120, 72, 2);
 
-  const char* labels[5] = {"Enable", "Source", "Dest", "Rate", "Offset"};
-  const int rowY[5] = {
-    MIX_ROW_ENABLE_Y, MIX_ROW_SOURCE_Y, MIX_ROW_DEST_Y, MIX_ROW_RATE_Y, MIX_ROW_OFFS_Y
+  const char* labels[6] = {"Enable", "Source", "Dest", "Rev Link", "Rate", "Offset"};
+  const int rowY[6] = {
+    MIX_ROW_ENABLE_Y, MIX_ROW_SOURCE_Y, MIX_ROW_DEST_Y, MIX_ROW_LINK_Y, MIX_ROW_RATE_Y, MIX_ROW_OFFS_Y
   };
 
   tft.setTextColor(COLOR_TEXT);
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 6; i++) {
     tft.setCursor(20, rowY[i] + 8);
     tft.print(labels[i]);
   }
@@ -4293,8 +4748,8 @@ void drawMixingDynamic() {
     tft.drawRoundRect(MIX_FIELD_X - 2, MIX_ROW_ENABLE_Y - 2, MIX_FIELD_W + 4, MIX_FIELD_H + 4, 10, COLOR_ACCENT_HI);
   }
   tft.setTextColor(COLOR_TEXT);
-  tft.drawString("OFF", MIX_FIELD_X - 34, MIX_ROW_ENABLE_Y + 8, 2);
-  tft.drawString("ON", 208, MIX_ROW_ENABLE_Y + 8, 2);
+  tft.drawString("OFF", MIX_FIELD_X - 36, MIX_ROW_ENABLE_Y + 8, 2);
+  tft.drawString("ON", MIX_FIELD_X + MIX_FIELD_W + 6, MIX_ROW_ENABLE_Y + 8, 2);
 
   int knobRadius = 9;
   int knobX = mix.enabled
@@ -4303,7 +4758,7 @@ void drawMixingDynamic() {
   tft.fillCircle(knobX, MIX_ROW_ENABLE_Y + (MIX_FIELD_H / 2), knobRadius,
                  mix.enabled ? COLOR_ACCENT : COLOR_TEXT);
 
-  snprintf(valueText, sizeof(valueText), "CH%d", mix.source + 1);
+  snprintf(valueText, sizeof(valueText), "CH%d", source + 1);
   tft.fillRoundRect(MIX_FIELD_X, MIX_ROW_SOURCE_Y, MIX_FIELD_W, MIX_FIELD_H, 8, COLOR_PANEL);
   tft.drawRoundRect(MIX_FIELD_X, MIX_ROW_SOURCE_Y, MIX_FIELD_W, MIX_FIELD_H, 8, COLOR_ACCENT);
   if (dpadFocusVisible && focusIndex == 6) {
@@ -4312,7 +4767,7 @@ void drawMixingDynamic() {
   tft.setTextColor(COLOR_TEXT);
   tft.drawCentreString(valueText, MIX_FIELD_X + (MIX_FIELD_W / 2), MIX_ROW_SOURCE_Y + 8, 2);
 
-  snprintf(valueText, sizeof(valueText), "CH%d", mix.destination + 1);
+  snprintf(valueText, sizeof(valueText), "CH%d", destination + 1);
   tft.fillRoundRect(MIX_FIELD_X, MIX_ROW_DEST_Y, MIX_FIELD_W, MIX_FIELD_H, 8, COLOR_PANEL);
   tft.drawRoundRect(MIX_FIELD_X, MIX_ROW_DEST_Y, MIX_FIELD_W, MIX_FIELD_H, 8, COLOR_ACCENT);
   if (dpadFocusVisible && focusIndex == 7) {
@@ -4321,9 +4776,24 @@ void drawMixingDynamic() {
   tft.setTextColor(COLOR_TEXT);
   tft.drawCentreString(valueText, MIX_FIELD_X + (MIX_FIELD_W / 2), MIX_ROW_DEST_Y + 8, 2);
 
+  tft.fillRoundRect(MIX_FIELD_X + 2, MIX_ROW_LINK_Y + 2, MIX_FIELD_W - 4, MIX_FIELD_H - 4, 10, COLOR_PANEL);
+  tft.drawRoundRect(MIX_FIELD_X, MIX_ROW_LINK_Y, MIX_FIELD_W, MIX_FIELD_H, 10, COLOR_ACCENT);
+  if (dpadFocusVisible && focusIndex == 8) {
+    tft.drawRoundRect(MIX_FIELD_X - 2, MIX_ROW_LINK_Y - 2, MIX_FIELD_W + 4, MIX_FIELD_H + 4, 10, COLOR_ACCENT_HI);
+  }
+  tft.setTextColor(COLOR_TEXT);
+  tft.drawString("SEP", MIX_FIELD_X - 36, MIX_ROW_LINK_Y + 8, 2);
+  tft.drawString("LINK", MIX_FIELD_X + MIX_FIELD_W + 4, MIX_ROW_LINK_Y + 8, 2);
+
+  knobX = reverseLinked
+    ? (MIX_FIELD_X + MIX_FIELD_W - knobRadius - 3)
+    : (MIX_FIELD_X + knobRadius + 3);
+  tft.fillCircle(knobX, MIX_ROW_LINK_Y + (MIX_FIELD_H / 2), knobRadius,
+                 reverseLinked ? COLOR_ACCENT : COLOR_TEXT);
+
   tft.fillRoundRect(MIX_MINUS_X, MIX_ROW_RATE_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT);
   tft.drawRoundRect(MIX_MINUS_X, MIX_ROW_RATE_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT_HI);
-  if (dpadFocusVisible && focusIndex == 8) {
+  if (dpadFocusVisible && focusIndex == 9) {
     tft.drawRoundRect(MIX_MINUS_X - 2, MIX_ROW_RATE_Y - 2, MIX_ADJUST_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
   }
   tft.setTextColor(COLOR_BG);
@@ -4337,13 +4807,13 @@ void drawMixingDynamic() {
   if (mixNumpadActive && mixNumpadEditingRate) {
     tft.drawRoundRect(MIX_VALUE_X - 2, MIX_ROW_RATE_Y - 2, MIX_VALUE_W + 4, MIX_FIELD_H + 4, 8, COLOR_ACCENT_HI);
   }
-  else if (dpadFocusVisible && focusIndex == 9) {
+  else if (dpadFocusVisible && focusIndex == 10) {
     tft.drawRoundRect(MIX_VALUE_X - 2, MIX_ROW_RATE_Y - 2, MIX_VALUE_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
   }
 
   tft.fillRoundRect(MIX_PLUS_X, MIX_ROW_RATE_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT);
   tft.drawRoundRect(MIX_PLUS_X, MIX_ROW_RATE_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT_HI);
-  if (dpadFocusVisible && focusIndex == 10) {
+  if (dpadFocusVisible && focusIndex == 11) {
     tft.drawRoundRect(MIX_PLUS_X - 2, MIX_ROW_RATE_Y - 2, MIX_ADJUST_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
   }
   tft.setTextColor(COLOR_BG);
@@ -4351,7 +4821,7 @@ void drawMixingDynamic() {
 
   tft.fillRoundRect(MIX_MINUS_X, MIX_ROW_OFFS_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT);
   tft.drawRoundRect(MIX_MINUS_X, MIX_ROW_OFFS_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT_HI);
-  if (dpadFocusVisible && focusIndex == 11) {
+  if (dpadFocusVisible && focusIndex == 12) {
     tft.drawRoundRect(MIX_MINUS_X - 2, MIX_ROW_OFFS_Y - 2, MIX_ADJUST_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
   }
   tft.setTextColor(COLOR_BG);
@@ -4365,13 +4835,13 @@ void drawMixingDynamic() {
   if (mixNumpadActive && !mixNumpadEditingRate) {
     tft.drawRoundRect(MIX_VALUE_X - 2, MIX_ROW_OFFS_Y - 2, MIX_VALUE_W + 4, MIX_FIELD_H + 4, 8, COLOR_ACCENT_HI);
   }
-  else if (dpadFocusVisible && focusIndex == 12) {
+  else if (dpadFocusVisible && focusIndex == 13) {
     tft.drawRoundRect(MIX_VALUE_X - 2, MIX_ROW_OFFS_Y - 2, MIX_VALUE_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
   }
 
   tft.fillRoundRect(MIX_PLUS_X, MIX_ROW_OFFS_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT);
   tft.drawRoundRect(MIX_PLUS_X, MIX_ROW_OFFS_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT_HI);
-  if (dpadFocusVisible && focusIndex == 13) {
+  if (dpadFocusVisible && focusIndex == 14) {
     tft.drawRoundRect(MIX_PLUS_X - 2, MIX_ROW_OFFS_Y - 2, MIX_ADJUST_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
   }
   tft.setTextColor(COLOR_BG);
