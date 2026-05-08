@@ -9,25 +9,25 @@ fixed touch recognition
 
 changelog 5/8/2026
 
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
 
 I wired the Mixing button to a new mixing editor screen, and added the screen rendering/update flow. The first-pass UI gives each model 4 mix slots with Enable, Source, Destination (Dest), Rate, and Offset. You can tap M1-M4 tabs to switch mix slots, tap source/destination to cycle channels, and use +/- for rate and offset. I also made the mix settings persist per model by storing them in the existing model data structure.
 
 I treated this as a UI-first transmitter-style mixer editor, so the data model is there now, but it does not yet drive any actual output math. I assumed a simple 5-channel, 4-mix-slot setup as a good first shape.
 
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
 
 I added the Mixing numpad. Tapping the numeric Rate or Offset value box now opens a compact pad above the footer with 0-9, -, and OK, plus a text box at the top that shows the value being entered. Tapping anywhere above the pad dismisses it without committing, and OK commits the typed value to the selected mix field.
 
 I left the existing +/- tick buttons in place, so you now have both quick nudging and direct entry. The typed value is constrained to -100 through 100
 
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-
 
 I added the Aa shift key to the model-name keyboard, and it now toggles the alphabet rows between uppercase and lowercase while leaving numbers and special keys alone. I also set the startup default model name to Anubis for the primary slot if it’s blank, and changed new/reset mix defaults so Rate and Offset both start at 0.
 
 Because the mix defaults changed, I bumped the mix storage version, so on first boot after flashing this build the saved mix slots will be reset once to pick up the new 0 / 0 defaults.
 
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
 
 I added the press-and-hold rename behavior to the model list
 The behavior is now:
@@ -38,7 +38,7 @@ tap an empty slot: still opens naming immediately
 
 I implemented it with a small pending hold state so it doesn’t interfere with the normal release handling
 
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
 
 Drive Type is now saved per model slot and restored when you switch models, just like reverse, trim, failsafe, and mixing.
 
@@ -52,13 +52,13 @@ drive type
 
 I also added boot-time sanitizing for old saved drive-type values so existing EEPROM data won’t leave the drive type in a bad state.
 
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
 
 Symptom - top bar is not updating on any screen other than MAIN_SCREEN.
 
 The issue was that the top bar only updates when uiNeedsRedraw is set, and the non-main screens don’t naturally trigger redraws very often. I added a small periodic redraw tick for non-main screens (250ms), so the RSSI bars and battery icon now refresh there too instead of only animating on the main screen.
 
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
 
 The trim trail fix was redrawing the graph area but not the trim buttons afterward, so the + / - controls were getting painted over. I split the trim rendering into:
 
@@ -66,7 +66,7 @@ a graph-base redraw helper
 a trim-button redraw helper
 Now the dynamic trim update restores both before drawing the moving dot, so the trail stays gone and the buttons remain visible.
 
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
 
 I added D-pad navigation across the UI using only Left, Right, Down, and Select, with Down wrapping everywhere.
 What’s covered now:
@@ -91,7 +91,7 @@ on list/button screens, Down cycles through items and wraps
 on value screens, Select activates the focused control
 on some screens, Left acts as a quick back/jump-back control to make up for having no Up
 
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
 
 D-pad focus highlights now stay hidden until you actually use the D-pad on that screen, and they hide again as soon as you interact by touch or change screens. So the UI won’t open with a highlighted control unless navigation came from the D-pad.
 
@@ -102,7 +102,7 @@ I also added a Tank Control sub-screen under the Tank option in Drive Type. It g
 
 That setting is saved per model using the same per-model storage path as your other model settings, and the main-screen tank bars now follow that selected tank mode.
 
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
 
 I updated the Reverse screen so enabled mixes now link reverse behavior between channels.
 What it does now:
@@ -112,3 +112,54 @@ the Reverse screen visually flags linked channels with accent coloring and a *
 linked channels also get an extra outline around their toggle, so the relationship is easier to spot
 
 I implemented it as a general linked-channel resolver over the enabled mix graph, so it isn’t limited to only one specific pair.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+I shrank the bottom navigation area in Hosyond_apr24b.ino to about 60% of its old height.
+What changed:
+
+footer height went from 60 to 36
+bottom nav buttons now use their own smaller height (30) instead of sharing the larger general-purpose button size
+touch targets for the footer buttons were updated to match
+the trim screen’s BACK/NEXT footer buttons were updated too
+
+That gives you more usable vertical space on the content area without shrinking the larger main menu/settings buttons in the body of the screens.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+I added a per-mix reverse-link switch to the Mixing screen. Each M1-M4 mix now has a Rev Link row with SEP and LINK, and that setting now directly controls the Reverse screen behavior. If a mix is LINK, reversing either channel in that mix will still flip the linked partner(s). If it’s SEP, that mix no longer participates in reverse linking or reverse-menu highlighting.
+
+I kept the saved mix data layout compatible, so existing mixes should keep their current linked behavior by default instead of getting reset. I also shifted the Mixing layout a bit to make room for the new row and updated both touch and D-pad navigation to cover it cleanly.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+I shifted the Mixing screen’s right-side controls left and a bit lower, and I also made the OFF/ON and SEP/LINK labels position themselves relative to the toggle box instead of using fixed screen coordinates. That should stop the text from crowding or overlapping the switches.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+I added audible clicks for button presses and DPAD selections as well as adding a volume icon with touch functions.
+What changed:
+
+added a speaker/volume icon in the bottom-right of the main screen
+tap the icon: opens/closes a small + / level / - volume popup
+press and hold the icon: toggles mute
+volume up automatically unmutes
+added UI click sounds for touch button presses and D-pad navigation/select actions
+I also wired in the ESP32-S3 I2S audio output so the clicks should come out through the board’s speaker path.
+
+The MENU button is shifted left so the volume button has more space, the speaker icon is redrawn as a proper right-facing speaker with sound waves, and the popup slider is much taller now. I also changed the main-screen update path so the volume popup only redraws when its own state changes, like mute, show/hide, or a volume step, instead of repainting on every main-screen frame. Tapping anywhere away from the popup now closes it.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+I wired the battery meter to the board’s real battery ADC on IO9.
+What changed:
+
+battery voltage now comes from analogReadMilliVolts(IO9) instead of the old simulated value
+I applied the board’s 200k/200k divider from the schematic, so the code converts the ADC reading back to actual battery voltage
+if no battery is detected, the top-bar battery icon now shows an X and does not blink
+the right panel now shows No Batt instead of a fake voltage
+charging state is shown as an overlay on the battery icon and a + next to the voltage readout
+
+One important limitation: this board does not appear to route a dedicated charge-status signal to the ESP32, so “charging” is inferred from the battery voltage rising over time, not from a true charger-status pin. That means the voltage reading is real, but charging detection is best-effort.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
