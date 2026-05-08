@@ -6,6 +6,10 @@
 
 #include "anubis_rgb565.h"
 
+  #define EEPROM_SIZE 512
+  #define MIX_STORAGE_VERSION 2
+  #define EEPROM_MIX_VERSION_ADDR (EEPROM_SIZE - 1)
+
   TFT_eSPI tft = TFT_eSPI();
   TFT_eSprite stickBaseSprite = TFT_eSprite(&tft);
   FT6336U touchPanel;
@@ -21,6 +25,7 @@
   SCREEN_FAILSAFE,
   SCREEN_MODEL_NAME,
   SCREEN_DRIVE_TYPE,
+  SCREEN_TANK_MODE,
   SCREEN_MIXING
   };
 
@@ -38,7 +43,10 @@
   BTN_DRIVE_CAR,
   BTN_DRIVE_OMNI,
   BTN_DRIVE_X_DRONE,
+  BTN_TANK_SINGLE,
+  BTN_TANK_DUAL,
   BTN_MODEL_NAME,
+  BTN_MIXING,
   BTN_OPTION_2,
   BTN_OPTION_3,
   BTN_OPTION_4,
@@ -53,7 +61,21 @@
   DRIVE_QUAD_X = DRIVE_X_DRONE
   };
 
+  enum TankControlMode {
+  TANK_MODE_DUAL_STICK,
+  TANK_MODE_RIGHT_STICK
+  };
+
   #define MAX_MODELS 4
+  #define MIX_COUNT 4
+
+  struct MixData {
+  bool enabled;
+  uint8_t source;
+  uint8_t destination;
+  int8_t rate;
+  int8_t offset;
+  };
 
   struct ModelData {
   char name[20];
@@ -63,6 +85,8 @@
 
   int trimX[2];
   int trimY[2];
+  MixData mixes[MIX_COUNT];
+  uint8_t driveType;
   };
 
   ModelData models[MAX_MODELS];
@@ -80,6 +104,7 @@
   Screen currentScreen = SCREEN_SPLASH;
   ButtonID pressedButton = BTN_NONE;
   ButtonID selectedButton = BTN_NONE;
+  bool dpadFocusVisible = false;
 
   bool uiNeedsRedraw = true;
   bool touchActive = false;
@@ -105,6 +130,8 @@
   #define TARGET_FPS 24
   #define MAIN_FRAME_INTERVAL_MS (1000UL / TARGET_FPS)
   #define TOUCH_POLL_INTERVAL_MS 16
+  #define TOPBAR_UPDATE_INTERVAL_MS 250
+  #define MODEL_NAME_HOLD_MS 700
 
   // ===== UI LAYOUT =====
   #define BTN_HEIGHT 50
@@ -150,6 +177,44 @@
   #define DRIVE_BTN_Y2 148
   #define DRIVE_TOUCH_PAD 8
 
+  #define MIX_TAB_Y        42
+  #define MIX_TAB_W        46
+  #define MIX_TAB_H        28
+  #define MIX_TAB_GAP      8
+  #define MIX_TAB_X(i)     (16 + ((i) * (MIX_TAB_W + MIX_TAB_GAP)))
+
+  #define MIX_FIELD_X      128
+  #define MIX_FIELD_W      92
+  #define MIX_FIELD_H      28
+  #define MIX_MINUS_X      128
+  #define MIX_PLUS_X       194
+  #define MIX_ADJUST_W     26
+  #define MIX_VALUE_X      158
+  #define MIX_VALUE_W      32
+  #define MIX_ROW_ENABLE_Y 96
+  #define MIX_ROW_SOURCE_Y 128
+  #define MIX_ROW_DEST_Y   160
+  #define MIX_ROW_RATE_Y   192
+  #define MIX_ROW_OFFS_Y   224
+
+  #define MIX_NUMPAD_X     10
+  #define MIX_NUMPAD_Y     118
+  #define MIX_NUMPAD_W     220
+  #define MIX_NUMPAD_H     137
+  #define MIX_NUMPAD_BOX_X 22
+  #define MIX_NUMPAD_BOX_Y 126
+  #define MIX_NUMPAD_BOX_W 132
+  #define MIX_NUMPAD_BOX_H 24
+  #define MIX_NUMPAD_OK_X  162
+  #define MIX_NUMPAD_OK_Y  126
+  #define MIX_NUMPAD_OK_W  56
+  #define MIX_NUMPAD_OK_H  24
+  #define MIX_NUMPAD_KEY_W 64
+  #define MIX_NUMPAD_KEY_H 22
+  #define MIX_NUMPAD_KEY_GAP 6
+  #define MIX_NUMPAD_GRID_X 17
+  #define MIX_NUMPAD_GRID_Y 157
+
   // ==== SPLASH SCREEN ====
   #define ANUBIS_WIDTH 160
   #define ANUBIS_HEIGHT 160
@@ -188,6 +253,14 @@
 
   bool failsafeNeedsRedraw = true;
   bool failsafeDirty[5] = { true, true, true, true, true };
+  bool mixingNeedsRedraw = true;
+  int selectedMixIndex = 0;
+  bool mixNumpadActive = false;
+  bool mixNumpadNeedsRedraw = false;
+  bool mixNumpadEditingRate = true;
+  String mixNumpadBuffer = "";
+  int mixNumpadCursorRow = 0;
+  int mixNumpadCursorCol = 0;
 
   // placeholder values for now (you’ll replace with real captured values later)
   int failsafeValue[5] = { 0, 0, 0, 0, 0 };
@@ -197,12 +270,148 @@
   void setScreen(Screen screen);
   void queueScreenButton(ButtonID button, Screen screen);
   void saveKeyboardBufferToModelSlot();
+  const char* getKeyboardKey(int row, int col);
+  void processKeyboardKey(const char* key);
   bool modelSlotUninitialized(int i);
+  void initDefaultMixSlot(int modelIndex, int mixIndex);
+  bool sanitizeModelMixes(int modelIndex);
+  bool sanitizeModelDriveType(int modelIndex);
+  void openMixNumpad(bool editRate);
+  void closeMixNumpad(bool commitValue);
+  bool handleMixNumpadTouch(int x, int y);
+  void drawMixNumpad();
   void drawDriveTypeScreen();
+  void drawTankModeScreen();
   void drawDriveTypeOption(int x, int y, int w, int h, const char* label, DriveType drive, ButtonID button);
   void drawDriveTypeOptionIcon(int x, int y, int w, int h, DriveType drive, uint16_t iconColor);
   void drawOmniIcon(int x, int y, int w, int h, uint16_t iconColor);
+  void getLinkedReverseChannels(int modelIndex, int channel, bool linked[5]);
+  bool hasLinkedReversePeers(int modelIndex, int channel);
+  void drawTrimGraphBase();
+  void drawTrimButtons();
+  void drawMixingStatic();
+  void drawMixingDynamic();
   void drawSplash();
+  DriveType getModelDriveType(int modelIndex);
+  void setModelDriveType(int modelIndex, DriveType driveType);
+  TankControlMode getModelTankMode(int modelIndex);
+  void setModelTankMode(int modelIndex, TankControlMode tankMode);
+
+  void initDefaultMixSlot(int modelIndex, int mixIndex) {
+    models[modelIndex].mixes[mixIndex].enabled = false;
+    models[modelIndex].mixes[mixIndex].source = mixIndex % 5;
+    models[modelIndex].mixes[mixIndex].destination = (mixIndex + 1) % 5;
+    models[modelIndex].mixes[mixIndex].rate = 0;
+    models[modelIndex].mixes[mixIndex].offset = 0;
+  }
+
+  DriveType getModelDriveType(int modelIndex) {
+    uint8_t drive = models[modelIndex].driveType & 0x0F;
+    if (drive > DRIVE_X_DRONE) drive = DRIVE_TANK;
+    return (DriveType)drive;
+  }
+
+  void setModelDriveType(int modelIndex, DriveType driveType) {
+    models[modelIndex].driveType =
+      (models[modelIndex].driveType & 0xF0) | ((uint8_t)driveType & 0x0F);
+  }
+
+  TankControlMode getModelTankMode(int modelIndex) {
+    return (models[modelIndex].driveType & 0x10)
+      ? TANK_MODE_RIGHT_STICK
+      : TANK_MODE_DUAL_STICK;
+  }
+
+  void setModelTankMode(int modelIndex, TankControlMode tankMode) {
+    if (tankMode == TANK_MODE_RIGHT_STICK) {
+      models[modelIndex].driveType |= 0x10;
+    } else {
+      models[modelIndex].driveType &= ~0x10;
+    }
+  }
+
+  void getLinkedReverseChannels(int modelIndex, int channel, bool linked[5]) {
+    for (int i = 0; i < 5; i++) linked[i] = false;
+    if (channel < 0 || channel >= 5) return;
+
+    linked[channel] = true;
+
+    bool changed = true;
+    while (changed) {
+      changed = false;
+
+      for (int mixIndex = 0; mixIndex < MIX_COUNT; mixIndex++) {
+        MixData &mix = models[modelIndex].mixes[mixIndex];
+        if (!mix.enabled) continue;
+        if (mix.source >= 5 || mix.destination >= 5) continue;
+
+        if (linked[mix.source] && !linked[mix.destination]) {
+          linked[mix.destination] = true;
+          changed = true;
+        }
+
+        if (linked[mix.destination] && !linked[mix.source]) {
+          linked[mix.source] = true;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  bool hasLinkedReversePeers(int modelIndex, int channel) {
+    bool linked[5];
+    getLinkedReverseChannels(modelIndex, channel, linked);
+
+    for (int i = 0; i < 5; i++) {
+      if (i != channel && linked[i]) return true;
+    }
+
+    return false;
+  }
+
+  bool sanitizeModelMixes(int modelIndex) {
+    bool changed = false;
+
+    for (int mixIndex = 0; mixIndex < MIX_COUNT; mixIndex++) {
+      MixData &mix = models[modelIndex].mixes[mixIndex];
+
+      bool invalid =
+        (mix.source > 4) ||
+        (mix.destination > 4) ||
+        (mix.rate < -100) || (mix.rate > 100) ||
+        (mix.offset < -100) || (mix.offset > 100);
+
+      if (invalid) {
+        initDefaultMixSlot(modelIndex, mixIndex);
+        changed = true;
+        continue;
+      }
+
+      bool normalizedEnabled = mix.enabled ? true : false;
+      if (mix.enabled != normalizedEnabled) {
+        mix.enabled = normalizedEnabled;
+        changed = true;
+      }
+
+      if (mix.destination == mix.source) {
+        mix.destination = (mix.destination + 1) % 5;
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  bool sanitizeModelDriveType(int modelIndex) {
+    uint8_t drive = models[modelIndex].driveType & 0x0F;
+    if (drive > DRIVE_X_DRONE) {
+      models[modelIndex].driveType &= 0xF0;
+      setModelDriveType(modelIndex, DRIVE_TANK);
+      return true;
+    }
+
+    return false;
+  }
 
   void initModelDefaults(int i) {
     for (int ch = 0; ch < 5; ch++) {
@@ -214,6 +423,14 @@
       models[i].trimX[g] = 0;
       models[i].trimY[g] = 0;
     }
+
+    for (int mix = 0; mix < MIX_COUNT; mix++) {
+      initDefaultMixSlot(i, mix);
+    }
+
+    models[i].driveType = 0;
+    setModelDriveType(i, DRIVE_TANK);
+    setModelTankMode(i, TANK_MODE_DUAL_STICK);
 
     strcpy(models[i].name, "");
   }
@@ -240,6 +457,7 @@
   // ===== KEYBOARD STATE =====
   bool keyboardActive = false;
   bool keyboardNeedsRedraw = true;
+  bool keyboardLowercase = false;
 
   String keyboardBuffer = "";
 
@@ -260,11 +478,19 @@
   int kbCursorRow = 1;   // start at "Q"
   int kbCursorCol = 0;
 
-  const char* keyboardLayout[KB_ROWS][KB_COLS] = {
+  const char* keyboardLayoutUpper[KB_ROWS][KB_COLS] = {
   {"1","2","3","4","5","6","7","8","9","0"},
   {"Q","W","E","R","T","Y","U","I","O","P"},
   {"A","S","D","F","G","H","J","K","L","<"},
-  {"Z","X","C","V","B","N","M","","OK",""},
+  {"Aa","Z","X","C","V","B","N","M","OK",""},
+  {" ","","","","","","","","",""}
+  };
+
+  const char* keyboardLayoutLower[KB_ROWS][KB_COLS] = {
+  {"1","2","3","4","5","6","7","8","9","0"},
+  {"q","w","e","r","t","y","u","i","o","p"},
+  {"a","s","d","f","g","h","j","k","l","<"},
+  {"Aa","z","x","c","v","b","n","m","OK",""},
   {" ","","","","","","","","",""}
   };
 
@@ -274,6 +500,87 @@
   bool modelNameNeedsRedraw = true;
   bool modelNameDirty = true;
   bool inputBoxSelected = false;
+  int pendingModelHoldIndex = -1;
+  unsigned long pendingModelHoldStart = 0;
+  bool pendingModelHoldTriggered = false;
+
+const char* getKeyboardKey(int row, int col) {
+  if (row < 0 || row >= KB_ROWS || col < 0 || col >= KB_COLS) return "";
+  return keyboardLowercase ? keyboardLayoutLower[row][col] : keyboardLayoutUpper[row][col];
+}
+
+void processKeyboardKey(const char* key) {
+  if (strlen(key) == 0) return;
+
+  if (strcmp(key, "<") == 0) {
+    if (keyboardBuffer.length() > 0) {
+      keyboardBuffer.remove(keyboardBuffer.length() - 1);
+      modelNameDirty = true;
+    }
+  }
+  else if (strcmp(key, "Aa") == 0) {
+    keyboardLowercase = !keyboardLowercase;
+    keyboardNeedsRedraw = true;
+  }
+  else if (strcmp(key, "OK") == 0) {
+    if (keyboardBuffer.length() > 0) {
+      saveKeyboardBufferToModelSlot();
+    }
+
+    keyboardBuffer = "";
+    modelNameDirty = true;
+    modelNameNeedsRedraw = true;
+    uiNeedsRedraw = true;
+    closeKeyboard();
+  }
+  else {
+    if (keyboardBuffer.length() < 18) {
+      keyboardBuffer += key;
+      modelNameDirty = true;
+    }
+  }
+
+  keyboardNeedsRedraw = true;
+  uiNeedsRedraw = true;
+}
+
+void selectModelSlot(int modelIndex) {
+  activeModel = modelIndex;
+  selectedModelIndex = modelIndex;
+  currentModelName = String(models[modelIndex].name);
+  currentDrive = getModelDriveType(modelIndex);
+
+  trimRenderX = models[modelIndex].trimX[currentTrimPage];
+  trimRenderY = models[modelIndex].trimY[currentTrimPage];
+  selectedMixIndex = 0;
+  mixingNeedsRedraw = true;
+
+  trimNeedsRedraw = true;
+  reverseNeedsRedraw = true;
+  failsafeNeedsRedraw = true;
+  trimDirty = true;
+  modelNameDirty = true;
+  modelNameNeedsRedraw = true;
+
+  for (int c = 0; c < 5; c++) {
+    reverseChannelDirty[c] = true;
+    failsafeDirty[c] = true;
+  }
+
+  uiNeedsRedraw = true;
+}
+
+void beginModelNameEdit(int modelIndex) {
+  selectedModelIndex = modelIndex;
+  keyboardBuffer = modelNames[modelIndex];
+  keyboardActive = true;
+  keyboardLowercase = false;
+  keyboardNeedsRedraw = true;
+  inputBoxSelected = true;
+  modelNameDirty = true;
+  modelNameNeedsRedraw = true;
+  uiNeedsRedraw = true;
+}
 
 void setup() {
   Serial.begin(115200);
@@ -297,12 +604,14 @@ void setup() {
   lastActivityTime = millis();
   splashStartTime = millis();
 
-  EEPROM.begin(512);
+  EEPROM.begin(EEPROM_SIZE);
 
   loadModels();
 
   // FIRST BOOT CHECK
   bool initializedAnyModel = false;
+  bool repairedAnyMix = false;
+  bool resetMixSchema = (EEPROM.read(EEPROM_MIX_VERSION_ADDR) != MIX_STORAGE_VERSION);
 
   for (int i = 0; i < MAX_MODELS; i++) {
     if (modelSlotUninitialized(i)) {
@@ -312,9 +621,31 @@ void setup() {
     else {
       models[i].name[19] = '\0';
     }
+
+    if (resetMixSchema) {
+      for (int mix = 0; mix < MIX_COUNT; mix++) {
+        initDefaultMixSlot(i, mix);
+      }
+      repairedAnyMix = true;
+      continue;
+    }
+
+    if (sanitizeModelMixes(i)) {
+      repairedAnyMix = true;
+    }
+
+    if (sanitizeModelDriveType(i)) {
+      repairedAnyMix = true;
+    }
   }
 
-  if (initializedAnyModel) {
+  if (strlen(models[0].name) == 0) {
+    strncpy(models[0].name, "Anubis", sizeof(models[0].name) - 1);
+    models[0].name[sizeof(models[0].name) - 1] = '\0';
+    initializedAnyModel = true;
+  }
+
+  if (initializedAnyModel || repairedAnyMix) {
     saveModels();
   }
 
@@ -326,6 +657,7 @@ void setup() {
   // SET ACTIVE MODEL
   activeModel = 0;
   currentModelName = String(models[0].name);
+  currentDrive = getModelDriveType(0);
 
   // optional polish
   trimRenderX = models[activeModel].trimX[currentTrimPage];
@@ -383,6 +715,7 @@ void loop() {
   static float lastRX = 0;
   static unsigned long lastDpadTime = 0;
   static unsigned long lastMainFrameTime = 0;
+  static unsigned long lastTopBarFrameTime = 0;
 
   if (keyboardActive) {
 
@@ -434,6 +767,13 @@ void loop() {
     lastRX = rightThrottle;
   }
 
+  if (currentScreen != SCREEN_SPLASH &&
+      currentScreen != SCREEN_MAIN &&
+      now - lastTopBarFrameTime >= TOPBAR_UPDATE_INTERVAL_MS) {
+    uiNeedsRedraw = true;
+    lastTopBarFrameTime = now;
+  }
+
   if (currentScreen == SCREEN_SPLASH) {
     drawSplash();
     fullRedraw = true;
@@ -444,7 +784,88 @@ void loop() {
 
     bool didInput = false;
 
-    if (currentScreen == SCREEN_MAIN) {
+    if (mixNumpadActive) {
+      dpadFocusVisible = true;
+      const char* mixPadLayout[4][3] = {
+        {"1", "2", "3"},
+        {"4", "5", "6"},
+        {"7", "8", "9"},
+        {"<", "0", "-"}
+      };
+
+      if (down) {
+        mixNumpadCursorRow = (mixNumpadCursorRow + 1) % 4;
+        if (mixNumpadCursorRow > 0 && mixNumpadCursorCol > 2) {
+          mixNumpadCursorCol = 2;
+        }
+        mixNumpadNeedsRedraw = true;
+        didInput = true;
+      }
+
+      if (left) {
+        mixNumpadCursorCol--;
+        if (mixNumpadCursorRow == 0) {
+          if (mixNumpadCursorCol < 0) mixNumpadCursorCol = 3;
+        } else {
+          if (mixNumpadCursorCol < 0) mixNumpadCursorCol = 2;
+        }
+        mixNumpadNeedsRedraw = true;
+        didInput = true;
+      }
+
+      if (right) {
+        int maxCol = (mixNumpadCursorRow == 0) ? 4 : 3;
+        mixNumpadCursorCol = (mixNumpadCursorCol + 1) % maxCol;
+        mixNumpadNeedsRedraw = true;
+        didInput = true;
+      }
+
+      if (select) {
+        if (mixNumpadCursorRow == 0 && mixNumpadCursorCol == 3) {
+          closeMixNumpad(true);
+          mixNumpadNeedsRedraw = true;
+          uiNeedsRedraw = true;
+          didInput = true;
+        }
+        else {
+          const char* key = mixPadLayout[mixNumpadCursorRow][mixNumpadCursorCol];
+
+          if (strcmp(key, "<") == 0) {
+            if (mixNumpadBuffer.length() > 0) {
+              mixNumpadBuffer.remove(mixNumpadBuffer.length() - 1);
+              if (mixNumpadBuffer == "-") mixNumpadBuffer = "";
+            }
+          }
+          else if (strcmp(key, "-") == 0) {
+            if (mixNumpadBuffer.startsWith("-")) mixNumpadBuffer.remove(0, 1);
+            else mixNumpadBuffer = "-" + mixNumpadBuffer;
+            if (mixNumpadBuffer.length() == 0) mixNumpadBuffer = "-";
+          }
+          else {
+            String candidate = mixNumpadBuffer;
+            if (candidate == "0") candidate = "";
+            if (candidate == "-0") candidate = "-";
+            candidate += key;
+
+            int digitCount = 0;
+            for (int i = 0; i < candidate.length(); i++) {
+              if (candidate[i] >= '0' && candidate[i] <= '9') digitCount++;
+            }
+
+            int parsedValue = candidate.toInt();
+            if (digitCount <= 3 && (candidate == "-" || (parsedValue >= -100 && parsedValue <= 100))) {
+              mixNumpadBuffer = candidate;
+            }
+          }
+
+          mixNumpadNeedsRedraw = true;
+          uiNeedsRedraw = true;
+          didInput = true;
+        }
+      }
+    }
+    else if (currentScreen == SCREEN_MAIN) {
+      if (down || left || right || select) dpadFocusVisible = true;
 
       if (down) {
         selectedButton = BTN_MENU;
@@ -460,6 +881,7 @@ void loop() {
     }
 
   else if (currentScreen == SCREEN_MENU) {
+    if (down || left || right || select) dpadFocusVisible = true;
 
     if (down) {
 
@@ -491,9 +913,405 @@ void loop() {
       userActive = true;
     }
   }
+  else if (currentScreen == SCREEN_CONTROLLER_SETTINGS) {
+    if (down || left || right || select) dpadFocusVisible = true;
+
+    if (down) {
+      if (selectedButton == BTN_NONE) selectedButton = BTN_REVERSE;
+      else if (selectedButton == BTN_REVERSE) selectedButton = BTN_TRIM;
+      else if (selectedButton == BTN_TRIM) selectedButton = BTN_FAILSAFE;
+      else if (selectedButton == BTN_FAILSAFE) selectedButton = BTN_BACK;
+      else selectedButton = BTN_REVERSE;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (left) {
+      setScreen(SCREEN_MENU);
+      didInput = true;
+    }
+
+    if (select) {
+      if (selectedButton == BTN_BACK) setScreen(SCREEN_MENU);
+      else if (selectedButton == BTN_REVERSE) setScreen(SCREEN_REVERSE);
+      else if (selectedButton == BTN_TRIM) setScreen(SCREEN_TRIM);
+      else if (selectedButton == BTN_FAILSAFE) setScreen(SCREEN_FAILSAFE);
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_MODEL_SETTINGS) {
+    if (down || left || right || select) dpadFocusVisible = true;
+
+    if (down) {
+      if (selectedButton == BTN_NONE) selectedButton = BTN_MODEL_NAME;
+      else if (selectedButton == BTN_MODEL_NAME) selectedButton = BTN_DRIVE_TYPE;
+      else if (selectedButton == BTN_DRIVE_TYPE) selectedButton = BTN_MIXING;
+      else if (selectedButton == BTN_MIXING) selectedButton = BTN_BACK;
+      else selectedButton = BTN_MODEL_NAME;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (left) {
+      setScreen(SCREEN_MENU);
+      didInput = true;
+    }
+
+    if (select) {
+      if (selectedButton == BTN_BACK) setScreen(SCREEN_MENU);
+      else if (selectedButton == BTN_MODEL_NAME) setScreen(SCREEN_MODEL_NAME);
+      else if (selectedButton == BTN_DRIVE_TYPE) setScreen(SCREEN_DRIVE_TYPE);
+      else if (selectedButton == BTN_MIXING) setScreen(SCREEN_MIXING);
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_DRIVE_TYPE) {
+    if (down || left || right || select) dpadFocusVisible = true;
+
+    if (down) {
+      if (selectedButton == BTN_NONE || selectedButton == BTN_DRIVE_TANK) selectedButton = BTN_DRIVE_CAR;
+      else if (selectedButton == BTN_DRIVE_CAR) selectedButton = BTN_DRIVE_OMNI;
+      else if (selectedButton == BTN_DRIVE_OMNI) selectedButton = BTN_DRIVE_X_DRONE;
+      else if (selectedButton == BTN_DRIVE_X_DRONE) selectedButton = BTN_BACK;
+      else selectedButton = BTN_DRIVE_TANK;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (left) {
+      setScreen(SCREEN_MODEL_SETTINGS);
+      didInput = true;
+    }
+
+    if (select) {
+      if (selectedButton == BTN_BACK) {
+        setScreen(SCREEN_MODEL_SETTINGS);
+      } else {
+        if (selectedButton == BTN_DRIVE_TANK) {
+          currentDrive = DRIVE_TANK;
+          setModelDriveType(activeModel, DRIVE_TANK);
+          saveModels();
+          setScreen(SCREEN_TANK_MODE);
+        }
+        else {
+          if (selectedButton == BTN_DRIVE_CAR) currentDrive = DRIVE_CAR;
+          else if (selectedButton == BTN_DRIVE_OMNI) currentDrive = DRIVE_OMNI;
+          else if (selectedButton == BTN_DRIVE_X_DRONE) currentDrive = DRIVE_X_DRONE;
+
+          setModelDriveType(activeModel, currentDrive);
+          saveModels();
+          fullRedraw = true;
+          uiNeedsRedraw = true;
+        }
+      }
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_TANK_MODE) {
+    if (down || left || right || select) dpadFocusVisible = true;
+
+    if (down) {
+      if (selectedButton == BTN_NONE || selectedButton == BTN_TANK_DUAL) selectedButton = BTN_TANK_SINGLE;
+      else if (selectedButton == BTN_TANK_SINGLE) selectedButton = BTN_BACK;
+      else selectedButton = BTN_TANK_DUAL;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (left) {
+      setScreen(SCREEN_DRIVE_TYPE);
+      didInput = true;
+    }
+
+    if (select) {
+      if (selectedButton == BTN_BACK) {
+        setScreen(SCREEN_DRIVE_TYPE);
+      } else if (selectedButton == BTN_TANK_DUAL) {
+        setModelTankMode(activeModel, TANK_MODE_DUAL_STICK);
+        saveModels();
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      } else if (selectedButton == BTN_TANK_SINGLE) {
+        setModelTankMode(activeModel, TANK_MODE_RIGHT_STICK);
+        saveModels();
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_REVERSE) {
+    if (down || left || right || select) dpadFocusVisible = true;
+
+    if (down) {
+      focusIndex = (focusIndex + 1) % 6;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (left && focusIndex == 5) {
+      setScreen(SCREEN_CONTROLLER_SETTINGS);
+      didInput = true;
+    }
+
+    if (select || right) {
+      if (focusIndex == 5) {
+        setScreen(SCREEN_CONTROLLER_SETTINGS);
+      } else {
+        bool linked[5];
+        getLinkedReverseChannels(activeModel, focusIndex, linked);
+        bool newState = !models[activeModel].reverse[focusIndex];
+
+        for (int ch = 0; ch < 5; ch++) {
+          if (!linked[ch]) continue;
+          models[activeModel].reverse[ch] = newState;
+          reverseChannelDirty[ch] = true;
+        }
+
+        saveModels();
+        reverseNeedsRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_TRIM) {
+    if (down || left || right || select) dpadFocusVisible = true;
+
+    if (down) {
+      focusIndex = (focusIndex + 1) % 6;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if ((select || right || left) && focusIndex == 0) {
+      setScreen(SCREEN_CONTROLLER_SETTINGS);
+      didInput = true;
+    }
+    else if ((select || right || left) && focusIndex == 1) {
+      currentTrimPage = !currentTrimPage;
+      trimRenderX = models[activeModel].trimX[currentTrimPage];
+      trimRenderY = models[activeModel].trimY[currentTrimPage];
+      trimNeedsRedraw = true;
+      trimDirty = true;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+    else if ((select || right || left) && focusIndex >= 2 && focusIndex <= 5) {
+      if (focusIndex == 2) {
+        models[activeModel].trimX[currentTrimPage] =
+          constrain(models[activeModel].trimX[currentTrimPage] - 1, -50, 50);
+      }
+      else if (focusIndex == 3) {
+        models[activeModel].trimX[currentTrimPage] =
+          constrain(models[activeModel].trimX[currentTrimPage] + 1, -50, 50);
+      }
+      else if (focusIndex == 4) {
+        models[activeModel].trimY[currentTrimPage] =
+          constrain(models[activeModel].trimY[currentTrimPage] + 1, -50, 50);
+      }
+      else if (focusIndex == 5) {
+        models[activeModel].trimY[currentTrimPage] =
+          constrain(models[activeModel].trimY[currentTrimPage] - 1, -50, 50);
+      }
+
+      saveModels();
+      trimRenderX = models[activeModel].trimX[currentTrimPage];
+      trimRenderY = models[activeModel].trimY[currentTrimPage];
+      trimDirty = true;
+      trimNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_FAILSAFE) {
+    if (down || left || right || select) dpadFocusVisible = true;
+
+    if (down) {
+      focusIndex = (focusIndex + 1) % 6;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (left && focusIndex == 5) {
+      setScreen(SCREEN_CONTROLLER_SETTINGS);
+      didInput = true;
+    }
+
+    if (select || right) {
+      if (focusIndex == 5) {
+        setScreen(SCREEN_CONTROLLER_SETTINGS);
+      } else {
+        models[activeModel].failsafe[focusIndex] = !models[activeModel].failsafe[focusIndex];
+        saveModels();
+        failsafeDirty[focusIndex] = true;
+        failsafeNeedsRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_MODEL_NAME) {
+    if (down || left || right || select) dpadFocusVisible = true;
+
+    if (down) {
+      focusIndex = (focusIndex + 1) % 10;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (left) {
+      if (focusIndex == 0) setScreen(SCREEN_MODEL_SETTINGS);
+      else {
+        focusIndex = 0;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      didInput = true;
+    }
+
+    if (select) {
+      if (focusIndex == 0) {
+        setScreen(SCREEN_MODEL_SETTINGS);
+      }
+      else if (focusIndex == 1) {
+        int targetModel = (selectedModelIndex >= 0) ? selectedModelIndex : activeModel;
+        keyboardBuffer = modelNames[targetModel];
+        selectedModelIndex = targetModel;
+        keyboardActive = true;
+        keyboardLowercase = false;
+        keyboardNeedsRedraw = true;
+        inputBoxSelected = true;
+      }
+      else if (focusIndex >= 2 && focusIndex <= 5) {
+        int i = focusIndex - 2;
+        selectedModelIndex = i;
+        if (modelNames[i].length() == 0) {
+          keyboardBuffer = "";
+          keyboardActive = true;
+          keyboardLowercase = false;
+          keyboardNeedsRedraw = true;
+          inputBoxSelected = true;
+          modelNameDirty = true;
+          modelNameNeedsRedraw = true;
+          uiNeedsRedraw = true;
+        } else {
+          selectModelSlot(i);
+        }
+      }
+      else if (focusIndex >= 6 && focusIndex <= 9) {
+        int i = focusIndex - 6;
+        for (int j = i; j < 3; j++) {
+          modelNames[j] = modelNames[j + 1];
+          models[j] = models[j + 1];
+        }
+        modelNames[3] = "";
+        initModelDefaults(3);
+        saveModels();
+        modelNameDirty = true;
+        modelNameNeedsRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_MIXING) {
+    if (down || left || right || select) dpadFocusVisible = true;
+
+    if (down) {
+      focusIndex = (focusIndex + 1) % 14;
+      mixingNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    MixData &mix = models[activeModel].mixes[selectedMixIndex];
+
+    if (left && focusIndex == 0) {
+      setScreen(SCREEN_MODEL_SETTINGS);
+      didInput = true;
+    }
+    else if ((select || left || right) && focusIndex >= 1 && focusIndex <= 4) {
+      if (left && focusIndex > 1) focusIndex--;
+      else if (right && focusIndex < 4) focusIndex++;
+      selectedMixIndex = focusIndex - 1;
+      mixingNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+    else if (focusIndex == 5 && (select || left || right)) {
+      mix.enabled = !mix.enabled;
+      saveModels();
+      mixingNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+    else if (focusIndex == 6 && (select || left || right)) {
+      if (left) mix.source = (mix.source + 4) % 5;
+      else mix.source = (mix.source + 1) % 5;
+      if (mix.source == mix.destination) mix.destination = (mix.destination + 1) % 5;
+      saveModels();
+      mixingNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+    else if (focusIndex == 7 && (select || left || right)) {
+      if (left) mix.destination = (mix.destination + 4) % 5;
+      else mix.destination = (mix.destination + 1) % 5;
+      if (mix.destination == mix.source) mix.destination = (mix.destination + 1) % 5;
+      saveModels();
+      mixingNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+    else if (focusIndex == 8 && (select || left || right)) {
+      mix.rate = constrain(mix.rate - 1, -100, 100);
+      saveModels();
+      mixingNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+    else if (focusIndex == 9 && select) {
+      openMixNumpad(true);
+      didInput = true;
+    }
+    else if (focusIndex == 10 && (select || left || right)) {
+      mix.rate = constrain(mix.rate + 1, -100, 100);
+      saveModels();
+      mixingNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+    else if (focusIndex == 11 && (select || left || right)) {
+      mix.offset = constrain(mix.offset - 1, -100, 100);
+      saveModels();
+      mixingNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+    else if (focusIndex == 12 && select) {
+      openMixNumpad(false);
+      didInput = true;
+    }
+    else if (focusIndex == 13 && (select || left || right)) {
+      mix.offset = constrain(mix.offset + 1, -100, 100);
+      saveModels();
+      mixingNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+  }
 
     if (didInput) {
       lastDpadTime = millis();
+      userActive = true;
     }
   }
 
@@ -505,6 +1323,17 @@ void loop() {
 
   x = constrain(x, 0, 240);
   y = constrain(y, 0, 320);
+
+  if (isTouching &&
+      currentScreen == SCREEN_MODEL_NAME &&
+      pendingModelHoldIndex >= 0 &&
+      !pendingModelHoldTriggered &&
+      !keyboardActive &&
+      (millis() - pendingModelHoldStart >= MODEL_NAME_HOLD_MS)) {
+    pendingModelHoldTriggered = true;
+    beginModelNameEdit(pendingModelHoldIndex);
+    uiNeedsRedraw = true;
+  }
 
     // ===== DPAD =====
   if (select || down || left || right) {
@@ -526,6 +1355,16 @@ void loop() {
 
 // ===== RELEASE → ACTION =====
 if (!isTouching && waitingForRelease) {
+  if (currentScreen == SCREEN_MODEL_NAME && pendingModelHoldIndex >= 0) {
+    if (!pendingModelHoldTriggered) {
+      selectModelSlot(pendingModelHoldIndex);
+    }
+
+    pendingModelHoldIndex = -1;
+    pendingModelHoldStart = 0;
+    pendingModelHoldTriggered = false;
+  }
+
   waitingForRelease = false;
   pressedButton = BTN_NONE;
 
@@ -547,6 +1386,10 @@ if (!isTouching && waitingForRelease) {
     if (nextScreen == SCREEN_FAILSAFE) {
       failsafeNeedsRedraw = true;
       for (int i = 0; i < 5; i++) failsafeDirty[i] = true;
+    }
+
+    if (nextScreen == SCREEN_MIXING) {
+      mixingNeedsRedraw = true;
     }
 
     if (nextScreen != currentScreen) {
@@ -634,6 +1477,15 @@ if (!isTouching && waitingForRelease) {
           case SCREEN_DRIVE_TYPE:
           drawDriveTypeScreen();
           break;
+
+          case SCREEN_TANK_MODE:
+          drawTankModeScreen();
+          break;
+
+          case SCREEN_MIXING:
+          drawMixingStatic();
+          mixingNeedsRedraw = true;
+          break;
         }
           
         drawTopBarStatic();
@@ -652,6 +1504,9 @@ if (!isTouching && waitingForRelease) {
       if (currentScreen == SCREEN_MODEL_NAME) {
       drawModelNameDynamic();
       }
+      if (currentScreen == SCREEN_MIXING) {
+      drawMixingDynamic();
+      }
     drawTopBarDynamic();
     }
 
@@ -668,11 +1523,20 @@ if (!isTouching && waitingForRelease) {
   drawKeyboardDynamic();
   }
 
+  if (mixNumpadActive && mixNumpadNeedsRedraw) {
+    drawMixNumpad();
+    mixNumpadNeedsRedraw = false;
+  }
+
   switch (currentScreen) {
   }
       
   // ===== TOUCH =====
   if (isTouching) {
+    if (dpadFocusVisible) {
+      dpadFocusVisible = false;
+      uiNeedsRedraw = true;
+    }
 
     // ===== WAKE ONLY =====
     if (!screenAwake) {
@@ -698,6 +1562,12 @@ if (!isTouching && waitingForRelease) {
   else {
     if (touchActive) delay(30);
       touchActive = false;
+
+    if (!waitingForRelease) {
+      pendingModelHoldIndex = -1;
+      pendingModelHoldStart = 0;
+      pendingModelHoldTriggered = false;
+    }
   }
 
   // ===== UPDATE TIMER =====
@@ -913,7 +1783,7 @@ void drawMenuScreen() {
     100, BTN_HEIGHT,
     "BACK",
     pressedButton == BTN_BACK,
-    selectedButton == BTN_BACK,
+    dpadFocusVisible && selectedButton == BTN_BACK,
     BACK_TEXT_OFFSET);
 
   tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
@@ -924,7 +1794,7 @@ void drawMenuScreen() {
     CTRL_BTN_W, CTRL_BTN_H,
     "Controller",
     pressedButton == BTN_CTRL,
-    selectedButton == BTN_CTRL,
+    dpadFocusVisible && selectedButton == BTN_CTRL,
     100);
 
   drawButtonBubble(
@@ -932,7 +1802,7 @@ void drawMenuScreen() {
     MODEL_BTN_W, MODEL_BTN_H,
     "Model",
     pressedButton == BTN_MODEL,
-    selectedButton == BTN_MODEL,
+    dpadFocusVisible && selectedButton == BTN_MODEL,
     100);
 }
 
@@ -943,14 +1813,17 @@ void drawMenuScreen() {
     BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
     "BACK",
     pressedButton == BTN_BACK,
-    selectedButton == BTN_BACK,
+    dpadFocusVisible && selectedButton == BTN_BACK,
     BACK_TEXT_OFFSET);
 
     tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
 
-  drawButtonBubble(20, 50, 200, BTN_HEIGHT, "Reverse", false, false, 100);
-  drawButtonBubble(20, 120, 200, BTN_HEIGHT, "Trim", false, false, 100);
-  drawButtonBubble(20, 190, 200, BTN_HEIGHT, "Failsafe", false, false, 100);
+  drawButtonBubble(20, 50, 200, BTN_HEIGHT, "Reverse",
+                   pressedButton == BTN_REVERSE, dpadFocusVisible && selectedButton == BTN_REVERSE, 100);
+  drawButtonBubble(20, 120, 200, BTN_HEIGHT, "Trim",
+                   pressedButton == BTN_TRIM, dpadFocusVisible && selectedButton == BTN_TRIM, 100);
+  drawButtonBubble(20, 190, 200, BTN_HEIGHT, "Failsafe",
+                   pressedButton == BTN_FAILSAFE, dpadFocusVisible && selectedButton == BTN_FAILSAFE, 100);
   }
 
   void drawModelSettings() {
@@ -960,14 +1833,17 @@ void drawMenuScreen() {
     BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
     "BACK",
     pressedButton == BTN_BACK,
-    selectedButton == BTN_BACK,
+    dpadFocusVisible && selectedButton == BTN_BACK,
     BACK_TEXT_OFFSET);
 
     tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
 
-  drawButtonBubble(20, 50, 200, BTN_HEIGHT, "Model Name", false, false, 100);
-  drawButtonBubble(20, 120, 200, BTN_HEIGHT, "Drive Type", false, false, 100);
-  drawButtonBubble(20, 190, 200, BTN_HEIGHT, "Mixing", false, false, 100);
+  drawButtonBubble(20, 50, 200, BTN_HEIGHT, "Model Name",
+                   pressedButton == BTN_MODEL_NAME, dpadFocusVisible && selectedButton == BTN_MODEL_NAME, 100);
+  drawButtonBubble(20, 120, 200, BTN_HEIGHT, "Drive Type",
+                   pressedButton == BTN_DRIVE_TYPE, dpadFocusVisible && selectedButton == BTN_DRIVE_TYPE, 100);
+  drawButtonBubble(20, 190, 200, BTN_HEIGHT, "Mixing",
+                   pressedButton == BTN_MIXING, dpadFocusVisible && selectedButton == BTN_MIXING, 100);
 }
 
 void drawDriveTypeScreen() {
@@ -977,7 +1853,7 @@ void drawDriveTypeScreen() {
     BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
     "BACK",
     pressedButton == BTN_BACK,
-    selectedButton == BTN_BACK,
+    dpadFocusVisible && selectedButton == BTN_BACK,
     BACK_TEXT_OFFSET);
 
   tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
@@ -996,16 +1872,62 @@ void drawDriveTypeScreen() {
                       "X-Drone", DRIVE_X_DRONE, BTN_DRIVE_X_DRONE);
 }
 
+void drawTankModeScreen() {
+  tft.fillScreen(COLOR_BG);
+
+  drawButtonBubble(
+    BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
+    "BACK",
+    pressedButton == BTN_BACK,
+    dpadFocusVisible && selectedButton == BTN_BACK,
+    BACK_TEXT_OFFSET);
+
+  tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
+  tft.setTextFont(2);
+  tft.setTextColor(COLOR_TEXT);
+  tft.drawCentreString("Tank Control", 120, 38, 2);
+
+  bool dualActive = (getModelTankMode(activeModel) == TANK_MODE_DUAL_STICK);
+  bool singleActive = !dualActive;
+
+  drawButtonBubble(20, 70, 200, 72, "2 Stick",
+                   pressedButton == BTN_TANK_DUAL,
+                   dualActive || (dpadFocusVisible && selectedButton == BTN_TANK_DUAL),
+                   102);
+  drawButtonBubble(20, 160, 200, 72, "1 Stick",
+                   pressedButton == BTN_TANK_SINGLE,
+                   singleActive || (dpadFocusVisible && selectedButton == BTN_TANK_SINGLE),
+                   102);
+
+  uint16_t dualColor = dualActive ? COLOR_BG : COLOR_ACCENT;
+  uint16_t singleColor = singleActive ? COLOR_BG : COLOR_ACCENT;
+
+  // simple 2-stick icon
+  tft.drawRoundRect(34, 89, 34, 26, 6, dualColor);
+  tft.drawRoundRect(76, 89, 34, 26, 6, dualColor);
+  tft.drawCircle(51, 102, 5, dualColor);
+  tft.drawCircle(93, 102, 5, dualColor);
+
+  // simple 1-stick icon
+  tft.drawRoundRect(55, 179, 34, 26, 6, singleColor);
+  tft.drawCircle(72, 192, 5, singleColor);
+  tft.drawLine(72, 171, 72, 179, singleColor);
+  tft.drawLine(72, 213, 72, 205, singleColor);
+  tft.drawLine(47, 192, 55, 192, singleColor);
+  tft.drawLine(89, 192, 97, 192, singleColor);
+}
+
 void drawDriveTypeOption(int x, int y, int w, int h, const char* label,
                          DriveType drive, ButtonID button) {
 
   bool active = (currentDrive == drive);
   bool pressed = (pressedButton == button);
+  bool focused = (dpadFocusVisible && selectedButton == button);
 
   uint16_t baseColor = active ? COLOR_ACCENT : COLOR_PANEL;
   uint16_t textColor = active ? COLOR_BG : COLOR_TEXT;
   uint16_t iconColor = active ? COLOR_BG : COLOR_ACCENT;
-  uint16_t outlineColor = active ? COLOR_ACCENT_HI : COLOR_ACCENT;
+  uint16_t outlineColor = active ? COLOR_ACCENT_HI : (focused ? COLOR_ACCENT_HI : COLOR_ACCENT);
 
   int drawY = pressed ? y + 2 : y;
   int radius = 10;
@@ -1048,6 +1970,9 @@ void drawDriveTypeOption(int x, int y, int w, int h, const char* label,
 
   if (active) {
     tft.drawRoundRect(x + 2, drawY + 2, w - 4, h - 4, radius - 2, COLOR_ACCENT_HI);
+  }
+  else if (focused) {
+    tft.drawRoundRect(x + 2, drawY + 2, w - 4, h - 4, radius - 2, COLOR_TEXT);
   }
 
   tft.setTextFont(2);
@@ -1110,6 +2035,46 @@ void closeKeyboard() {
   uiNeedsRedraw = true;
 }
 
+void openMixNumpad(bool editRate) {
+  MixData &mix = models[activeModel].mixes[selectedMixIndex];
+
+  mixNumpadEditingRate = editRate;
+  mixNumpadBuffer = String(editRate ? mix.rate : mix.offset);
+  mixNumpadActive = true;
+  mixNumpadNeedsRedraw = true;
+  mixNumpadCursorRow = 0;
+  mixNumpadCursorCol = 0;
+  mixingNeedsRedraw = true;
+  uiNeedsRedraw = true;
+}
+
+void closeMixNumpad(bool commitValue) {
+  if (!mixNumpadActive) return;
+
+  if (commitValue) {
+    int parsedValue = 0;
+
+    if (mixNumpadBuffer.length() > 0 && mixNumpadBuffer != "-") {
+      parsedValue = constrain(mixNumpadBuffer.toInt(), -100, 100);
+    }
+
+    MixData &mix = models[activeModel].mixes[selectedMixIndex];
+    if (mixNumpadEditingRate) {
+      mix.rate = parsedValue;
+    } else {
+      mix.offset = parsedValue;
+    }
+
+    saveModels();
+    mixingNeedsRedraw = true;
+  }
+
+  mixNumpadActive = false;
+  mixNumpadNeedsRedraw = false;
+  fullRedraw = true;
+  uiNeedsRedraw = true;
+}
+
 // ===== FUNCTIONS =====
 int mapTouch(int val, int in_min, int in_max, int out_min, int out_max) {
   return (val - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
@@ -1123,6 +2088,31 @@ void setScreen(Screen screen) {
 
   currentScreen = screen;
   lastScreen = screen;
+  dpadFocusVisible = false;
+  selectedButton = BTN_NONE;
+  focusIndex = 0;
+
+  if (screen == SCREEN_MENU) {
+    selectedButton = BTN_CTRL;
+  }
+  else if (screen == SCREEN_CONTROLLER_SETTINGS) {
+    selectedButton = BTN_REVERSE;
+  }
+  else if (screen == SCREEN_MODEL_SETTINGS) {
+    selectedButton = BTN_MODEL_NAME;
+  }
+  else if (screen == SCREEN_DRIVE_TYPE) {
+    if (currentDrive == DRIVE_TANK) selectedButton = BTN_DRIVE_TANK;
+    else if (currentDrive == DRIVE_CAR) selectedButton = BTN_DRIVE_CAR;
+    else if (currentDrive == DRIVE_OMNI) selectedButton = BTN_DRIVE_OMNI;
+    else selectedButton = BTN_DRIVE_X_DRONE;
+  }
+  else if (screen == SCREEN_TANK_MODE) {
+    selectedButton = (getModelTankMode(activeModel) == TANK_MODE_RIGHT_STICK)
+      ? BTN_TANK_SINGLE
+      : BTN_TANK_DUAL;
+  }
+
   fullRedraw = true;
   uiNeedsRedraw = true;
   screenChangePending = false;
@@ -1160,6 +2150,8 @@ void saveKeyboardBufferToModelSlot() {
 
   trimRenderX = models[targetModel].trimX[currentTrimPage];
   trimRenderY = models[targetModel].trimY[currentTrimPage];
+  selectedMixIndex = 0;
+  mixingNeedsRedraw = true;
 
   saveModels();
 }
@@ -1180,6 +2172,7 @@ void saveModels() {
     addr += sizeof(ModelData);
   }
 
+  EEPROM.write(EEPROM_MIX_VERSION_ADDR, MIX_STORAGE_VERSION);
   EEPROM.commit();
 }
 
@@ -1197,6 +2190,11 @@ void handleTouch(int x, int y) {
 
   if (keyboardActive) {
     handleKeyboardTouch(x, y);
+    return;
+  }
+
+  if (mixNumpadActive) {
+    handleMixNumpadTouch(x, y);
     return;
   }
 
@@ -1281,9 +2279,80 @@ void handleTouch(int x, int y) {
 
   // ===== MIXING =====
   else if (isInside(x, y, 20, 190, 200, BTN_HEIGHT)) {
-    // (future)
+    queueScreenButton(BTN_MIXING, SCREEN_MIXING);
+    return;
   }
 }
+
+  // ===== MIXING =====
+  else if (currentScreen == SCREEN_MIXING) {
+
+    if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
+      queueScreenButton(BTN_BACK, SCREEN_MODEL_SETTINGS);
+      return;
+    }
+
+    if (waitingForRelease) return;
+
+    for (int i = 0; i < MIX_COUNT; i++) {
+      if (isInside(x, y, MIX_TAB_X(i), MIX_TAB_Y, MIX_TAB_W, MIX_TAB_H)) {
+        selectedMixIndex = i;
+        mixingNeedsRedraw = true;
+        uiNeedsRedraw = true;
+        waitingForRelease = true;
+        return;
+      }
+    }
+
+    MixData &mix = models[activeModel].mixes[selectedMixIndex];
+
+    if (isInside(x, y, MIX_FIELD_X, MIX_ROW_ENABLE_Y, MIX_FIELD_W, MIX_FIELD_H)) {
+      mix.enabled = !mix.enabled;
+    }
+    else if (isInside(x, y, MIX_FIELD_X, MIX_ROW_SOURCE_Y, MIX_FIELD_W, MIX_FIELD_H)) {
+      mix.source = (mix.source + 1) % 5;
+      if (mix.source == mix.destination) {
+        mix.destination = (mix.destination + 1) % 5;
+      }
+    }
+    else if (isInside(x, y, MIX_FIELD_X, MIX_ROW_DEST_Y, MIX_FIELD_W, MIX_FIELD_H)) {
+      mix.destination = (mix.destination + 1) % 5;
+      if (mix.destination == mix.source) {
+        mix.destination = (mix.destination + 1) % 5;
+      }
+    }
+    else if (isInside(x, y, MIX_VALUE_X, MIX_ROW_RATE_Y, MIX_VALUE_W, MIX_FIELD_H)) {
+      openMixNumpad(true);
+      waitingForRelease = true;
+      return;
+    }
+    else if (isInside(x, y, MIX_VALUE_X, MIX_ROW_OFFS_Y, MIX_VALUE_W, MIX_FIELD_H)) {
+      openMixNumpad(false);
+      waitingForRelease = true;
+      return;
+    }
+    else if (isInside(x, y, MIX_MINUS_X, MIX_ROW_RATE_Y, MIX_ADJUST_W, MIX_FIELD_H)) {
+      mix.rate = constrain(mix.rate - 1, -100, 100);
+    }
+    else if (isInside(x, y, MIX_PLUS_X, MIX_ROW_RATE_Y, MIX_ADJUST_W, MIX_FIELD_H)) {
+      mix.rate = constrain(mix.rate + 1, -100, 100);
+    }
+    else if (isInside(x, y, MIX_MINUS_X, MIX_ROW_OFFS_Y, MIX_ADJUST_W, MIX_FIELD_H)) {
+      mix.offset = constrain(mix.offset - 1, -100, 100);
+    }
+    else if (isInside(x, y, MIX_PLUS_X, MIX_ROW_OFFS_Y, MIX_ADJUST_W, MIX_FIELD_H)) {
+      mix.offset = constrain(mix.offset + 1, -100, 100);
+    }
+    else {
+      return;
+    }
+
+    saveModels();
+    mixingNeedsRedraw = true;
+    uiNeedsRedraw = true;
+    waitingForRelease = true;
+    return;
+  }
 
   // ===== DRIVE TYPE =====
   else if (currentScreen == SCREEN_DRIVE_TYPE) {
@@ -1301,8 +2370,11 @@ void handleTouch(int x, int y) {
                    DRIVE_BTN_W + (DRIVE_TOUCH_PAD * 2),
                    DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
         currentDrive = DRIVE_TANK;
+        setModelDriveType(activeModel, DRIVE_TANK);
         pressedButton = BTN_DRIVE_TANK;
         selectedButton = BTN_DRIVE_TANK;
+        nextScreen = SCREEN_TANK_MODE;
+        screenChangePending = true;
       }
       else if (isInside(x, y,
                         DRIVE_BTN_X2 - DRIVE_TOUCH_PAD,
@@ -1310,8 +2382,10 @@ void handleTouch(int x, int y) {
                         DRIVE_BTN_W + (DRIVE_TOUCH_PAD * 2),
                         DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
         currentDrive = DRIVE_CAR;
+        setModelDriveType(activeModel, DRIVE_CAR);
         pressedButton = BTN_DRIVE_CAR;
         selectedButton = BTN_DRIVE_CAR;
+        screenChangePending = false;
       }
       else if (isInside(x, y,
                         DRIVE_BTN_X1 - DRIVE_TOUCH_PAD,
@@ -1319,8 +2393,10 @@ void handleTouch(int x, int y) {
                         DRIVE_BTN_W + (DRIVE_TOUCH_PAD * 2),
                         DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
         currentDrive = DRIVE_OMNI;
+        setModelDriveType(activeModel, DRIVE_OMNI);
         pressedButton = BTN_DRIVE_OMNI;
         selectedButton = BTN_DRIVE_OMNI;
+        screenChangePending = false;
       }
       else if (isInside(x, y,
                         DRIVE_BTN_X2 - DRIVE_TOUCH_PAD,
@@ -1328,13 +2404,47 @@ void handleTouch(int x, int y) {
                         DRIVE_BTN_W + (DRIVE_TOUCH_PAD * 2),
                         DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
         currentDrive = DRIVE_X_DRONE;
+        setModelDriveType(activeModel, DRIVE_X_DRONE);
         pressedButton = BTN_DRIVE_X_DRONE;
         selectedButton = BTN_DRIVE_X_DRONE;
+        screenChangePending = false;
       }
       else {
         return;
       }
 
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      saveModels();
+      waitingForRelease = true;
+    }
+
+    return;
+  }
+
+  // ===== TANK MODE =====
+  else if (currentScreen == SCREEN_TANK_MODE) {
+    if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
+      queueScreenButton(BTN_BACK, SCREEN_DRIVE_TYPE);
+      return;
+    }
+
+    if (!waitingForRelease) {
+      if (isInside(x, y, 20, 70, 200, 72)) {
+        setModelTankMode(activeModel, TANK_MODE_DUAL_STICK);
+        pressedButton = BTN_TANK_DUAL;
+        selectedButton = BTN_TANK_DUAL;
+      }
+      else if (isInside(x, y, 20, 160, 200, 72)) {
+        setModelTankMode(activeModel, TANK_MODE_RIGHT_STICK);
+        pressedButton = BTN_TANK_SINGLE;
+        selectedButton = BTN_TANK_SINGLE;
+      }
+      else {
+        return;
+      }
+
+      saveModels();
       fullRedraw = true;
       uiNeedsRedraw = true;
       waitingForRelease = true;
@@ -1367,9 +2477,18 @@ void handleTouch(int x, int y) {
       if (isInside(x, y, tx, ty, tw, th)) {
 
         if (!waitingForRelease) {
-          models[activeModel].reverse[i] = !models[activeModel].reverse[i];
+          bool linked[5];
+          getLinkedReverseChannels(activeModel, i, linked);
+          bool newState = !models[activeModel].reverse[i];
+
+          for (int ch = 0; ch < 5; ch++) {
+            if (!linked[ch]) continue;
+            models[activeModel].reverse[ch] = newState;
+            reverseChannelDirty[ch] = true;
+          }
+
           saveModels();
-          reverseChannelDirty[i] = true;
+          reverseNeedsRedraw = true;
           uiNeedsRedraw = true;
           waitingForRelease = true;
         }
@@ -1542,6 +2661,7 @@ void handleTouch(int x, int y) {
     if (isInside(x, y, 10, 65, 220, 30)) {
       if (!waitingForRelease) {
         keyboardActive = true;
+        keyboardLowercase = false;
         keyboardNeedsRedraw = true;
         inputBoxSelected = true;
         waitingForRelease = true;
@@ -1568,6 +2688,7 @@ void handleTouch(int x, int y) {
           if (modelNames[i].length() == 0) {
             keyboardBuffer = "";
             keyboardActive = true;
+            keyboardLowercase = false;
             keyboardNeedsRedraw = true;
             inputBoxSelected = true;
             modelNameDirty = true;
@@ -1577,31 +2698,10 @@ void handleTouch(int x, int y) {
             return;
           }
 
-          activeModel = i;
-
-currentModelName = String(models[i].name);
-
-// sync trim render
-trimRenderX = models[i].trimX[currentTrimPage];
-trimRenderY = models[i].trimY[currentTrimPage];
-
-// ===== FORCE UI UPDATES =====
-trimNeedsRedraw = true;
-reverseNeedsRedraw = true;
-failsafeNeedsRedraw = true;
-trimDirty = true;
-
-// 🔥 THIS WAS MISSING
-modelNameDirty = true;
-modelNameNeedsRedraw = true;
-
-for (int c = 0; c < 5; c++) {
-  reverseChannelDirty[c] = true;
-  failsafeDirty[c] = true;
-}
-
-uiNeedsRedraw = true;
-waitingForRelease = true;
+          pendingModelHoldIndex = i;
+          pendingModelHoldStart = millis();
+          pendingModelHoldTriggered = false;
+          waitingForRelease = true;
         }
 
         return;
@@ -1665,7 +2765,7 @@ bool handleKeyboardTouch(int x, int y) {
   for (int r = 0; r < KB_ROWS; r++) {
     for (int c = 0; c < KB_COLS; c++) {
 
-      const char* key = keyboardLayout[r][c];
+      const char* key = getKeyboardKey(r, c);
       if (strlen(key) == 0) continue;
 
       int kx = kbX + c * (keyW + keySpacing) + 5;
@@ -1689,50 +2789,112 @@ bool handleKeyboardTouch(int x, int y) {
           kbPressedRow = r;
           kbPressedCol = c;
 
-          // ===== BACKSPACE =====
-          if (strcmp(key, "<") == 0) {
-            if (keyboardBuffer.length() > 0) {
-              keyboardBuffer.remove(keyboardBuffer.length() - 1);
-              modelNameDirty = true;
-            }
-          }
-
-          // ===== OK / SAVE =====
-          else if (strcmp(key, "OK") == 0) {
-
-            if (keyboardBuffer.length() > 0) {
-              saveKeyboardBufferToModelSlot();
-            }
-
-            // ===== CLEAR INPUT =====
-              keyboardBuffer = "";
-
-            // ===== FORCE UI UPDATE =====
-            modelNameDirty = true;
-            modelNameNeedsRedraw = true;
-            uiNeedsRedraw = true;
-
-            // ===== CLOSE KEYBOARD =====
-            closeKeyboard();
-          }
-
-          // ===== NORMAL INPUT =====
-          else {
-
-            // optional: prevent overflow (fits your input box better)
-            if (keyboardBuffer.length() < 18) {
-              keyboardBuffer += key;
-              modelNameDirty = true;
-            }
-          }
-
-          keyboardNeedsRedraw = true;
-          uiNeedsRedraw = true;
+          processKeyboardKey(key);
           waitingForRelease = true;
         }
 
         return true;
       }
+    }
+  }
+
+  return true;
+}
+
+bool handleMixNumpadTouch(int x, int y) {
+  if (!mixNumpadActive) return false;
+
+  if (y < MIX_NUMPAD_Y) {
+    if (!waitingForRelease) {
+      closeMixNumpad(false);
+      waitingForRelease = true;
+    }
+
+    return true;
+  }
+
+  const char* mixPadLayout[4][3] = {
+    {"1", "2", "3"},
+    {"4", "5", "6"},
+    {"7", "8", "9"},
+    {"<", "0", "-"}
+  };
+
+  if (isInside(x, y, MIX_NUMPAD_OK_X, MIX_NUMPAD_OK_Y, MIX_NUMPAD_OK_W, MIX_NUMPAD_OK_H)) {
+    if (!waitingForRelease) {
+      closeMixNumpad(true);
+      waitingForRelease = true;
+    }
+
+    return true;
+  }
+
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 3; c++) {
+      int keyX = MIX_NUMPAD_GRID_X + (c * (MIX_NUMPAD_KEY_W + MIX_NUMPAD_KEY_GAP));
+      int keyY = MIX_NUMPAD_GRID_Y + (r * (MIX_NUMPAD_KEY_H + MIX_NUMPAD_KEY_GAP));
+
+      if (!isInside(x, y, keyX, keyY, MIX_NUMPAD_KEY_W, MIX_NUMPAD_KEY_H)) continue;
+
+      if (waitingForRelease) return true;
+
+      const char* key = mixPadLayout[r][c];
+
+      if (strcmp(key, "<") == 0) {
+        if (mixNumpadBuffer.length() > 0) {
+          mixNumpadBuffer.remove(mixNumpadBuffer.length() - 1);
+
+          if (mixNumpadBuffer == "-") {
+            mixNumpadBuffer = "";
+          }
+
+          mixNumpadNeedsRedraw = true;
+          uiNeedsRedraw = true;
+        }
+      }
+      else if (strcmp(key, "-") == 0) {
+        if (mixNumpadBuffer.startsWith("-")) {
+          mixNumpadBuffer.remove(0, 1);
+        }
+        else {
+          mixNumpadBuffer = "-" + mixNumpadBuffer;
+        }
+
+        if (mixNumpadBuffer.length() == 0) {
+          mixNumpadBuffer = "-";
+        }
+
+        mixNumpadNeedsRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else {
+        String candidate = mixNumpadBuffer;
+
+        if (candidate == "0") candidate = "";
+        if (candidate == "-0") candidate = "-";
+
+        candidate += key;
+
+        bool validLength = true;
+        int digitCount = 0;
+        for (int i = 0; i < candidate.length(); i++) {
+          if (candidate[i] >= '0' && candidate[i] <= '9') digitCount++;
+        }
+
+        if (digitCount > 3) validLength = false;
+
+        if (validLength) {
+          int parsedValue = candidate.toInt();
+          if ((candidate == "-") || (parsedValue >= -100 && parsedValue <= 100)) {
+            mixNumpadBuffer = candidate;
+            mixNumpadNeedsRedraw = true;
+            uiNeedsRedraw = true;
+          }
+        }
+      }
+
+      waitingForRelease = true;
+      return true;
     }
   }
 
@@ -1911,9 +3073,22 @@ if (currentDrive == DRIVE_TANK) {
 
 static float lastLeft = 0;
 static float lastRight = 0;
+float tankLeftOutput = leftThrottle;
+float tankRightOutput = rightThrottle;
 
-if (abs(leftThrottle - lastLeft) > 0.01 ||
-    abs(rightThrottle - lastRight) > 0.01) {
+if (getModelTankMode(activeModel) == TANK_MODE_DUAL_STICK) {
+  tankLeftOutput = leftY;
+  tankRightOutput = rightY;
+}
+else {
+  float throttle = rightY;
+  float turn = rightThrottle;
+  tankLeftOutput = constrain(throttle + turn, -1.0, 1.0);
+  tankRightOutput = constrain(throttle - turn, -1.0, 1.0);
+}
+
+if (abs(tankLeftOutput - lastLeft) > 0.01 ||
+    abs(tankRightOutput - lastRight) > 0.01) {
 
   int barW = 6;
 
@@ -1935,10 +3110,10 @@ if (abs(leftThrottle - lastLeft) > 0.01 ||
   drawTankIcon(iconX, iconY, iconW, iconH, COLOR_ACCENT);
 
   // ✅ THEN bars on top
-  drawTankBars(iconX, iconY, iconW, iconH, leftThrottle, rightThrottle);
+  drawTankBars(iconX, iconY, iconW, iconH, tankLeftOutput, tankRightOutput);
 
-  lastLeft = leftThrottle;
-  lastRight = rightThrottle;
+  lastLeft = tankLeftOutput;
+  lastRight = tankRightOutput;
 }
 }
 
@@ -1951,7 +3126,7 @@ if (abs(leftThrottle - lastLeft) > 0.01 ||
       MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H,
       "MENU",
       pressedButton == BTN_MENU,
-      selectedButton == BTN_MENU,
+      dpadFocusVisible && selectedButton == BTN_MENU,
       55
     );
 
@@ -2439,7 +3614,7 @@ void drawReverseStatic() {
     BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
     "BACK",
     false,
-    false,
+    (dpadFocusVisible && focusIndex == 5),
     BACK_TEXT_OFFSET);
 
   tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
@@ -2450,12 +3625,18 @@ void drawReverseStatic() {
   for (int i = 0; i < 5; i++) {
 
     int y = startY + (i * spacing);
+    bool linked = hasLinkedReversePeers(activeModel, i);
 
     // Labels
-    tft.setTextColor(COLOR_TEXT);
+    tft.setTextColor(linked ? COLOR_ACCENT_HI : COLOR_TEXT);
     tft.setCursor(20, y + 10);
     tft.print("CH");
     tft.print(i + 1);
+
+    if (linked) {
+      tft.setCursor(58, y + 10);
+      tft.print("*");
+    }
 
     // Toggle outline
     tft.drawRoundRect(120, y, 80, 30, 10, COLOR_ACCENT);
@@ -2466,7 +3647,7 @@ void drawReverseStatic() {
     int th = 30;
 
     // LEFT label (OFF)
-    tft.setTextColor(COLOR_TEXT);
+    tft.setTextColor(linked ? COLOR_ACCENT_HI : COLOR_TEXT);
     tft.setCursor(tx - 35, ty + (th / 2) - 6);
     tft.print("OFF");
 
@@ -2487,6 +3668,7 @@ void drawReverseDynamic() {
     if (!reverseChannelDirty[i] && !reverseNeedsRedraw) continue;
 
     int y = startY + (i * spacing);
+    bool linked = hasLinkedReversePeers(activeModel, i);
 
     int tx = 120;
     int ty = y;
@@ -2502,6 +3684,14 @@ void drawReverseDynamic() {
 
     // redraw outline
     tft.drawRoundRect(tx, ty, tw, th, 10, COLOR_ACCENT);
+
+    if (linked) {
+      tft.drawRoundRect(tx - 2, ty - 2, tw + 4, th + 4, 10, COLOR_ACCENT_HI);
+    }
+
+    if (currentScreen == SCREEN_REVERSE && dpadFocusVisible && focusIndex == i) {
+      tft.drawRoundRect(tx - 2, ty - 2, tw + 4, th + 4, 10, COLOR_ACCENT_HI);
+    }
 
     // knob radius
     int r = 10;
@@ -2523,6 +3713,84 @@ void drawReverseDynamic() {
 }
 
 // ==== STATIC TRIM ====
+void drawTrimGraphBase() {
+  int cx = TRIM_CENTER_X;
+  int cy = TRIM_CENTER_Y;
+  int s  = TRIM_SIZE;
+  int step = 20;
+
+  tft.fillRect(cx - s, cy - s, (s * 2) + 1, (s * 2) + 1, COLOR_BG);
+
+  for (int i = -s; i <= s; i += step) {
+    tft.drawFastVLine(cx + i, cy - s, s * 2, TFT_DARKGREY);
+  }
+
+  for (int i = -s; i <= s; i += step) {
+    tft.drawFastHLine(cx - s, cy + i, s * 2, TFT_DARKGREY);
+  }
+
+  tft.drawLine(cx - s, cy, cx + s, cy, COLOR_ACCENT);
+  tft.drawLine(cx - s, cy + 1, cx + s, cy + 1, COLOR_ACCENT);
+  tft.drawLine(cx, cy - s, cx, cy + s, COLOR_ACCENT);
+  tft.drawLine(cx + 1, cy - s, cx + 1, cy + s, COLOR_ACCENT);
+}
+
+void drawTrimButtons() {
+  int cx = TRIM_CENTER_X;
+  int cy = TRIM_CENTER_Y;
+  int s  = TRIM_SIZE;
+
+  int offsetTopDown = 34;
+  int offsetBottomDown = 5;
+  int offsetRight = 5;
+  int offsetLeftRight = 20;
+
+  trimBtnLeftX  = cx - s - 20 + offsetLeftRight;
+  trimBtnRightX = cx + s - TRIM_BTN_SIZE - 4 + offsetRight;
+
+  trimBtnTopY = cy - s - TRIM_BTN_SIZE - 4 + offsetTopDown;
+  if (trimBtnTopY < 40) trimBtnTopY = 40;
+
+  trimBtnBottomY = cy + s - TRIM_BTN_SIZE - 4 + offsetBottomDown;
+
+  int bxLeft = cx - s - 20 + offsetLeftRight;
+  tft.fillRoundRect(trimBtnLeftX, cy - 14, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT);
+  tft.drawRoundRect(trimBtnLeftX, cy - 14, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT_HI);
+  if (currentScreen == SCREEN_TRIM && dpadFocusVisible && focusIndex == 2) {
+    tft.drawRoundRect(trimBtnLeftX - 2, cy - 16, TRIM_BTN_SIZE + 4, TRIM_BTN_SIZE + 4, 6, COLOR_TEXT);
+  }
+  tft.setTextColor(COLOR_BG);
+  tft.drawString("-", bxLeft + 10, cy - 10);
+
+  int bxRight = cx + s - TRIM_BTN_SIZE - 4 + offsetRight;
+  tft.fillRoundRect(trimBtnRightX, cy - 14, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT);
+  tft.drawRoundRect(trimBtnRightX, cy - 14, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT_HI);
+  if (currentScreen == SCREEN_TRIM && dpadFocusVisible && focusIndex == 3) {
+    tft.drawRoundRect(trimBtnRightX - 2, cy - 16, TRIM_BTN_SIZE + 4, TRIM_BTN_SIZE + 4, 6, COLOR_TEXT);
+  }
+  tft.setTextColor(COLOR_BG);
+  tft.drawString("+", bxRight + 9, cy - 10);
+
+  int byTop = cy - s - TRIM_BTN_SIZE - 4 + offsetTopDown;
+  if (byTop < 40) byTop = 40;
+  tft.fillRoundRect(cx - 14, trimBtnTopY, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT);
+  tft.drawRoundRect(cx - 14, trimBtnTopY, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT_HI);
+  if (currentScreen == SCREEN_TRIM && dpadFocusVisible && focusIndex == 4) {
+    tft.drawRoundRect(cx - 16, trimBtnTopY - 2, TRIM_BTN_SIZE + 4, TRIM_BTN_SIZE + 4, 6, COLOR_TEXT);
+  }
+  tft.setTextColor(COLOR_BG);
+  tft.drawString("+", cx - 4, byTop + 4);
+
+  int byBottom = cy + s - TRIM_BTN_SIZE - 4 + offsetBottomDown;
+  tft.fillRoundRect(cx - 14, trimBtnBottomY, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT);
+  tft.drawRoundRect(cx - 14, trimBtnBottomY, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT_HI);
+  if (currentScreen == SCREEN_TRIM && dpadFocusVisible && focusIndex == 5) {
+    tft.drawRoundRect(cx - 16, trimBtnBottomY - 2, TRIM_BTN_SIZE + 4, TRIM_BTN_SIZE + 4, 6, COLOR_TEXT);
+  }
+  tft.setTextColor(COLOR_BG);
+  tft.drawString("-", cx - 4, byBottom + 6);
+}
+
 void drawTrimStatic() {
   tft.fillScreen(COLOR_BG);
 
@@ -2532,11 +3800,11 @@ void drawTrimStatic() {
   // BACK
   drawButtonBubble(
     BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
-    "BACK", false, false, BACK_TEXT_OFFSET);
+    "BACK", false, (dpadFocusVisible && focusIndex == 0), BACK_TEXT_OFFSET);
 
   // NEXT button (right side)
   const char* navLabel = (currentTrimPage == 0) ? "NEXT" : "PREV";
-  drawButtonBubble(130, BACK_BTN_Y, 100, BTN_HEIGHT, navLabel, false, false, 40);
+  drawButtonBubble(130, BACK_BTN_Y, 100, BTN_HEIGHT, navLabel, false, (dpadFocusVisible && focusIndex == 1), 40);
 
   tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
 
@@ -2557,76 +3825,8 @@ void drawTrimStatic() {
   int cy = TRIM_CENTER_Y;
   int s  = TRIM_SIZE;
 
-  // grid spacing
-  int step = 20;
-
-  // vertical grid lines
-  for (int i = -s; i <= s; i += step) {
-    tft.drawFastVLine(cx + i, cy - s, s * 2, TFT_DARKGREY);
-  }
-
-  // horizontal grid lines
-  for (int i = -s; i <= s; i += step) {
-    tft.drawFastHLine(cx - s, cy + i, s * 2, TFT_DARKGREY);
-  }
-
-  // ===== CROSSHAIR =====
-  tft.drawLine(cx - s, cy, cx + s, cy, COLOR_ACCENT);
-  tft.drawLine(cx - s, cy + 1, cx + s, cy + 1, COLOR_ACCENT);
-
-  tft.drawLine(cx, cy - s, cx, cy + s, COLOR_ACCENT);
-  tft.drawLine(cx + 1, cy - s, cx + 1, cy + s, COLOR_ACCENT);
-
-  // ===== BUTTONS =====
-  int offsetTopDown = 34;
-  int offsetBottomDown = 5;
-  int offsetRight = 5;
-  int offsetLeftRight = 20;
-
-  trimBtnLeftX  = cx - s - 20 + offsetLeftRight;
-  trimBtnRightX = cx + s - TRIM_BTN_SIZE - 4 + offsetRight;
-
-  trimBtnTopY = cy - s - TRIM_BTN_SIZE - 4 + offsetTopDown;
-  if (trimBtnTopY < 40) trimBtnTopY = 40;
-
-  trimBtnBottomY = cy + s - TRIM_BTN_SIZE - 4 + offsetBottomDown;
-
-  // LEFT (-X)
-  int bxLeft = cx - s - 20 + offsetLeftRight;
-
-  tft.fillRoundRect(trimBtnLeftX, cy - 14, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT);
-  tft.drawRoundRect(trimBtnLeftX, cy - 14, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT_HI);
-
-  tft.setTextColor(COLOR_BG);
-  tft.drawString("-", bxLeft + 10, cy - 10);
-
-  // RIGHT (+X)
-  int bxRight = cx + s - TRIM_BTN_SIZE - 4 + offsetRight;
-
-  tft.fillRoundRect(trimBtnRightX, cy - 14, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT);
-  tft.drawRoundRect(trimBtnRightX, cy - 14, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT_HI);
-
-  tft.setTextColor(COLOR_BG);
-  tft.drawString("+", bxRight + 9, cy - 10);
-
-  // TOP (+Y)
-  int byTop = cy - s - TRIM_BTN_SIZE - 4 + offsetTopDown;
-  if (byTop < 40) byTop = 40;
-
-  tft.fillRoundRect(cx - 14, trimBtnTopY, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT);
-  tft.drawRoundRect(cx - 14, trimBtnTopY, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT_HI);
-
-  tft.setTextColor(COLOR_BG);
-  tft.drawString("+", cx - 4, byTop + 4);
-
-  // BOTTOM (-Y)
-  int byBottom = cy + s - TRIM_BTN_SIZE - 4 + offsetBottomDown;
-
-  tft.fillRoundRect(cx - 14, trimBtnBottomY, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT);
-  tft.drawRoundRect(cx - 14, trimBtnBottomY, TRIM_BTN_SIZE, TRIM_BTN_SIZE, 6, COLOR_ACCENT_HI);
-
-  tft.setTextColor(COLOR_BG);
-  tft.drawString("-", cx - 4, byBottom + 6);
+  drawTrimGraphBase();
+  drawTrimButtons();
 }
 
 // ==== DYNAMIC TRIM ====
@@ -2651,12 +3851,8 @@ void drawTrimDynamic() {
   int px = cx + trimRenderX;
   int py = cy - trimRenderY;
 
-  // ===== ERASE PREVIOUS DOT =====
-  tft.fillCircle(lastPx, lastPy, 7, COLOR_BG);
-
-  // ===== REDRAW CROSSHAIR CENTER =====
-  tft.drawLine(cx - 30, cy, cx + 30, cy, COLOR_ACCENT);
-  tft.drawLine(cx, cy - 30, cx, cy + 30, COLOR_ACCENT);
+  drawTrimGraphBase();
+  drawTrimButtons();
 
   // ===== DRAW NEW DOT =====
   tft.fillCircle(px, py, 5, COLOR_ACCENT_HI);
@@ -2708,7 +3904,7 @@ void drawFailsafeStatic() {
     BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
     "BACK",
     false,
-    false,
+    (dpadFocusVisible && focusIndex == 5),
     BACK_TEXT_OFFSET);
 
   tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
@@ -2774,6 +3970,10 @@ void drawFailsafeDynamic() {
     // ===== OUTLINE =====
     tft.drawRoundRect(tx, ty, tw, th, 10, COLOR_ACCENT);
 
+    if (currentScreen == SCREEN_FAILSAFE && dpadFocusVisible && focusIndex == i) {
+      tft.drawRoundRect(tx - 2, ty - 2, tw + 4, th + 4, 10, COLOR_ACCENT_HI);
+    }
+
     // ===== KNOB (IDENTICAL TO REVERSE) =====
     int r = 10;
 
@@ -2802,7 +4002,7 @@ void drawKeyboardStatic() {
   for (int r = 0; r < KB_ROWS; r++) {
     for (int c = 0; c < KB_COLS; c++) {
 
-      const char* key = keyboardLayout[r][c];
+      const char* key = getKeyboardKey(r, c);
       if (strlen(key) == 0) continue;
 
       int x = kbX + c * (keyW + keySpacing) + 5;
@@ -2833,7 +4033,7 @@ void drawKeyboardDynamic() {
   for (int r = 0; r < KB_ROWS; r++) {
     for (int c = 0; c < KB_COLS; c++) {
 
-      const char* key = keyboardLayout[r][c];
+      const char* key = getKeyboardKey(r, c);
       if (strlen(key) == 0) continue;
 
       int kx = kbX + c * (keyW + keySpacing) + 5;
@@ -2881,39 +4081,8 @@ void handleKeyboardSelect() {
   kbPressedRow = kbCursorRow;
   kbPressedCol = kbCursorCol;
 
-  const char* key = keyboardLayout[kbCursorRow][kbCursorCol];
-
-  if (strlen(key) == 0) return;
-
-  // ===== BACKSPACE =====
-  if (strcmp(key, "<") == 0) {
-    if (keyboardBuffer.length() > 0) {
-      keyboardBuffer.remove(keyboardBuffer.length() - 1);
-      modelNameDirty = true;
-    }
-  }
-
-  // ===== OK =====
-  else if (strcmp(key, "OK") == 0) {
-
-    if (keyboardBuffer.length() > 0) {
-      saveKeyboardBufferToModelSlot();
-    }
-
-    keyboardBuffer = "";
-    closeKeyboard();
-  }
-
-  // ===== NORMAL KEY =====
-  else {
-    if (keyboardBuffer.length() < 18) {
-      keyboardBuffer += key;
-      modelNameDirty = true;
-    }
-  }
-
-  keyboardNeedsRedraw = true;
-  uiNeedsRedraw = true;
+  const char* key = getKeyboardKey(kbCursorRow, kbCursorCol);
+  processKeyboardKey(key);
 }
 
 // ==== MODEL NAME STATIC ====
@@ -2924,7 +4093,7 @@ void drawModelNameStatic() {
   // ===== BACK =====
   drawButtonBubble(
     BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
-    "BACK", false, false, BACK_TEXT_OFFSET);
+    "BACK", false, (dpadFocusVisible && focusIndex == 0), BACK_TEXT_OFFSET);
 
   tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
 
@@ -2935,6 +4104,9 @@ void drawModelNameStatic() {
 
   // ===== INPUT BOX =====
   tft.drawRoundRect(10, 65, 220, 30, 6, COLOR_ACCENT);
+  if (dpadFocusVisible && focusIndex == 1) {
+    tft.drawRoundRect(8, 63, 224, 34, 6, COLOR_ACCENT_HI);
+  }
 
   // ===== DIVIDER =====
   tft.drawFastHLine(10, 105, 220, COLOR_ACCENT);
@@ -2974,6 +4146,9 @@ void drawModelNameDynamic() {
     if (isActive) {
       tft.fillRoundRect(boxX, y - 2, 150, 20, 5, COLOR_ACCENT);
     }
+    if (dpadFocusVisible && focusIndex == i + 2) {
+      tft.drawRoundRect(boxX - 2, y - 4, 154, 24, 5, COLOR_ACCENT_HI);
+    }
 
     // ===== SELECTOR ARROW =====
     if (isActive) {
@@ -2997,6 +4172,9 @@ void drawModelNameDynamic() {
     // ===== DELETE BUTTON =====
     tft.fillRoundRect(200, y - 2, 25, 18, 4, COLOR_PANEL);
     tft.drawRoundRect(200, y - 2, 25, 18, 4, COLOR_ACCENT);
+    if (dpadFocusVisible && focusIndex == i + 6) {
+      tft.drawRoundRect(198, y - 4, 29, 22, 4, COLOR_ACCENT_HI);
+    }
 
     tft.setTextColor(COLOR_TEXT);
     tft.setCursor(208, y);
@@ -3005,6 +4183,201 @@ void drawModelNameDynamic() {
 
   modelNameDirty = false;
   modelNameNeedsRedraw = false;
+}
+
+void drawMixNumpad() {
+  const char* mixPadLayout[4][3] = {
+    {"1", "2", "3"},
+    {"4", "5", "6"},
+    {"7", "8", "9"},
+    {"<", "0", "-"}
+  };
+
+  tft.fillRoundRect(MIX_NUMPAD_X, MIX_NUMPAD_Y, MIX_NUMPAD_W, MIX_NUMPAD_H, 10, COLOR_BG);
+  tft.drawRoundRect(MIX_NUMPAD_X, MIX_NUMPAD_Y, MIX_NUMPAD_W, MIX_NUMPAD_H, 10, COLOR_ACCENT);
+  tft.drawFastHLine(MIX_NUMPAD_X + 8, MIX_NUMPAD_Y + 30, MIX_NUMPAD_W - 16, TFT_DARKGREY);
+
+  tft.setTextColor(COLOR_TEXT);
+  tft.drawString(mixNumpadEditingRate ? "Rate" : "Offset", MIX_NUMPAD_X + 10, MIX_NUMPAD_Y + 8, 2);
+
+  tft.fillRoundRect(MIX_NUMPAD_BOX_X, MIX_NUMPAD_BOX_Y, MIX_NUMPAD_BOX_W, MIX_NUMPAD_BOX_H, 6, COLOR_PANEL);
+  tft.drawRoundRect(MIX_NUMPAD_BOX_X, MIX_NUMPAD_BOX_Y, MIX_NUMPAD_BOX_W, MIX_NUMPAD_BOX_H, 6, COLOR_ACCENT);
+  tft.setTextColor(COLOR_ACCENT_HI);
+  tft.drawRightString(mixNumpadBuffer, MIX_NUMPAD_BOX_X + MIX_NUMPAD_BOX_W - 8, MIX_NUMPAD_BOX_Y + 5, 2);
+
+  tft.fillRoundRect(MIX_NUMPAD_OK_X, MIX_NUMPAD_OK_Y, MIX_NUMPAD_OK_W, MIX_NUMPAD_OK_H, 6, COLOR_ACCENT);
+  tft.drawRoundRect(MIX_NUMPAD_OK_X, MIX_NUMPAD_OK_Y, MIX_NUMPAD_OK_W, MIX_NUMPAD_OK_H, 6, COLOR_ACCENT_HI);
+  if (mixNumpadCursorRow == 0 && mixNumpadCursorCol == 3) {
+    tft.drawRoundRect(MIX_NUMPAD_OK_X - 2, MIX_NUMPAD_OK_Y - 2, MIX_NUMPAD_OK_W + 4, MIX_NUMPAD_OK_H + 4, 6, COLOR_TEXT);
+  }
+  tft.setTextColor(COLOR_BG);
+  tft.drawCentreString("OK", MIX_NUMPAD_OK_X + (MIX_NUMPAD_OK_W / 2), MIX_NUMPAD_OK_Y + 5, 2);
+
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 3; c++) {
+      int keyX = MIX_NUMPAD_GRID_X + (c * (MIX_NUMPAD_KEY_W + MIX_NUMPAD_KEY_GAP));
+      int keyY = MIX_NUMPAD_GRID_Y + (r * (MIX_NUMPAD_KEY_H + MIX_NUMPAD_KEY_GAP));
+
+      tft.fillRoundRect(keyX, keyY, MIX_NUMPAD_KEY_W, MIX_NUMPAD_KEY_H, 6, COLOR_PANEL);
+      tft.drawRoundRect(keyX, keyY, MIX_NUMPAD_KEY_W, MIX_NUMPAD_KEY_H, 6, COLOR_ACCENT);
+      if (r == mixNumpadCursorRow && c == mixNumpadCursorCol) {
+        tft.drawRoundRect(keyX - 2, keyY - 2, MIX_NUMPAD_KEY_W + 4, MIX_NUMPAD_KEY_H + 4, 6, COLOR_ACCENT_HI);
+      }
+      tft.setTextColor(COLOR_TEXT);
+      tft.drawCentreString(mixPadLayout[r][c], keyX + (MIX_NUMPAD_KEY_W / 2), keyY + 5, 2);
+    }
+  }
+}
+
+// ==== MIXING STATIC ====
+void drawMixingStatic() {
+  tft.fillScreen(COLOR_BG);
+
+  drawButtonBubble(
+    BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
+    "BACK", false, (dpadFocusVisible && focusIndex == 0), BACK_TEXT_OFFSET);
+
+  tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
+}
+
+// ==== MIXING DYNAMIC ====
+void drawMixingDynamic() {
+  if (!mixingNeedsRedraw) return;
+
+  char valueText[12];
+  MixData &mix = models[activeModel].mixes[selectedMixIndex];
+
+  tft.fillRect(0, 38, 240, FOOTER_Y - 44, COLOR_BG);
+
+  for (int i = 0; i < MIX_COUNT; i++) {
+    bool isSelected = (i == selectedMixIndex);
+    int tabX = MIX_TAB_X(i);
+
+    tft.fillRoundRect(
+      tabX, MIX_TAB_Y, MIX_TAB_W, MIX_TAB_H, 8,
+      isSelected ? COLOR_ACCENT : COLOR_PANEL);
+    tft.drawRoundRect(tabX, MIX_TAB_Y, MIX_TAB_W, MIX_TAB_H, 8, COLOR_ACCENT);
+    if (dpadFocusVisible && focusIndex == i + 1) {
+      tft.drawRoundRect(tabX - 2, MIX_TAB_Y - 2, MIX_TAB_W + 4, MIX_TAB_H + 4, 8, COLOR_ACCENT_HI);
+    }
+
+    tft.setTextColor(isSelected ? COLOR_BG : COLOR_TEXT);
+    snprintf(valueText, sizeof(valueText), "M%d", i + 1);
+    tft.drawCentreString(valueText, tabX + (MIX_TAB_W / 2), MIX_TAB_Y + 7, 2);
+  }
+
+  tft.setTextColor(COLOR_ACCENT_HI);
+  if (mix.enabled) {
+    snprintf(valueText, sizeof(valueText), "CH%d > CH%d",
+             mix.source + 1, mix.destination + 1);
+  } else {
+    snprintf(valueText, sizeof(valueText), "Mix %d Disabled", selectedMixIndex + 1);
+  }
+  tft.drawCentreString(valueText, 120, 78, 2);
+
+  const char* labels[5] = {"Enable", "Source", "Dest", "Rate", "Offset"};
+  const int rowY[5] = {
+    MIX_ROW_ENABLE_Y, MIX_ROW_SOURCE_Y, MIX_ROW_DEST_Y, MIX_ROW_RATE_Y, MIX_ROW_OFFS_Y
+  };
+
+  tft.setTextColor(COLOR_TEXT);
+  for (int i = 0; i < 5; i++) {
+    tft.setCursor(20, rowY[i] + 8);
+    tft.print(labels[i]);
+  }
+
+  // Enable toggle
+  tft.fillRoundRect(MIX_FIELD_X + 2, MIX_ROW_ENABLE_Y + 2, MIX_FIELD_W - 4, MIX_FIELD_H - 4, 10, COLOR_PANEL);
+  tft.drawRoundRect(MIX_FIELD_X, MIX_ROW_ENABLE_Y, MIX_FIELD_W, MIX_FIELD_H, 10, COLOR_ACCENT);
+  if (dpadFocusVisible && focusIndex == 5) {
+    tft.drawRoundRect(MIX_FIELD_X - 2, MIX_ROW_ENABLE_Y - 2, MIX_FIELD_W + 4, MIX_FIELD_H + 4, 10, COLOR_ACCENT_HI);
+  }
+  tft.setTextColor(COLOR_TEXT);
+  tft.drawString("OFF", MIX_FIELD_X - 34, MIX_ROW_ENABLE_Y + 8, 2);
+  tft.drawString("ON", 208, MIX_ROW_ENABLE_Y + 8, 2);
+
+  int knobRadius = 9;
+  int knobX = mix.enabled
+    ? (MIX_FIELD_X + MIX_FIELD_W - knobRadius - 3)
+    : (MIX_FIELD_X + knobRadius + 3);
+  tft.fillCircle(knobX, MIX_ROW_ENABLE_Y + (MIX_FIELD_H / 2), knobRadius,
+                 mix.enabled ? COLOR_ACCENT : COLOR_TEXT);
+
+  snprintf(valueText, sizeof(valueText), "CH%d", mix.source + 1);
+  tft.fillRoundRect(MIX_FIELD_X, MIX_ROW_SOURCE_Y, MIX_FIELD_W, MIX_FIELD_H, 8, COLOR_PANEL);
+  tft.drawRoundRect(MIX_FIELD_X, MIX_ROW_SOURCE_Y, MIX_FIELD_W, MIX_FIELD_H, 8, COLOR_ACCENT);
+  if (dpadFocusVisible && focusIndex == 6) {
+    tft.drawRoundRect(MIX_FIELD_X - 2, MIX_ROW_SOURCE_Y - 2, MIX_FIELD_W + 4, MIX_FIELD_H + 4, 8, COLOR_ACCENT_HI);
+  }
+  tft.setTextColor(COLOR_TEXT);
+  tft.drawCentreString(valueText, MIX_FIELD_X + (MIX_FIELD_W / 2), MIX_ROW_SOURCE_Y + 8, 2);
+
+  snprintf(valueText, sizeof(valueText), "CH%d", mix.destination + 1);
+  tft.fillRoundRect(MIX_FIELD_X, MIX_ROW_DEST_Y, MIX_FIELD_W, MIX_FIELD_H, 8, COLOR_PANEL);
+  tft.drawRoundRect(MIX_FIELD_X, MIX_ROW_DEST_Y, MIX_FIELD_W, MIX_FIELD_H, 8, COLOR_ACCENT);
+  if (dpadFocusVisible && focusIndex == 7) {
+    tft.drawRoundRect(MIX_FIELD_X - 2, MIX_ROW_DEST_Y - 2, MIX_FIELD_W + 4, MIX_FIELD_H + 4, 8, COLOR_ACCENT_HI);
+  }
+  tft.setTextColor(COLOR_TEXT);
+  tft.drawCentreString(valueText, MIX_FIELD_X + (MIX_FIELD_W / 2), MIX_ROW_DEST_Y + 8, 2);
+
+  tft.fillRoundRect(MIX_MINUS_X, MIX_ROW_RATE_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT);
+  tft.drawRoundRect(MIX_MINUS_X, MIX_ROW_RATE_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT_HI);
+  if (dpadFocusVisible && focusIndex == 8) {
+    tft.drawRoundRect(MIX_MINUS_X - 2, MIX_ROW_RATE_Y - 2, MIX_ADJUST_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
+  }
+  tft.setTextColor(COLOR_BG);
+  tft.drawCentreString("-", MIX_MINUS_X + (MIX_ADJUST_W / 2), MIX_ROW_RATE_Y + 8, 2);
+
+  tft.fillRoundRect(MIX_VALUE_X, MIX_ROW_RATE_Y, MIX_VALUE_W, MIX_FIELD_H, 8, COLOR_PANEL);
+  tft.drawRoundRect(MIX_VALUE_X, MIX_ROW_RATE_Y, MIX_VALUE_W, MIX_FIELD_H, 8, COLOR_ACCENT);
+  tft.setTextColor(COLOR_TEXT);
+  snprintf(valueText, sizeof(valueText), "%d", mix.rate);
+  tft.drawCentreString(valueText, MIX_VALUE_X + (MIX_VALUE_W / 2), MIX_ROW_RATE_Y + 8, 2);
+  if (mixNumpadActive && mixNumpadEditingRate) {
+    tft.drawRoundRect(MIX_VALUE_X - 2, MIX_ROW_RATE_Y - 2, MIX_VALUE_W + 4, MIX_FIELD_H + 4, 8, COLOR_ACCENT_HI);
+  }
+  else if (dpadFocusVisible && focusIndex == 9) {
+    tft.drawRoundRect(MIX_VALUE_X - 2, MIX_ROW_RATE_Y - 2, MIX_VALUE_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
+  }
+
+  tft.fillRoundRect(MIX_PLUS_X, MIX_ROW_RATE_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT);
+  tft.drawRoundRect(MIX_PLUS_X, MIX_ROW_RATE_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT_HI);
+  if (dpadFocusVisible && focusIndex == 10) {
+    tft.drawRoundRect(MIX_PLUS_X - 2, MIX_ROW_RATE_Y - 2, MIX_ADJUST_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
+  }
+  tft.setTextColor(COLOR_BG);
+  tft.drawCentreString("+", MIX_PLUS_X + (MIX_ADJUST_W / 2), MIX_ROW_RATE_Y + 8, 2);
+
+  tft.fillRoundRect(MIX_MINUS_X, MIX_ROW_OFFS_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT);
+  tft.drawRoundRect(MIX_MINUS_X, MIX_ROW_OFFS_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT_HI);
+  if (dpadFocusVisible && focusIndex == 11) {
+    tft.drawRoundRect(MIX_MINUS_X - 2, MIX_ROW_OFFS_Y - 2, MIX_ADJUST_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
+  }
+  tft.setTextColor(COLOR_BG);
+  tft.drawCentreString("-", MIX_MINUS_X + (MIX_ADJUST_W / 2), MIX_ROW_OFFS_Y + 8, 2);
+
+  tft.fillRoundRect(MIX_VALUE_X, MIX_ROW_OFFS_Y, MIX_VALUE_W, MIX_FIELD_H, 8, COLOR_PANEL);
+  tft.drawRoundRect(MIX_VALUE_X, MIX_ROW_OFFS_Y, MIX_VALUE_W, MIX_FIELD_H, 8, COLOR_ACCENT);
+  tft.setTextColor(COLOR_TEXT);
+  snprintf(valueText, sizeof(valueText), "%d", mix.offset);
+  tft.drawCentreString(valueText, MIX_VALUE_X + (MIX_VALUE_W / 2), MIX_ROW_OFFS_Y + 8, 2);
+  if (mixNumpadActive && !mixNumpadEditingRate) {
+    tft.drawRoundRect(MIX_VALUE_X - 2, MIX_ROW_OFFS_Y - 2, MIX_VALUE_W + 4, MIX_FIELD_H + 4, 8, COLOR_ACCENT_HI);
+  }
+  else if (dpadFocusVisible && focusIndex == 12) {
+    tft.drawRoundRect(MIX_VALUE_X - 2, MIX_ROW_OFFS_Y - 2, MIX_VALUE_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
+  }
+
+  tft.fillRoundRect(MIX_PLUS_X, MIX_ROW_OFFS_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT);
+  tft.drawRoundRect(MIX_PLUS_X, MIX_ROW_OFFS_Y, MIX_ADJUST_W, MIX_FIELD_H, 8, COLOR_ACCENT_HI);
+  if (dpadFocusVisible && focusIndex == 13) {
+    tft.drawRoundRect(MIX_PLUS_X - 2, MIX_ROW_OFFS_Y - 2, MIX_ADJUST_W + 4, MIX_FIELD_H + 4, 8, COLOR_TEXT);
+  }
+  tft.setTextColor(COLOR_BG);
+  tft.drawCentreString("+", MIX_PLUS_X + (MIX_ADJUST_W / 2), MIX_ROW_OFFS_Y + 8, 2);
+
+  mixingNeedsRedraw = false;
 }
 
 // ==== CONTROLLER ICON ====
