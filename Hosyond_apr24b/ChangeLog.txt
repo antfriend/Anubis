@@ -5,3 +5,110 @@ fixed keyboard behavior
 changed saved model behavior
 added Drive Type screen
 fixed touch recognition
+
+
+changelog 5/8/2026
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+I wired the Mixing button to a new mixing editor screen, and added the screen rendering/update flow. The first-pass UI gives each model 4 mix slots with Enable, Source, Destination (Dest), Rate, and Offset. You can tap M1-M4 tabs to switch mix slots, tap source/destination to cycle channels, and use +/- for rate and offset. I also made the mix settings persist per model by storing them in the existing model data structure.
+
+I treated this as a UI-first transmitter-style mixer editor, so the data model is there now, but it does not yet drive any actual output math. I assumed a simple 5-channel, 4-mix-slot setup as a good first shape.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+I added the Mixing numpad. Tapping the numeric Rate or Offset value box now opens a compact pad above the footer with 0-9, -, and OK, plus a text box at the top that shows the value being entered. Tapping anywhere above the pad dismisses it without committing, and OK commits the typed value to the selected mix field.
+
+I left the existing +/- tick buttons in place, so you now have both quick nudging and direct entry. The typed value is constrained to -100 through 100
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+I added the Aa shift key to the model-name keyboard, and it now toggles the alphabet rows between uppercase and lowercase while leaving numbers and special keys alone. I also set the startup default model name to Anubis for the primary slot if it’s blank, and changed new/reset mix defaults so Rate and Offset both start at 0.
+
+Because the mix defaults changed, I bumped the mix storage version, so on first boot after flashing this build the saved mix slots will be reset once to pick up the new 0 / 0 defaults.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+I added the press-and-hold rename behavior to the model list
+The behavior is now:
+
+tap a saved slot: selects that model like before
+press and hold a saved slot for about 700 ms: opens the keyboard with that slot’s current name preloaded so you can edit it
+tap an empty slot: still opens naming immediately
+
+I implemented it with a small pending hold state so it doesn’t interfere with the normal release handling
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+Drive Type is now saved per model slot and restored when you switch models, just like reverse, trim, failsafe, and mixing.
+
+One important nuance: the actual storage key is still the model slot (Model 1-Model 4), and the model name is the label attached to that slot. So when the user selects Model 1, all of that slot’s saved data now comes back together:
+
+reverse switch states
+trim values
+failsafe switch states
+mixing data
+drive type
+
+I also added boot-time sanitizing for old saved drive-type values so existing EEPROM data won’t leave the drive type in a bad state.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+Symptom - top bar is not updating on any screen other than MAIN_SCREEN.
+
+The issue was that the top bar only updates when uiNeedsRedraw is set, and the non-main screens don’t naturally trigger redraws very often. I added a small periodic redraw tick for non-main screens (250ms), so the RSSI bars and battery icon now refresh there too instead of only animating on the main screen.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+The trim trail fix was redrawing the graph area but not the trim buttons afterward, so the + / - controls were getting painted over. I split the trim rendering into:
+
+a graph-base redraw helper
+a trim-button redraw helper
+Now the dynamic trim update restores both before drawing the moving dot, so the trail stays gone and the buttons remain visible.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+I added D-pad navigation across the UI using only Left, Right, Down, and Select, with Down wrapping everywhere.
+What’s covered now:
+
+main menu and settings menus
+controller settings
+model settings
+drive type
+reverse
+trim
+failsafe
+model name screen
+mixing screen
+mixing numpad
+the existing keyboard still works with wrap-around Down
+
+I also added focus highlighting on the D-pad path so you can see what’s selected on most of those screens, and I made sure the mixing numpad has a D-pad path to OK as well. The sketch compiles cleanly for esp32s3.
+
+A couple of behavior notes:
+
+on list/button screens, Down cycles through items and wraps
+on value screens, Select activates the focused control
+on some screens, Left acts as a quick back/jump-back control to make up for having no Up
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+D-pad focus highlights now stay hidden until you actually use the D-pad on that screen, and they hide again as soon as you interact by touch or change screens. So the UI won’t open with a highlighted control unless navigation came from the D-pad.
+
+I also added a Tank Control sub-screen under the Tank option in Drive Type. It gives you:
+
+2 Stick: each stick Y axis controls one side
+1 Stick: the right stick controls both sides with throttle on Y and turning on X
+
+That setting is saved per model using the same per-model storage path as your other model settings, and the main-screen tank bars now follow that selected tank mode.
+
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+
+I updated the Reverse screen so enabled mixes now link reverse behavior between channels.
+What it does now:
+
+if an enabled mix connects channels, reversing one of those channels reverses the linked channel too
+the Reverse screen visually flags linked channels with accent coloring and a *
+linked channels also get an extra outline around their toggle, so the relationship is easier to spot
+
+I implemented it as a general linked-channel resolver over the enabled mix graph, so it isn’t limited to only one specific pair.
