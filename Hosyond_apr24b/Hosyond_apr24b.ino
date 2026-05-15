@@ -822,6 +822,7 @@ enum NumpadTarget {
   void drawRgb565IconTinted(int x, int y, int w, int h, const uint16_t* iconData, int iconW, int iconH, uint16_t tintColor);
   void drawBackIcon(int x, int y, int s, uint16_t iconColor);
   void drawOmniIcon(int x, int y, int w, int h, uint16_t iconColor);
+  void drawEndpointIcon(int x, int y, int s, uint16_t iconColor);
   void drawExpoIcon(int x, int y, int s, uint16_t iconColor);
   void drawRatesIcon(int x, int y, int s, uint16_t iconColor);
   void drawProtocolIcon(int x, int y, int s, uint16_t iconColor);
@@ -5232,6 +5233,9 @@ void drawButtonBubble(int x, int y, int w, int h,
   }
   else if (strcmp(label, "Failsafe") == 0) {
     drawFailsafeIcon(iconX, iconY, iconScale, iconColor);
+  }
+  else if (strcmp(label, "End Points") == 0) {
+    drawEndpointIcon(iconX, iconY, iconScale, iconColor);
   }
   else if (strcmp(label, "Expo") == 0) {
     drawExpoIcon(iconX, iconY, iconScale, iconColor);
@@ -9982,6 +9986,12 @@ void drawTrimIcon(int x, int y, int s, uint16_t iconColor) {
 void drawFailsafeIcon(int x, int y, int s, uint16_t iconColor) {
   int size = 24 * s;
   drawRgb565IconTinted(x, y, size, size, icon_FAILSAFE, ICON_FAILSAFE_W, ICON_FAILSAFE_H, iconColor);
+}
+
+// ==== ENDPOINT ICON ====
+void drawEndpointIcon(int x, int y, int s, uint16_t iconColor) {
+  int size = 24 * s;
+  drawRgb565IconTinted(x, y, size, size, icon_ENDPOINT, ICON_ENDPOINT_W, ICON_ENDPOINT_H, iconColor);
 }
 
 void drawExpoIcon(int x, int y, int s, uint16_t iconColor) {
