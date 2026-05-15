@@ -443,11 +443,11 @@ enum NumpadTarget {
   uint8_t modelEndpointHighValues[MAX_MODELS][CHANNEL_COUNT] = {};
 
   #define DISPLAY_BL_PIN 45
-  #define DISPLAY_BL_PWM_CHANNEL 0
-  #define DISPLAY_BL_PWM_FREQ 5000
+  #define DISPLAY_BL_PWM_FREQ 1000
   #define DISPLAY_BL_PWM_BITS 8
   #define BRIGHTNESS_ON 255
   #define BRIGHTNESS_OFF 0
+  #define DISPLAY_BACKLIGHT_SERIAL_DEBUG true
 
   const uint8_t displayBrightnessOptions[] = {48, 80, 112, 144, 176, 208, 232, 255};
   const uint8_t displaySleepBrightnessOptions[] = {0, 12, 24, 40, 56, 72, 96, 128};
@@ -468,9 +468,8 @@ enum NumpadTarget {
   uint8_t displayTimeoutIndex = DEFAULT_DISPLAY_TIMEOUT_INDEX;
   uint8_t displayOffTimeoutIndex = DEFAULT_DISPLAY_OFF_TIMEOUT_INDEX;
   uint8_t themeMode = THEME_DARK;
-  uint8_t lastAppliedPanelBrightness = 255;
+  uint8_t lastAppliedBacklightBrightness = 255;
   bool panelDisplayEnabled = true;
-  bool backlightPwmReady = false;
   bool stickBaseSpriteNeedsRebuild = true;
 
   #define TARGET_FPS 24
@@ -1474,18 +1473,21 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
       panelDisplayEnabled = shouldEnablePanel;
     }
 
-    if (lastAppliedPanelBrightness != targetBrightness) {
-      tft.writecommand(ILI9341_WRCTRLD);
-      tft.writedata(targetBrightness > 0 ? 0x24 : 0x00);
-      tft.writecommand(ILI9341_WRDISBV);
-      tft.writedata(targetBrightness);
-      lastAppliedPanelBrightness = targetBrightness;
-    }
+    if (lastAppliedBacklightBrightness != targetBrightness) {
+      analogWrite(DISPLAY_BL_PIN, targetBrightness);
+      if (targetBrightness == BRIGHTNESS_OFF) {
+        digitalWrite(DISPLAY_BL_PIN, !TFT_BACKLIGHT_ON);
+      }
+      lastAppliedBacklightBrightness = targetBrightness;
 
-    if (backlightPwmReady) {
-      ledcWriteChannel(DISPLAY_BL_PWM_CHANNEL, targetBrightness);
-    } else {
-      digitalWrite(DISPLAY_BL_PIN, targetBrightness > 0 ? TFT_BACKLIGHT_ON : !TFT_BACKLIGHT_ON);
+#if DISPLAY_BACKLIGHT_SERIAL_DEBUG
+      Serial.printf("DISPLAY: backlight target=%u awake=%u dimmed=%u duty=%lu freq=%lu\n",
+                    targetBrightness,
+                    screenAwake ? 1 : 0,
+                    displayDimmed ? 1 : 0,
+                    (unsigned long)ledcRead(DISPLAY_BL_PIN),
+                    (unsigned long)ledcReadFreq(DISPLAY_BL_PIN));
+#endif
     }
   }
 
@@ -3372,12 +3374,10 @@ void setup() {
 
   pinMode(45, OUTPUT);
   pinMode(DISPLAY_BL_PIN, OUTPUT);
-  backlightPwmReady = ledcAttachChannel(DISPLAY_BL_PIN, DISPLAY_BL_PWM_FREQ, DISPLAY_BL_PWM_BITS, DISPLAY_BL_PWM_CHANNEL);
-  if (backlightPwmReady) {
-    ledcWriteChannel(DISPLAY_BL_PWM_CHANNEL, DEFAULT_DISPLAY_BRIGHTNESS);
-  } else {
-    digitalWrite(DISPLAY_BL_PIN, TFT_BACKLIGHT_ON);
-  }
+  analogWriteResolution(DISPLAY_BL_PIN, DISPLAY_BL_PWM_BITS);
+  analogWriteFrequency(DISPLAY_BL_PIN, DISPLAY_BL_PWM_FREQ);
+  analogWrite(DISPLAY_BL_PIN, DEFAULT_DISPLAY_BRIGHTNESS);
+  digitalWrite(DISPLAY_BL_PIN, TFT_BACKLIGHT_ON);
   pinMode(BATTERY_ADC_PIN, INPUT);
   analogReadResolution(12);
   analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
