@@ -53,6 +53,7 @@
   SCREEN_DRIVE_TYPE,
   SCREEN_TANK_MODE,
   SCREEN_MIXING,
+  SCREEN_DISPLAY_SETTINGS,
   SCREEN_SPACE_GAME
   };
 
@@ -85,6 +86,17 @@
   BTN_TANK_DUAL,
   BTN_MODEL_NAME,
   BTN_MIXING,
+  BTN_DISPLAY_SETTINGS,
+  BTN_DISPLAY_BRIGHTNESS_DEC,
+  BTN_DISPLAY_BRIGHTNESS_INC,
+  BTN_DISPLAY_TIMEOUT_DEC,
+  BTN_DISPLAY_TIMEOUT_INC,
+  BTN_DISPLAY_OFF_TIMEOUT_DEC,
+  BTN_DISPLAY_OFF_TIMEOUT_INC,
+  BTN_DISPLAY_SLEEP_DEC,
+  BTN_DISPLAY_SLEEP_INC,
+  BTN_DISPLAY_SLEEP_NOW,
+  BTN_DISPLAY_THEME_TOGGLE,
   BTN_GAME,
   BTN_OPTION_2,
   BTN_OPTION_3,
@@ -129,6 +141,13 @@
   #define EEPROM_OTA_STA_SSID_ADDR (EEPROM_OTA_VERSION_ADDR - OTA_STA_SSID_STORAGE_BYTES)
   #define EEPROM_OTA_STA_PASSWORD_ADDR (EEPROM_OTA_STA_SSID_ADDR - OTA_STA_PASSWORD_STORAGE_BYTES)
   #define EEPROM_OTA_AP_SSID_ADDR (EEPROM_OTA_STA_PASSWORD_ADDR - OTA_AP_SSID_STORAGE_BYTES)
+  #define DISPLAY_SETTINGS_STORAGE_VERSION 2
+  #define EEPROM_DISPLAY_VERSION_ADDR (EEPROM_OTA_AP_SSID_ADDR - 1)
+  #define EEPROM_DISPLAY_BRIGHTNESS_ADDR (EEPROM_DISPLAY_VERSION_ADDR - 1)
+  #define EEPROM_DISPLAY_SLEEP_BRIGHTNESS_ADDR (EEPROM_DISPLAY_BRIGHTNESS_ADDR - 1)
+  #define EEPROM_DISPLAY_TIMEOUT_INDEX_ADDR (EEPROM_DISPLAY_SLEEP_BRIGHTNESS_ADDR - 1)
+  #define EEPROM_DISPLAY_OFF_TIMEOUT_INDEX_ADDR (EEPROM_DISPLAY_TIMEOUT_INDEX_ADDR - 1)
+  #define EEPROM_DISPLAY_THEME_ADDR (EEPROM_DISPLAY_OFF_TIMEOUT_INDEX_ADDR - 1)
   #define ESPNOW_LINK_MAGIC 0xA614
   #define ESPNOW_LINK_VERSION 1
   #define ESPNOW_WIFI_CHANNEL 6
@@ -407,9 +426,12 @@ enum NumpadTarget {
   bool waitingForRelease = false;
   bool screenChangePending = false;
   bool screenAwake = true;
+  bool displayDimmed = false;
+  bool suppressWakeUntilRelease = false;
   bool fullRedraw = true;
   Screen nextScreen;
   Screen lastScreen = SCREEN_SPLASH;
+  Screen reverseReturnScreen = SCREEN_CONTROLLER_SETTINGS;
 
   unsigned long lastActivityTime = 0;
   unsigned long splashStartTime = 0;
@@ -422,11 +444,35 @@ enum NumpadTarget {
   uint8_t modelEndpointLowValues[MAX_MODELS][CHANNEL_COUNT] = {};
   uint8_t modelEndpointHighValues[MAX_MODELS][CHANNEL_COUNT] = {};
 
-  #define OFF_TIMEOUT   25000
+  #define DISPLAY_BL_PIN 45
+  #define DISPLAY_BL_PWM_FREQ 1000
+  #define DISPLAY_BL_PWM_BITS 8
+  #define BRIGHTNESS_ON 255
+  #define BRIGHTNESS_OFF 0
+  #define DISPLAY_BACKLIGHT_SERIAL_DEBUG true
 
-  #define BRIGHTNESS_ON   255
-  #define BRIGHTNESS_DIM   60
-  #define BRIGHTNESS_OFF    0
+  const uint8_t displayBrightnessOptions[] = {48, 80, 112, 144, 176, 208, 232, 255};
+  const uint8_t displaySleepBrightnessOptions[] = {0, 12, 24, 40, 56, 72, 96, 128};
+  const uint16_t displayTimeoutOptionsSec[] = {10, 15, 30, 60, 120, 300, 0};
+  const uint16_t displayOffTimeoutOptionsSec[] = {5, 10, 15, 30, 60, 120, 0};
+  const uint8_t displayBrightnessOptionCount = (uint8_t)(sizeof(displayBrightnessOptions) / sizeof(displayBrightnessOptions[0]));
+  const uint8_t displaySleepBrightnessOptionCount = (uint8_t)(sizeof(displaySleepBrightnessOptions) / sizeof(displaySleepBrightnessOptions[0]));
+  const uint8_t displayTimeoutOptionCount = (uint8_t)(sizeof(displayTimeoutOptionsSec) / sizeof(displayTimeoutOptionsSec[0]));
+  const uint8_t displayOffTimeoutOptionCount = (uint8_t)(sizeof(displayOffTimeoutOptionsSec) / sizeof(displayOffTimeoutOptionsSec[0]));
+  const uint8_t DEFAULT_DISPLAY_BRIGHTNESS = BRIGHTNESS_ON;
+  const uint8_t DEFAULT_DISPLAY_SLEEP_BRIGHTNESS = BRIGHTNESS_OFF;
+  const uint8_t DEFAULT_DISPLAY_TIMEOUT_INDEX = 2;
+  const uint8_t DEFAULT_DISPLAY_OFF_TIMEOUT_INDEX = 2;
+  const uint8_t THEME_DARK = 0;
+  const uint8_t THEME_LIGHT = 1;
+  uint8_t displayBrightness = DEFAULT_DISPLAY_BRIGHTNESS;
+  uint8_t displaySleepBrightness = DEFAULT_DISPLAY_SLEEP_BRIGHTNESS;
+  uint8_t displayTimeoutIndex = DEFAULT_DISPLAY_TIMEOUT_INDEX;
+  uint8_t displayOffTimeoutIndex = DEFAULT_DISPLAY_OFF_TIMEOUT_INDEX;
+  uint8_t themeMode = THEME_DARK;
+  uint8_t lastAppliedBacklightBrightness = 255;
+  bool panelDisplayEnabled = true;
+  bool stickBaseSpriteNeedsRebuild = true;
 
   #define TARGET_FPS 24
   #define MAIN_FRAME_INTERVAL_MS (1000UL / TARGET_FPS)
@@ -491,10 +537,36 @@ enum NumpadTarget {
   #define MODEL_BTN_W 200
   #define MODEL_BTN_H MENU_BTN_HEIGHT
 
+  #define DISPLAY_MENU_BTN_X 20
+  #define DISPLAY_MENU_BTN_Y 228
+  #define DISPLAY_MENU_BTN_W 48
+  #define DISPLAY_MENU_BTN_H 48
+
   #define GAME_BTN_X 172
   #define GAME_BTN_Y 228
   #define GAME_BTN_W 48
   #define GAME_BTN_H 48
+
+  #define DISPLAY_SETTINGS_ROW_X 12
+  #define DISPLAY_SETTINGS_ROW_W 216
+  #define DISPLAY_SETTINGS_ROW_H 42
+  #define DISPLAY_SETTINGS_BRIGHTNESS_Y 64
+  #define DISPLAY_SETTINGS_TIMEOUT_Y 114
+  #define DISPLAY_SETTINGS_OFF_TIMEOUT_Y 164
+  #define DISPLAY_SETTINGS_SLEEP_Y 214
+  #define DISPLAY_SETTINGS_ADJUST_BTN_W 44
+  #define DISPLAY_SETTINGS_ADJUST_BTN_H 28
+  #define DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET 10
+  #define DISPLAY_SETTINGS_MINUS_X 18
+  #define DISPLAY_SETTINGS_PLUS_X 178
+  #define DISPLAY_SETTINGS_SLEEP_NOW_X 138
+  #define DISPLAY_SETTINGS_SLEEP_NOW_Y 258
+  #define DISPLAY_SETTINGS_SLEEP_NOW_W 92
+  #define DISPLAY_SETTINGS_SLEEP_NOW_H 26
+  #define DISPLAY_SETTINGS_THEME_X 10
+  #define DISPLAY_SETTINGS_THEME_Y 258
+  #define DISPLAY_SETTINGS_THEME_W 120
+  #define DISPLAY_SETTINGS_THEME_H 26
 
   #define SPACE_STATUS_H 28
   #define SPACE_CONTROL_Y 278
@@ -658,15 +730,13 @@ enum NumpadTarget {
   int modelPanelW = 0;
   int modelPanelH = 0;
 
-  const uint16_t COLOR_BG        = tft.color565(0, 0, 0);
-  const uint16_t COLOR_PANEL     = tft.color565(30, 30, 30);
-  const uint16_t COLOR_TEXT      = tft.color565(255, 255, 255);
-
-  const uint16_t COLOR_ACCENT    = tft.color565(180, 140, 40);
-  const uint16_t COLOR_ACCENT_HI = tft.color565(255, 210, 80);
-
-  const uint16_t COLOR_SIG       = tft.color565(49, 146, 49);
-  const uint16_t COLOR_STICK_PANEL = tft.color565(20, 20, 20);
+  uint16_t COLOR_BG = 0;
+  uint16_t COLOR_PANEL = 0;
+  uint16_t COLOR_TEXT = 0;
+  uint16_t COLOR_ACCENT = 0;
+  uint16_t COLOR_ACCENT_HI = 0;
+  uint16_t COLOR_SIG = 0;
+  uint16_t COLOR_STICK_PANEL = 0;
 
   int currentTrimPage = 0; // 0 = left gimbal, 1 = right gimbal
 
@@ -757,6 +827,19 @@ enum NumpadTarget {
   void setScreen(Screen screen);
   void queueScreenButton(ButtonID button, Screen screen);
   void saveKeyboardBufferToModelSlot();
+  void sanitizeDisplaySettings();
+  void resetDisplaySettingsToDefaults();
+  bool loadDisplaySettings();
+  void saveDisplaySettings();
+  void applyThemePalette();
+  void applyDisplayBacklight();
+  unsigned long getDisplayDimTimeoutMs();
+  unsigned long getDisplayOffTimeoutMs();
+  int findDisplayOptionIndex(const uint8_t *options, int optionCount, uint8_t value);
+  void stepDisplayOption(uint8_t &value, const uint8_t *options, int optionCount, int delta);
+  const char* formatDisplayTimeoutValue(uint8_t optionIndex, const uint16_t *options, uint8_t optionCount,
+                                        char *buffer, size_t bufferSize);
+  const char* getThemeToggleLabel();
   void loadOtaSettings();
   void saveOtaSettings();
   void applyKeyboardBufferToTarget();
@@ -764,6 +847,12 @@ enum NumpadTarget {
   void beginOtaFieldEdit(KeyboardTarget target);
   void drawOtaSettingsStatic();
   void drawOtaSettingsDynamic();
+  void drawDisplaySettingsScreen();
+  void drawDisplaySettingsRow(int y, const char* label, const char* valueText,
+                              bool minusPressed, bool minusSelected,
+                              bool plusPressed, bool plusSelected,
+                              uint16_t previewColor, int previewWidth);
+  void drawGearIcon(int x, int y, int size, uint16_t iconColor);
   const char* getKeyboardKey(int row, int col);
   void processKeyboardKey(const char* key);
   bool modelSlotUninitialized(int i);
@@ -824,11 +913,13 @@ enum NumpadTarget {
   void drawRgb565IconTinted(int x, int y, int w, int h, const uint16_t* iconData, int iconW, int iconH, uint16_t tintColor);
   void drawBackIcon(int x, int y, int s, uint16_t iconColor);
   void drawOmniIcon(int x, int y, int w, int h, uint16_t iconColor);
+  void drawEndpointIcon(int x, int y, int s, uint16_t iconColor);
   void drawExpoIcon(int x, int y, int s, uint16_t iconColor);
   void drawRatesIcon(int x, int y, int s, uint16_t iconColor);
   void drawProtocolIcon(int x, int y, int s, uint16_t iconColor);
   void getLinkedReverseChannels(int modelIndex, int channel, bool linked[CHANNEL_COUNT]);
   bool hasLinkedReversePeers(int modelIndex, int channel);
+  bool shouldForceTankSingleReversePair(int modelIndex);
   void drawTrimGraphBase();
   void drawTrimButtons();
   void drawMixingStatic();
@@ -1224,6 +1315,184 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     EEPROM.commit();
   }
 
+  void sanitizeDisplaySettings() {
+    displayBrightness = constrain(displayBrightness, (uint8_t)1, (uint8_t)255);
+    displaySleepBrightness = constrain(displaySleepBrightness, (uint8_t)0, displayBrightness);
+    if (displayTimeoutIndex >= displayTimeoutOptionCount) {
+      displayTimeoutIndex = DEFAULT_DISPLAY_TIMEOUT_INDEX;
+    }
+    if (displayOffTimeoutIndex >= displayOffTimeoutOptionCount) {
+      displayOffTimeoutIndex = DEFAULT_DISPLAY_OFF_TIMEOUT_INDEX;
+    }
+    if (themeMode > THEME_LIGHT) {
+      themeMode = THEME_DARK;
+    }
+  }
+
+  void resetDisplaySettingsToDefaults() {
+    displayBrightness = DEFAULT_DISPLAY_BRIGHTNESS;
+    displaySleepBrightness = DEFAULT_DISPLAY_SLEEP_BRIGHTNESS;
+    displayTimeoutIndex = DEFAULT_DISPLAY_TIMEOUT_INDEX;
+    displayOffTimeoutIndex = DEFAULT_DISPLAY_OFF_TIMEOUT_INDEX;
+    themeMode = THEME_DARK;
+    sanitizeDisplaySettings();
+  }
+
+  bool loadDisplaySettings() {
+    if (EEPROM.read(EEPROM_DISPLAY_VERSION_ADDR) != DISPLAY_SETTINGS_STORAGE_VERSION) {
+      resetDisplaySettingsToDefaults();
+      return true;
+    }
+
+    uint8_t loadedBrightness = EEPROM.read(EEPROM_DISPLAY_BRIGHTNESS_ADDR);
+    uint8_t loadedSleepBrightness = EEPROM.read(EEPROM_DISPLAY_SLEEP_BRIGHTNESS_ADDR);
+    uint8_t loadedTimeoutIndex = EEPROM.read(EEPROM_DISPLAY_TIMEOUT_INDEX_ADDR);
+    uint8_t loadedOffTimeoutIndex = EEPROM.read(EEPROM_DISPLAY_OFF_TIMEOUT_INDEX_ADDR);
+    uint8_t loadedThemeMode = EEPROM.read(EEPROM_DISPLAY_THEME_ADDR);
+
+    displayBrightness = loadedBrightness;
+    displaySleepBrightness = loadedSleepBrightness;
+    displayTimeoutIndex = loadedTimeoutIndex;
+    displayOffTimeoutIndex = loadedOffTimeoutIndex;
+    themeMode = loadedThemeMode;
+    sanitizeDisplaySettings();
+
+    return (displayBrightness != loadedBrightness) ||
+           (displaySleepBrightness != loadedSleepBrightness) ||
+           (displayTimeoutIndex != loadedTimeoutIndex) ||
+           (displayOffTimeoutIndex != loadedOffTimeoutIndex) ||
+           (themeMode != loadedThemeMode);
+  }
+
+  void saveDisplaySettings() {
+    sanitizeDisplaySettings();
+    EEPROM.write(EEPROM_DISPLAY_BRIGHTNESS_ADDR, displayBrightness);
+    EEPROM.write(EEPROM_DISPLAY_SLEEP_BRIGHTNESS_ADDR, displaySleepBrightness);
+    EEPROM.write(EEPROM_DISPLAY_TIMEOUT_INDEX_ADDR, displayTimeoutIndex);
+    EEPROM.write(EEPROM_DISPLAY_OFF_TIMEOUT_INDEX_ADDR, displayOffTimeoutIndex);
+    EEPROM.write(EEPROM_DISPLAY_THEME_ADDR, themeMode);
+    EEPROM.write(EEPROM_DISPLAY_VERSION_ADDR, DISPLAY_SETTINGS_STORAGE_VERSION);
+    EEPROM.commit();
+  }
+
+  void applyThemePalette() {
+    if (themeMode == THEME_LIGHT) {
+      COLOR_BG = tft.color565(244, 236, 214);
+      COLOR_PANEL = tft.color565(230, 219, 193);
+      COLOR_TEXT = tft.color565(50, 36, 16);
+      COLOR_ACCENT = tft.color565(180, 140, 40);
+      COLOR_ACCENT_HI = tft.color565(226, 184, 84);
+      COLOR_SIG = tft.color565(56, 132, 64);
+      COLOR_STICK_PANEL = tft.color565(216, 204, 178);
+    } else {
+      COLOR_BG = tft.color565(0, 0, 0);
+      COLOR_PANEL = tft.color565(30, 30, 30);
+      COLOR_TEXT = tft.color565(255, 255, 255);
+      COLOR_ACCENT = tft.color565(180, 140, 40);
+      COLOR_ACCENT_HI = tft.color565(255, 210, 80);
+      COLOR_SIG = tft.color565(49, 146, 49);
+      COLOR_STICK_PANEL = tft.color565(20, 20, 20);
+    }
+
+    stickBaseSpriteNeedsRebuild = true;
+  }
+
+  int findDisplayOptionIndex(const uint8_t *options, int optionCount, uint8_t value) {
+    int bestIndex = 0;
+    int bestDistance = 1000;
+
+    for (int i = 0; i < optionCount; i++) {
+      int distance = abs((int)options[i] - (int)value);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = i;
+      }
+    }
+
+    return bestIndex;
+  }
+
+  void stepDisplayOption(uint8_t &value, const uint8_t *options, int optionCount, int delta) {
+    int index = findDisplayOptionIndex(options, optionCount, value);
+    index = constrain(index + delta, 0, optionCount - 1);
+    value = options[index];
+  }
+
+  unsigned long getDisplayDimTimeoutMs() {
+    if (displayTimeoutIndex >= displayTimeoutOptionCount) {
+      return (unsigned long)displayTimeoutOptionsSec[DEFAULT_DISPLAY_TIMEOUT_INDEX] * 1000UL;
+    }
+
+    uint16_t seconds = displayTimeoutOptionsSec[displayTimeoutIndex];
+    if (seconds == 0) return 0;
+    return (unsigned long)seconds * 1000UL;
+  }
+
+  unsigned long getDisplayOffTimeoutMs() {
+    if (displayOffTimeoutIndex >= displayOffTimeoutOptionCount) {
+      return (unsigned long)displayOffTimeoutOptionsSec[DEFAULT_DISPLAY_OFF_TIMEOUT_INDEX] * 1000UL;
+    }
+
+    uint16_t seconds = displayOffTimeoutOptionsSec[displayOffTimeoutIndex];
+    if (seconds == 0) return 0;
+    return (unsigned long)seconds * 1000UL;
+  }
+
+  const char* formatDisplayTimeoutValue(uint8_t optionIndex, const uint16_t *options, uint8_t optionCount,
+                                        char *buffer, size_t bufferSize) {
+    if (optionIndex >= optionCount) {
+      snprintf(buffer, bufferSize, "30s");
+      return buffer;
+    }
+
+    uint16_t seconds = options[optionIndex];
+    if (seconds == 0) {
+      snprintf(buffer, bufferSize, "Never");
+    }
+    else if (seconds < 60) {
+      snprintf(buffer, bufferSize, "%us", (unsigned int)seconds);
+    }
+    else {
+      snprintf(buffer, bufferSize, "%um", (unsigned int)(seconds / 60));
+    }
+    return buffer;
+  }
+
+  const char* getThemeToggleLabel() {
+    return (themeMode == THEME_DARK) ? "Light Mode" : "Dark Mode";
+  }
+
+  void applyDisplayBacklight() {
+    uint8_t targetBrightness = BRIGHTNESS_OFF;
+    if (screenAwake) {
+      targetBrightness = displayDimmed ? displaySleepBrightness : displayBrightness;
+    }
+    targetBrightness = min(targetBrightness, displayBrightness);
+
+    bool shouldEnablePanel = (screenAwake && targetBrightness > 0);
+    if (panelDisplayEnabled != shouldEnablePanel) {
+      tft.writecommand(shouldEnablePanel ? ILI9341_DISPON : ILI9341_DISPOFF);
+      panelDisplayEnabled = shouldEnablePanel;
+    }
+
+    if (lastAppliedBacklightBrightness != targetBrightness) {
+      analogWrite(DISPLAY_BL_PIN, targetBrightness);
+      if (targetBrightness == BRIGHTNESS_OFF) {
+        digitalWrite(DISPLAY_BL_PIN, !TFT_BACKLIGHT_ON);
+      }
+      lastAppliedBacklightBrightness = targetBrightness;
+
+#if DISPLAY_BACKLIGHT_SERIAL_DEBUG
+      Serial.printf("DISPLAY: backlight target=%u awake=%u dimmed=%u duty=%lu freq=%lu\n",
+                    targetBrightness,
+                    screenAwake ? 1 : 0,
+                    displayDimmed ? 1 : 0,
+                    (unsigned long)ledcRead(DISPLAY_BL_PIN),
+                    (unsigned long)ledcReadFreq(DISPLAY_BL_PIN));
+#endif
+    }
+  }
+
   void sanitizeWifiText(char *value, size_t maxLen, bool allowEmpty) {
     if (value == nullptr || maxLen == 0) return;
 
@@ -1359,6 +1628,30 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
       ((((uint8_t)protocolType) << PROTOCOL_SHIFT) & PROTOCOL_MASK);
   }
 
+  bool shouldForceTankSingleReversePair(int modelIndex) {
+    if (modelIndex < 0 || modelIndex >= MAX_MODELS) return false;
+    if (getModelDriveType(modelIndex) != DRIVE_TANK) return false;
+    if (getModelTankMode(modelIndex) != TANK_MODE_RIGHT_STICK) return false;
+
+    // In 1-stick tank mode, CH1 and CH2 are tied by default.
+    // But if the user created a direct mix between them and explicitly
+    // separated reverse linking on that mix, that explicit choice wins.
+    for (int mixIndex = 0; mixIndex < MIX_COUNT; mixIndex++) {
+      MixData &mix = models[modelIndex].mixes[mixIndex];
+      if (!mix.enabled) continue;
+
+      uint8_t source = getMixSource(mix);
+      uint8_t destination = getMixDestination(mix);
+      bool isTankPairMix =
+        ((source == 0 && destination == 1) || (source == 1 && destination == 0));
+
+      if (!isTankPairMix) continue;
+      if (!isMixReverseLinked(mix)) return false;
+    }
+
+    return true;
+  }
+
   void getLinkedReverseChannels(int modelIndex, int channel, bool linked[CHANNEL_COUNT]) {
     for (int i = 0; i < CHANNEL_COUNT; i++) linked[i] = false;
     if (channel < 0 || channel >= CHANNEL_COUNT) return;
@@ -1388,6 +1681,11 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
           changed = true;
         }
       }
+    }
+
+    if (shouldForceTankSingleReversePair(modelIndex) && (channel == 0 || channel == 1)) {
+      linked[0] = true;
+      linked[1] = true;
     }
   }
 
@@ -3077,7 +3375,11 @@ void setup() {
   SPI.begin(12, 13, 11, 10);
 
   pinMode(45, OUTPUT);
-  digitalWrite(45, HIGH);
+  pinMode(DISPLAY_BL_PIN, OUTPUT);
+  analogWriteResolution(DISPLAY_BL_PIN, DISPLAY_BL_PWM_BITS);
+  analogWriteFrequency(DISPLAY_BL_PIN, DISPLAY_BL_PWM_FREQ);
+  analogWrite(DISPLAY_BL_PIN, DEFAULT_DISPLAY_BRIGHTNESS);
+  digitalWrite(DISPLAY_BL_PIN, TFT_BACKLIGHT_ON);
   pinMode(BATTERY_ADC_PIN, INPUT);
   analogReadResolution(12);
   analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
@@ -3099,6 +3401,8 @@ void setup() {
 
   EEPROM.begin(EEPROM_SIZE);
 
+  bool displaySettingsRepaired = loadDisplaySettings();
+  applyThemePalette();
   loadModels();
   loadFailsafeValues();
   loadRateValues();
@@ -3106,6 +3410,10 @@ void setup() {
   loadEndpointValues();
   loadOtaSettings();
   loadReceiverBindings();
+  applyDisplayBacklight();
+  if (displaySettingsRepaired) {
+    saveDisplaySettings();
+  }
 
   // FIRST BOOT CHECK
   bool initializedAnyModel = false;
@@ -3190,6 +3498,9 @@ void setup() {
   }
   if (EEPROM.read(EEPROM_OTA_VERSION_ADDR) != OTA_SETTINGS_STORAGE_VERSION) {
     saveOtaSettings();
+  }
+  if (EEPROM.read(EEPROM_DISPLAY_VERSION_ADDR) != DISPLAY_SETTINGS_STORAGE_VERSION) {
+    saveDisplaySettings();
   }
 
   // sync names
@@ -3497,7 +3808,8 @@ void loop() {
 
       if (selectedButton == BTN_NONE) selectedButton = BTN_CTRL;
         else if (selectedButton == BTN_CTRL) selectedButton = BTN_MODEL;
-        else if (selectedButton == BTN_MODEL) selectedButton = BTN_GAME;
+        else if (selectedButton == BTN_MODEL) selectedButton = BTN_DISPLAY_SETTINGS;
+        else if (selectedButton == BTN_DISPLAY_SETTINGS) selectedButton = BTN_GAME;
         else if (selectedButton == BTN_GAME) selectedButton = BTN_BACK;
         else if (selectedButton == BTN_BACK) selectedButton = BTN_CTRL;
           fullRedraw = true;
@@ -3508,6 +3820,10 @@ void loop() {
 
     if (left) {
       if (selectedButton == BTN_GAME) {
+        selectedButton = BTN_DISPLAY_SETTINGS;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      } else if (selectedButton == BTN_DISPLAY_SETTINGS) {
         selectedButton = BTN_MODEL;
         fullRedraw = true;
         uiNeedsRedraw = true;
@@ -3520,6 +3836,13 @@ void loop() {
     }
 
     if (right && selectedButton == BTN_MODEL) {
+      selectedButton = BTN_DISPLAY_SETTINGS;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+      userActive = true;
+    }
+    else if (right && selectedButton == BTN_DISPLAY_SETTINGS) {
       selectedButton = BTN_GAME;
       fullRedraw = true;
       uiNeedsRedraw = true;
@@ -3532,9 +3855,173 @@ void loop() {
       if (selectedButton == BTN_BACK) setScreen(SCREEN_MAIN);
       else if (selectedButton == BTN_CTRL) setScreen(SCREEN_CONTROLLER_SETTINGS);
       else if (selectedButton == BTN_MODEL) setScreen(SCREEN_MODEL_SETTINGS);
+      else if (selectedButton == BTN_DISPLAY_SETTINGS) setScreen(SCREEN_DISPLAY_SETTINGS);
       else if (selectedButton == BTN_GAME) setScreen(SCREEN_SPACE_GAME);
 
       selectedButton = BTN_NONE;
+      didInput = true;
+      userActive = true;
+    }
+  }
+
+  else if (currentScreen == SCREEN_DISPLAY_SETTINGS) {
+    if (down || left || right || select) dpadFocusVisible = true;
+
+    if (down) {
+      if (selectedButton == BTN_NONE) selectedButton = BTN_DISPLAY_BRIGHTNESS_DEC;
+      else if (selectedButton == BTN_DISPLAY_BRIGHTNESS_DEC) selectedButton = BTN_DISPLAY_BRIGHTNESS_INC;
+      else if (selectedButton == BTN_DISPLAY_BRIGHTNESS_INC) selectedButton = BTN_DISPLAY_TIMEOUT_DEC;
+      else if (selectedButton == BTN_DISPLAY_TIMEOUT_DEC) selectedButton = BTN_DISPLAY_TIMEOUT_INC;
+      else if (selectedButton == BTN_DISPLAY_TIMEOUT_INC) selectedButton = BTN_DISPLAY_OFF_TIMEOUT_DEC;
+      else if (selectedButton == BTN_DISPLAY_OFF_TIMEOUT_DEC) selectedButton = BTN_DISPLAY_OFF_TIMEOUT_INC;
+      else if (selectedButton == BTN_DISPLAY_OFF_TIMEOUT_INC) selectedButton = BTN_DISPLAY_SLEEP_DEC;
+      else if (selectedButton == BTN_DISPLAY_SLEEP_DEC) selectedButton = BTN_DISPLAY_SLEEP_INC;
+      else if (selectedButton == BTN_DISPLAY_SLEEP_INC) selectedButton = BTN_DISPLAY_THEME_TOGGLE;
+      else if (selectedButton == BTN_DISPLAY_THEME_TOGGLE) selectedButton = BTN_DISPLAY_SLEEP_NOW;
+      else if (selectedButton == BTN_DISPLAY_SLEEP_NOW) selectedButton = BTN_BACK;
+      else selectedButton = BTN_DISPLAY_BRIGHTNESS_DEC;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+      userActive = true;
+    }
+
+    if (left) {
+      if (selectedButton == BTN_BACK) {
+        setScreen(SCREEN_MENU);
+      }
+      else if (selectedButton == BTN_DISPLAY_BRIGHTNESS_INC) {
+        selectedButton = BTN_DISPLAY_BRIGHTNESS_DEC;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_TIMEOUT_INC) {
+        selectedButton = BTN_DISPLAY_TIMEOUT_DEC;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_OFF_TIMEOUT_INC) {
+        selectedButton = BTN_DISPLAY_OFF_TIMEOUT_DEC;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_SLEEP_INC) {
+        selectedButton = BTN_DISPLAY_SLEEP_DEC;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      } else if (selectedButton == BTN_DISPLAY_THEME_TOGGLE) {
+        selectedButton = BTN_DISPLAY_SLEEP_INC;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      } else if (selectedButton == BTN_DISPLAY_SLEEP_NOW) {
+        selectedButton = BTN_DISPLAY_THEME_TOGGLE;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else {
+        setScreen(SCREEN_MENU);
+      }
+      didInput = true;
+      userActive = true;
+    }
+
+    if (right) {
+      if (selectedButton == BTN_DISPLAY_BRIGHTNESS_DEC) {
+        selectedButton = BTN_DISPLAY_BRIGHTNESS_INC;
+      }
+      else if (selectedButton == BTN_DISPLAY_TIMEOUT_DEC) {
+        selectedButton = BTN_DISPLAY_TIMEOUT_INC;
+      }
+      else if (selectedButton == BTN_DISPLAY_OFF_TIMEOUT_DEC) {
+        selectedButton = BTN_DISPLAY_OFF_TIMEOUT_INC;
+      }
+      else if (selectedButton == BTN_DISPLAY_SLEEP_DEC) {
+        selectedButton = BTN_DISPLAY_SLEEP_INC;
+      }
+      else if (selectedButton == BTN_DISPLAY_SLEEP_INC) {
+        selectedButton = BTN_DISPLAY_THEME_TOGGLE;
+      }
+      else if (selectedButton == BTN_DISPLAY_THEME_TOGGLE) {
+        selectedButton = BTN_DISPLAY_SLEEP_NOW;
+      }
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+      userActive = true;
+    }
+
+    if (select) {
+      if (selectedButton == BTN_BACK) {
+        setScreen(SCREEN_MENU);
+      }
+      else if (selectedButton == BTN_DISPLAY_BRIGHTNESS_DEC) {
+        stepDisplayOption(displayBrightness, displayBrightnessOptions, displayBrightnessOptionCount, -1);
+        displaySleepBrightness = min(displaySleepBrightness, displayBrightness);
+        saveDisplaySettings();
+        applyDisplayBacklight();
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_BRIGHTNESS_INC) {
+        stepDisplayOption(displayBrightness, displayBrightnessOptions, displayBrightnessOptionCount, 1);
+        saveDisplaySettings();
+        applyDisplayBacklight();
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_TIMEOUT_DEC) {
+        displayTimeoutIndex = constrain((int)displayTimeoutIndex - 1, 0, displayTimeoutOptionCount - 1);
+        saveDisplaySettings();
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_TIMEOUT_INC) {
+        displayTimeoutIndex = constrain((int)displayTimeoutIndex + 1, 0, displayTimeoutOptionCount - 1);
+        saveDisplaySettings();
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_OFF_TIMEOUT_DEC) {
+        displayOffTimeoutIndex = constrain((int)displayOffTimeoutIndex - 1, 0, displayOffTimeoutOptionCount - 1);
+        saveDisplaySettings();
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_OFF_TIMEOUT_INC) {
+        displayOffTimeoutIndex = constrain((int)displayOffTimeoutIndex + 1, 0, displayOffTimeoutOptionCount - 1);
+        saveDisplaySettings();
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_SLEEP_DEC) {
+        stepDisplayOption(displaySleepBrightness, displaySleepBrightnessOptions, displaySleepBrightnessOptionCount, -1);
+        saveDisplaySettings();
+        applyDisplayBacklight();
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_SLEEP_INC) {
+        stepDisplayOption(displaySleepBrightness, displaySleepBrightnessOptions, displaySleepBrightnessOptionCount, 1);
+        saveDisplaySettings();
+        applyDisplayBacklight();
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_THEME_TOGGLE) {
+        themeMode = (themeMode == THEME_DARK) ? THEME_LIGHT : THEME_DARK;
+        applyThemePalette();
+        saveDisplaySettings();
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+        topBarNeedsRedraw = true;
+      }
+      else if (selectedButton == BTN_DISPLAY_SLEEP_NOW) {
+        displayDimmed = false;
+        screenAwake = false;
+        suppressWakeUntilRelease = true;
+        applyDisplayBacklight();
+      }
+
       didInput = true;
       userActive = true;
     }
@@ -4021,25 +4508,17 @@ void loop() {
     }
 
     if (left && focusIndex == CHANNEL_COUNT) {
-      setScreen(SCREEN_CONTROLLER_SETTINGS);
+      setScreen(reverseReturnScreen);
       didInput = true;
     }
 
     if (select || right) {
       if (focusIndex == CHANNEL_COUNT) {
-        setScreen(SCREEN_CONTROLLER_SETTINGS);
+        setScreen(reverseReturnScreen);
       } else {
         bool linked[CHANNEL_COUNT] = {false, false, false, false};
         getLinkedReverseChannels(activeModel, focusIndex, linked);
         bool newState = !models[activeModel].reverse[focusIndex];
-
-        if (currentDrive == DRIVE_TANK &&
-            getModelTankMode(activeModel) == TANK_MODE_RIGHT_STICK &&
-            (focusIndex == 0 || focusIndex == 1)) {
-          linked[0] = true;
-          linked[1] = true;
-          newState = !models[activeModel].reverse[0];
-        }
 
         for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
           if (!linked[ch]) continue;
@@ -4369,16 +4848,26 @@ void loop() {
   if (select || down || left || right) {
 
     if (!screenAwake) {
+      if (suppressWakeUntilRelease) {
+        touchActive = true;
+        return;
+      }
       lastActivityTime = millis();
+      screenAwake = true;
+      displayDimmed = false;
+      suppressWakeUntilRelease = false;
+      applyDisplayBacklight();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
 
-    digitalWrite(45, HIGH);
-
-    screenAwake = true;
-    fullRedraw = true;
-    uiNeedsRedraw = true;
-
-    delay(100);
-    return;
+      delay(100);
+      return;
+    }
+    if (displayDimmed) {
+      displayDimmed = false;
+      applyDisplayBacklight();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
     }
   userActive = true;
 }
@@ -4554,6 +5043,10 @@ if (!isTouching && waitingForRelease) {
           drawMixingStatic();
           mixingNeedsRedraw = true;
           break;
+
+          case SCREEN_DISPLAY_SETTINGS:
+          drawDisplaySettingsScreen();
+          break;
         }
 
         drawTopBarStatic();
@@ -4636,9 +5129,9 @@ if (!isTouching && waitingForRelease) {
     // ===== WAKE ONLY =====
     if (!screenAwake) {
       lastActivityTime = millis();
-      digitalWrite(45, HIGH);
-
       screenAwake = true;
+      displayDimmed = false;
+      applyDisplayBacklight();
 
       fullRedraw = true;
       uiNeedsRedraw = true;
@@ -4649,6 +5142,12 @@ if (!isTouching && waitingForRelease) {
       delay(100);  // optional, but OK
       return;
     }
+    if (displayDimmed) {
+      displayDimmed = false;
+      applyDisplayBacklight();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+    }
 
   handleTouch(x, y);
   touchActive = true;
@@ -4657,6 +5156,12 @@ if (!isTouching && waitingForRelease) {
   else {
     if (touchActive) delay(30);
       touchActive = false;
+
+    if (suppressWakeUntilRelease) {
+      suppressWakeUntilRelease = false;
+      waitingForRelease = false;
+      pressedButton = BTN_NONE;
+    }
 
     if (!waitingForRelease) {
       pendingModelHoldIndex = -1;
@@ -4671,22 +5176,34 @@ if (!isTouching && waitingForRelease) {
   }
 
   unsigned long idleTime = millis() - lastActivityTime;
+  unsigned long dimTimeoutMs = getDisplayDimTimeoutMs();
+  unsigned long offTimeoutMs = getDisplayOffTimeoutMs();
+  bool shouldDim = (dimTimeoutMs > 0 && idleTime > dimTimeoutMs);
+  bool shouldTurnOff = (offTimeoutMs > 0 && dimTimeoutMs > 0 && idleTime > (dimTimeoutMs + offTimeoutMs));
 
-  if (idleTime > OFF_TIMEOUT) {
-
+  if (shouldTurnOff) {
     if (screenAwake) {
-      digitalWrite(45, LOW);
       screenAwake = false;
+      displayDimmed = false;
+      applyDisplayBacklight();
     }
   }
   else {
-    digitalWrite(45, HIGH);
-      if (!screenAwake) {
-  screenAwake = true;
-  fullRedraw = true;
-  uiNeedsRedraw = true;
-}
-  }  
+    if (!screenAwake) {
+      screenAwake = true;
+      displayDimmed = false;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+    }
+
+    bool nextDimmed = shouldDim && displaySleepBrightness < displayBrightness;
+    if (displayDimmed != nextDimmed) {
+      displayDimmed = nextDimmed;
+      applyDisplayBacklight();
+    } else {
+      applyDisplayBacklight();
+    }
+  }
 }
 
 bool initAds1115() {
@@ -5025,6 +5542,61 @@ void drawThickRoundRect(int x, int y, int w, int h, int r, uint16_t c) {
   tft.drawRoundRect(x+1, y, w-2, h, r-1, c);
 }
 
+void drawTopLeftBevelHighlight(int x, int y, int w, int h, int radius,
+                               int inset, uint16_t highlightColor) {
+  int topRun = w - (2 * radius);
+  int sideRun = h - (2 * radius);
+  const int highlightLayers = 3;
+
+  for (int layer = 0; layer < highlightLayers; layer++) {
+    int localInset = inset + layer;
+    int cornerRadius = radius - localInset;
+    if (cornerRadius <= 0) {
+      break;
+    }
+
+    float layerFade = 1.0f - (layer * 0.24f);
+    int cornerSteps = max(8, cornerRadius * 5);
+    int lastPx = -32768;
+    int lastPy = -32768;
+
+    for (int step = 1; step < cornerSteps; step++) {
+      float t = (float)step / (float)cornerSteps;
+      float angle = PI + (t * (PI * 0.5f));
+      int px = x + radius + (int)roundf(cosf(angle) * cornerRadius);
+      int py = y + radius + (int)roundf(sinf(angle) * cornerRadius);
+
+      if (px != lastPx || py != lastPy) {
+        tft.drawPixel(px, py, fadeColor(highlightColor, layerFade));
+        lastPx = px;
+        lastPy = py;
+      }
+    }
+
+    if (topRun > 0) {
+      for (int i = 0; i < topRun; i++) {
+        float fade = 1.0f - ((float)i / (float)topRun);
+        tft.drawPixel(
+          x + radius + i,
+          y + localInset,
+          fadeColor(highlightColor, layerFade * fade)
+        );
+      }
+    }
+
+    if (sideRun > 0) {
+      for (int i = 0; i < sideRun; i++) {
+        float fade = 1.0f - ((float)i / (float)sideRun);
+        tft.drawPixel(
+          x + localInset,
+          y + radius + i,
+          fadeColor(highlightColor, layerFade * fade)
+        );
+      }
+    }
+  }
+}
+
 void drawGradientControl(int x, int y, int w, int h, int radius,
                          uint16_t baseColor, uint16_t outlineColor) {
   for (int i = 0; i < h; i++) {
@@ -5058,30 +5630,7 @@ void drawGradientControl(int x, int y, int w, int h, int radius,
   tft.drawRoundRect(x, y, w, h, radius, outlineColor);
 
   int inset = (radius >= 8) ? 5 : 3;
-  int topRun = w - (2 * radius);
-  int sideRun = h - (2 * radius);
-
-  for (int i = 0; i < 5; i++) {
-    float fade = 1.0f - (i * 0.18f);
-    uint16_t c = fadeColor(COLOR_ACCENT_HI, fade);
-    if (radius - inset - i > 0) {
-      tft.drawCircleHelper(x + radius, y + radius, radius - inset - i, 1, c);
-    }
-  }
-
-  if (topRun > 0) {
-    for (int i = 0; i < topRun; i++) {
-      float fade = 1.0f - ((float)i / topRun);
-      tft.drawPixel(x + radius + i, y + inset, fadeColor(COLOR_ACCENT_HI, fade));
-    }
-  }
-
-  if (sideRun > 0) {
-    for (int i = 0; i < sideRun; i++) {
-      float fade = 1.0f - ((float)i / sideRun);
-      tft.drawPixel(x + inset, y + radius + i, fadeColor(COLOR_ACCENT_HI, fade));
-    }
-  }
+  drawTopLeftBevelHighlight(x, y, w, h, radius, inset, COLOR_ACCENT_HI);
 
   tft.drawFastHLine(x + radius, y + h - 2, w - (2 * radius), TFT_DARKGREY);
   tft.drawFastVLine(x + w - 2, y + radius, h - (2 * radius), TFT_DARKGREY);
@@ -5097,24 +5646,61 @@ void drawButtonBubble(int x, int y, int w, int h,
   // Keep button label sizing consistent regardless of prior screen/font state.
   tft.setTextFont(2);
 
+  int drawY = y + (pressed ? 2 : 0);
+
+  bool isBackNavIcon = (strcmp(label, "BACK") == 0);
+  bool isCompactMenuIcon =
+    (strcmp(label, "Reverse") == 0) ||
+    (strcmp(label, "Trim") == 0) ||
+    (strcmp(label, "Failsafe") == 0) ||
+    (strcmp(label, "End Points") == 0) ||
+    (strcmp(label, "Expo") == 0) ||
+    (strcmp(label, "Rates") == 0) ||
+    (strcmp(label, "Protocol") == 0) ||
+    (strcmp(label, "Model Name") == 0) ||
+    (strcmp(label, "Drive Type") == 0) ||
+    (strcmp(label, "Mixing") == 0);
+
   int iconScale = 2;   // default
+  int iconUnit = 24;
 
   // ===== SCALE OVERRIDE =====
-  if (strcmp(label, "BACK") == 0) {
+  if (isBackNavIcon) {
     iconScale = 1;
+    iconUnit = 18;
+  }
+  else if (isCompactMenuIcon) {
+    iconScale = 1;
+    iconUnit = 24;
   }
 
-  int iconSize = 24 * iconScale;
-  int iconX = x + 20;
+  int radius = BTN_RADIUS;
+  int bevelInset = 5;
+  int iconSafeLeftInset = max(14, radius + 3);
+  int iconSafeTopInset = bevelInset + 7;
+  int iconSafeBottomInset = 8;
+  int iconVerticalNudge = 0;
+  int iconSize = iconUnit * iconScale;
+  int defaultIconX = isBackNavIcon ? (x + 10) : (x + 20);
+  int iconX = max(defaultIconX, x + iconSafeLeftInset);
 
-  // optional: better alignment for BACK
-  if (strcmp(label, "BACK") == 0) {
-    iconX = x + 10;
+  if (isBackNavIcon) {
+    iconSafeBottomInset = 12;
+    iconVerticalNudge = -4;
+  }
+  else if (isCompactMenuIcon) {
+    iconSafeBottomInset = 11;
+    iconVerticalNudge = -3;
   }
 
-  int iconY = y + (h / 2) - (iconSize / 2);
-
-  if (pressed) y += 2;
+  int iconMinY = drawY + iconSafeTopInset;
+  int iconMaxY = drawY + h - iconSafeBottomInset - iconSize;
+  int iconY = drawY + (h / 2) - (iconSize / 2) + iconVerticalNudge;
+  if (iconMaxY >= iconMinY) {
+    iconY = constrain(iconY, iconMinY, iconMaxY);
+  } else {
+    iconY = iconMinY;
+  }
 
   uint16_t baseColor;
   uint16_t textColor;
@@ -5135,8 +5721,6 @@ void drawButtonBubble(int x, int y, int w, int h,
     textColor = COLOR_TEXT;
     outlineColor = COLOR_ACCENT;
   }
-
-  int radius = BTN_RADIUS;
 
   // ===== GRADIENT BASE =====
   for (int i = 0; i < h; i++) {
@@ -5166,48 +5750,21 @@ void drawButtonBubble(int x, int y, int w, int h,
 
     tft.drawFastHLine(
       x + xOffset,
-      y + i,
+      drawY + i,
       w - (2 * xOffset),
       lineColor
     );
   }
 
   // ===== OUTLINE =====
-  tft.drawRoundRect(x, y, w, h, radius, outlineColor);
+  tft.drawRoundRect(x, drawY, w, h, radius, outlineColor);
 
   int inset = 5;
-
-  // ===== HIGHLIGHT =====
-  for (int i = 0; i < 6; i++) {
-    float fade = 1.0 - (i * 0.15);
-    uint16_t c = fadeColor(COLOR_ACCENT_HI, fade);
-
-    tft.drawCircleHelper(
-      x + radius,
-      y + radius,
-      radius - inset - i,
-      1,
-      c
-    );
-  }
-
-  for (int i = 0; i < w - (2 * radius); i++) {
-    float fade = 1.0 - ((float)i / (w - (2 * radius)));
-    uint16_t c = fadeColor(COLOR_ACCENT_HI, fade);
-
-    tft.drawPixel(x + radius + i, y + inset, c);
-  }
-
-  for (int i = 0; i < h - (2 * radius); i++) {
-    float fade = 1.0 - ((float)i / (h - (2 * radius)));
-    uint16_t c = fadeColor(COLOR_ACCENT_HI, fade);
-
-    tft.drawPixel(x + inset, y + radius + i, c);
-  }
+  drawTopLeftBevelHighlight(x, drawY, w, h, radius, inset, COLOR_ACCENT_HI);
 
   // ===== SHADOW =====
-  tft.drawFastHLine(x + radius, y + h - 2, w - (2 * radius), TFT_DARKGREY);
-  tft.drawFastVLine(x + w - 2, y + radius, h - (2 * radius), TFT_DARKGREY);
+  tft.drawFastHLine(x + radius, drawY + h - 2, w - (2 * radius), TFT_DARKGREY);
+  tft.drawFastVLine(x + w - 2, drawY + radius, h - (2 * radius), TFT_DARKGREY);
 
   uint16_t iconColor = selected ? COLOR_BG : COLOR_ACCENT;
 
@@ -5235,6 +5792,9 @@ void drawButtonBubble(int x, int y, int w, int h,
   else if (strcmp(label, "Failsafe") == 0) {
     drawFailsafeIcon(iconX, iconY, iconScale, iconColor);
   }
+  else if (strcmp(label, "End Points") == 0) {
+    drawEndpointIcon(iconX, iconY, iconScale, iconColor);
+  }
   else if (strcmp(label, "Expo") == 0) {
     drawExpoIcon(iconX, iconY, iconScale, iconColor);
   }
@@ -5256,7 +5816,7 @@ void drawButtonBubble(int x, int y, int w, int h,
 
   // ===== TEXT =====
   int16_t tx = x + textOffset;
-  int16_t ty = y + (h / 2) - 7;
+  int16_t ty = drawY + (h / 2) - 7;
 
   if (textOffset < 0) {
     tx = x + ((w - tft.textWidth(label)) / 2);
@@ -5301,6 +5861,21 @@ void drawMenuScreen() {
     dpadFocusVisible && selectedButton == BTN_MODEL,
     100);
 
+  drawButtonBubble(
+    DISPLAY_MENU_BTN_X, DISPLAY_MENU_BTN_Y,
+    DISPLAY_MENU_BTN_W, DISPLAY_MENU_BTN_H,
+    "",
+    pressedButton == BTN_DISPLAY_SETTINGS,
+    dpadFocusVisible && selectedButton == BTN_DISPLAY_SETTINGS,
+    -1);
+  int gearSize = 22;
+  int gearDrawY = DISPLAY_MENU_BTN_Y + (pressedButton == BTN_DISPLAY_SETTINGS ? 2 : 0);
+  drawGearIcon(
+    DISPLAY_MENU_BTN_X + max(14, BTN_RADIUS + 3),
+    gearDrawY + max(12, 5 + 7),
+    gearSize,
+    (dpadFocusVisible && selectedButton == BTN_DISPLAY_SETTINGS) ? COLOR_BG : COLOR_ACCENT);
+
   drawGameMenuButton();
 }
 
@@ -5312,6 +5887,160 @@ void drawGameMenuButton() {
     pressedButton == BTN_GAME,
     dpadFocusVisible && selectedButton == BTN_GAME,
     -1);
+}
+
+void drawDisplaySettingsRow(int y, const char* label, const char* valueText,
+                            bool minusPressed, bool minusSelected,
+                            bool plusPressed, bool plusSelected,
+                            uint16_t previewColor, int previewWidth) {
+  int panelY = y;
+  int panelH = DISPLAY_SETTINGS_ROW_H;
+  int contentCenterX = DISPLAY_SETTINGS_ROW_X + (DISPLAY_SETTINGS_ROW_W / 2);
+
+  tft.fillRoundRect(DISPLAY_SETTINGS_ROW_X, panelY, DISPLAY_SETTINGS_ROW_W, panelH, 12, COLOR_PANEL);
+  tft.drawRoundRect(DISPLAY_SETTINGS_ROW_X, panelY, DISPLAY_SETTINGS_ROW_W, panelH, 12, COLOR_ACCENT);
+
+  tft.setTextColor(COLOR_TEXT);
+  tft.setTextFont(2);
+  tft.drawCentreString(label, contentCenterX, panelY + 3, 2);
+  tft.drawCentreString(valueText, contentCenterX, panelY + 15, 2);
+
+  int previewX = 72;
+  int previewY = panelY + 31;
+  int previewH = 5;
+  int previewTrackW = 96;
+  tft.drawRoundRect(previewX, previewY, previewTrackW, previewH, 3, COLOR_ACCENT_HI);
+  if (previewWidth > 0) {
+    tft.fillRoundRect(previewX + 1, previewY + 1, min(previewWidth, previewTrackW - 2), previewH - 2, 3, previewColor);
+  }
+
+  drawButtonBubble(
+    DISPLAY_SETTINGS_MINUS_X, panelY + DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET,
+    DISPLAY_SETTINGS_ADJUST_BTN_W, DISPLAY_SETTINGS_ADJUST_BTN_H,
+    "-",
+    minusPressed,
+    minusSelected,
+    -1);
+
+  drawButtonBubble(
+    DISPLAY_SETTINGS_PLUS_X, panelY + DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET,
+    DISPLAY_SETTINGS_ADJUST_BTN_W, DISPLAY_SETTINGS_ADJUST_BTN_H,
+    "+",
+    plusPressed,
+    plusSelected,
+    -1);
+}
+
+void drawDisplaySettingsScreen() {
+  char dimTimeoutText[16];
+  char offTimeoutText[16];
+  char brightnessText[16];
+  char sleepText[16];
+  int brightnessPercent = (displayBrightness * 100) / 255;
+  int sleepPercent = (displaySleepBrightness * 100) / 255;
+  snprintf(brightnessText, sizeof(brightnessText), "%d%%", brightnessPercent);
+  if (displaySleepBrightness == 0) {
+    snprintf(sleepText, sizeof(sleepText), "Off");
+  } else {
+    snprintf(sleepText, sizeof(sleepText), "%d%%", sleepPercent);
+  }
+
+  tft.fillScreen(COLOR_BG);
+  drawButtonBubble(
+    BACK_BTN_X, BACK_BTN_Y,
+    BACK_BTN_W, BACK_BTN_H,
+    "BACK",
+    pressedButton == BTN_BACK,
+    dpadFocusVisible && selectedButton == BTN_BACK,
+    BACK_TEXT_OFFSET);
+
+  tft.drawCentreString("Display Settings", 120, 38, 2);
+  tft.setTextColor(fadeColor(COLOR_TEXT, 0.65f));
+  tft.drawCentreString("Changes save automatically", 120, 50, 2);
+
+  drawDisplaySettingsRow(
+    DISPLAY_SETTINGS_BRIGHTNESS_Y,
+    "Brightness",
+    brightnessText,
+    pressedButton == BTN_DISPLAY_BRIGHTNESS_DEC,
+    dpadFocusVisible && selectedButton == BTN_DISPLAY_BRIGHTNESS_DEC,
+    pressedButton == BTN_DISPLAY_BRIGHTNESS_INC,
+    dpadFocusVisible && selectedButton == BTN_DISPLAY_BRIGHTNESS_INC,
+    COLOR_ACCENT,
+    map(displayBrightness, 0, 255, 0, 94));
+
+  drawDisplaySettingsRow(
+    DISPLAY_SETTINGS_TIMEOUT_Y,
+    "Dim Timeout",
+    formatDisplayTimeoutValue(displayTimeoutIndex, displayTimeoutOptionsSec, displayTimeoutOptionCount,
+                              dimTimeoutText, sizeof(dimTimeoutText)),
+    pressedButton == BTN_DISPLAY_TIMEOUT_DEC,
+    dpadFocusVisible && selectedButton == BTN_DISPLAY_TIMEOUT_DEC,
+    pressedButton == BTN_DISPLAY_TIMEOUT_INC,
+    dpadFocusVisible && selectedButton == BTN_DISPLAY_TIMEOUT_INC,
+    COLOR_ACCENT_HI,
+    map(min((int)displayTimeoutIndex, (int)displayTimeoutOptionCount - 1), 0, displayTimeoutOptionCount - 1, 12, 94));
+
+  drawDisplaySettingsRow(
+    DISPLAY_SETTINGS_OFF_TIMEOUT_Y,
+    "Off Delay",
+    formatDisplayTimeoutValue(displayOffTimeoutIndex, displayOffTimeoutOptionsSec, displayOffTimeoutOptionCount,
+                              offTimeoutText, sizeof(offTimeoutText)),
+    pressedButton == BTN_DISPLAY_OFF_TIMEOUT_DEC,
+    dpadFocusVisible && selectedButton == BTN_DISPLAY_OFF_TIMEOUT_DEC,
+    pressedButton == BTN_DISPLAY_OFF_TIMEOUT_INC,
+    dpadFocusVisible && selectedButton == BTN_DISPLAY_OFF_TIMEOUT_INC,
+    fadeColor(COLOR_ACCENT_HI, 0.70f),
+    map(min((int)displayOffTimeoutIndex, (int)displayOffTimeoutOptionCount - 1), 0, displayOffTimeoutOptionCount - 1, 12, 94));
+
+  drawDisplaySettingsRow(
+    DISPLAY_SETTINGS_SLEEP_Y,
+    "Dim Level",
+    sleepText,
+    pressedButton == BTN_DISPLAY_SLEEP_DEC,
+    dpadFocusVisible && selectedButton == BTN_DISPLAY_SLEEP_DEC,
+    pressedButton == BTN_DISPLAY_SLEEP_INC,
+    dpadFocusVisible && selectedButton == BTN_DISPLAY_SLEEP_INC,
+    fadeColor(COLOR_ACCENT, 0.70f),
+    map(displaySleepBrightness, 0, 255, 0, 94));
+
+  drawButtonBubble(
+    DISPLAY_SETTINGS_THEME_X, DISPLAY_SETTINGS_THEME_Y,
+    DISPLAY_SETTINGS_THEME_W, DISPLAY_SETTINGS_THEME_H,
+    getThemeToggleLabel(),
+    pressedButton == BTN_DISPLAY_THEME_TOGGLE,
+    dpadFocusVisible && selectedButton == BTN_DISPLAY_THEME_TOGGLE,
+    -1);
+
+  drawButtonBubble(
+    DISPLAY_SETTINGS_SLEEP_NOW_X, DISPLAY_SETTINGS_SLEEP_NOW_Y,
+    DISPLAY_SETTINGS_SLEEP_NOW_W, DISPLAY_SETTINGS_SLEEP_NOW_H,
+    "Sleep Now",
+    pressedButton == BTN_DISPLAY_SLEEP_NOW,
+    dpadFocusVisible && selectedButton == BTN_DISPLAY_SLEEP_NOW,
+    -1);
+}
+
+void drawGearIcon(int x, int y, int size, uint16_t iconColor) {
+  int cx = x + (size / 2);
+  int cy = y + (size / 2);
+  int outerR = max(6, size / 2 - 3);
+  int innerR = max(2, size / 4);
+  int toothLen = max(2, size / 6);
+
+  for (int i = 0; i < 8; i++) {
+    float angle = (float)i * 0.7853982f;
+    int sx = cx + (int)(cosf(angle) * (innerR + 2));
+    int sy = cy + (int)(sinf(angle) * (innerR + 2));
+    int ex = cx + (int)(cosf(angle) * (outerR + toothLen));
+    int ey = cy + (int)(sinf(angle) * (outerR + toothLen));
+    tft.drawLine(sx, sy, ex, ey, iconColor);
+  }
+
+  tft.drawCircle(cx, cy, outerR, iconColor);
+  tft.drawCircle(cx, cy, outerR - 1, iconColor);
+  tft.fillCircle(cx, cy, innerR, iconColor);
+  tft.fillCircle(cx, cy, max(1, innerR - 3), COLOR_PANEL);
 }
 
 static float wrapBattleAngle(float angle) {
@@ -6871,6 +7600,9 @@ void setScreen(Screen screen) {
   if (screen == SCREEN_MENU) {
     selectedButton = BTN_CTRL;
   }
+  else if (screen == SCREEN_DISPLAY_SETTINGS) {
+    selectedButton = BTN_DISPLAY_BRIGHTNESS_DEC;
+  }
   else if (screen == SCREEN_CONTROLLER_SETTINGS) {
     selectedButton = (controllerSettingsPage == 0) ? BTN_TRIM : BTN_EXPO;
   }
@@ -6905,6 +7637,11 @@ void setScreen(Screen screen) {
   else if (screen == SCREEN_MODEL_SETTINGS) {
     selectedButton = (modelSettingsPage == 0) ? BTN_MODEL_NAME : BTN_REVERSE;
   }
+  else if (screen == SCREEN_REVERSE) {
+    reverseReturnScreen = (previousScreen == SCREEN_MODEL_SETTINGS)
+      ? SCREEN_MODEL_SETTINGS
+      : SCREEN_CONTROLLER_SETTINGS;
+  }
   else if (screen == SCREEN_DRIVE_TYPE) {
     if (currentDrive == DRIVE_TANK) selectedButton = BTN_DRIVE_TANK;
     else if (currentDrive == DRIVE_CAR) selectedButton = BTN_DRIVE_CAR;
@@ -6928,6 +7665,14 @@ void setScreen(Screen screen) {
 
 void queueScreenButton(ButtonID button, Screen screen) {
   if (waitingForRelease) return;
+
+  if (screen == SCREEN_REVERSE) {
+    if (currentScreen == SCREEN_MODEL_SETTINGS) {
+      reverseReturnScreen = SCREEN_MODEL_SETTINGS;
+    } else if (currentScreen == SCREEN_CONTROLLER_SETTINGS) {
+      reverseReturnScreen = SCREEN_CONTROLLER_SETTINGS;
+    }
+  }
 
   pressedButton = button;
   nextScreen = screen;
@@ -7038,8 +7783,147 @@ void handleTouch(int x, int y) {
       return;
     }
 
+    else if (isInside(x, y, DISPLAY_MENU_BTN_X, DISPLAY_MENU_BTN_Y, DISPLAY_MENU_BTN_W, DISPLAY_MENU_BTN_H)) {
+      queueScreenButton(BTN_DISPLAY_SETTINGS, SCREEN_DISPLAY_SETTINGS);
+      return;
+    }
+
     else if (isInside(x, y, GAME_BTN_X, GAME_BTN_Y, GAME_BTN_W, GAME_BTN_H)) {
       queueScreenButton(BTN_GAME, SCREEN_SPACE_GAME);
+      return;
+    }
+  }
+
+  else if (currentScreen == SCREEN_DISPLAY_SETTINGS) {
+    if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
+      queueScreenButton(BTN_BACK, SCREEN_MENU);
+      return;
+    }
+
+    if (isInside(x, y, DISPLAY_SETTINGS_MINUS_X, DISPLAY_SETTINGS_BRIGHTNESS_Y + DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET,
+                 DISPLAY_SETTINGS_ADJUST_BTN_W, DISPLAY_SETTINGS_ADJUST_BTN_H)) {
+      pressedButton = BTN_DISPLAY_BRIGHTNESS_DEC;
+      selectedButton = BTN_DISPLAY_BRIGHTNESS_DEC;
+      stepDisplayOption(displayBrightness, displayBrightnessOptions, displayBrightnessOptionCount, -1);
+      displaySleepBrightness = min(displaySleepBrightness, displayBrightness);
+      saveDisplaySettings();
+      applyDisplayBacklight();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      waitingForRelease = true;
+      return;
+    }
+
+    if (isInside(x, y, DISPLAY_SETTINGS_PLUS_X, DISPLAY_SETTINGS_BRIGHTNESS_Y + DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET,
+                 DISPLAY_SETTINGS_ADJUST_BTN_W, DISPLAY_SETTINGS_ADJUST_BTN_H)) {
+      pressedButton = BTN_DISPLAY_BRIGHTNESS_INC;
+      selectedButton = BTN_DISPLAY_BRIGHTNESS_INC;
+      stepDisplayOption(displayBrightness, displayBrightnessOptions, displayBrightnessOptionCount, 1);
+      saveDisplaySettings();
+      applyDisplayBacklight();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      waitingForRelease = true;
+      return;
+    }
+
+    if (isInside(x, y, DISPLAY_SETTINGS_MINUS_X, DISPLAY_SETTINGS_TIMEOUT_Y + DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET,
+                 DISPLAY_SETTINGS_ADJUST_BTN_W, DISPLAY_SETTINGS_ADJUST_BTN_H)) {
+      pressedButton = BTN_DISPLAY_TIMEOUT_DEC;
+      selectedButton = BTN_DISPLAY_TIMEOUT_DEC;
+      displayTimeoutIndex = constrain((int)displayTimeoutIndex - 1, 0, displayTimeoutOptionCount - 1);
+      saveDisplaySettings();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      waitingForRelease = true;
+      return;
+    }
+
+    if (isInside(x, y, DISPLAY_SETTINGS_PLUS_X, DISPLAY_SETTINGS_TIMEOUT_Y + DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET,
+                 DISPLAY_SETTINGS_ADJUST_BTN_W, DISPLAY_SETTINGS_ADJUST_BTN_H)) {
+      pressedButton = BTN_DISPLAY_TIMEOUT_INC;
+      selectedButton = BTN_DISPLAY_TIMEOUT_INC;
+      displayTimeoutIndex = constrain((int)displayTimeoutIndex + 1, 0, displayTimeoutOptionCount - 1);
+      saveDisplaySettings();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      waitingForRelease = true;
+      return;
+    }
+
+    if (isInside(x, y, DISPLAY_SETTINGS_MINUS_X, DISPLAY_SETTINGS_OFF_TIMEOUT_Y + DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET,
+                 DISPLAY_SETTINGS_ADJUST_BTN_W, DISPLAY_SETTINGS_ADJUST_BTN_H)) {
+      pressedButton = BTN_DISPLAY_OFF_TIMEOUT_DEC;
+      selectedButton = BTN_DISPLAY_OFF_TIMEOUT_DEC;
+      displayOffTimeoutIndex = constrain((int)displayOffTimeoutIndex - 1, 0, displayOffTimeoutOptionCount - 1);
+      saveDisplaySettings();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      waitingForRelease = true;
+      return;
+    }
+
+    if (isInside(x, y, DISPLAY_SETTINGS_PLUS_X, DISPLAY_SETTINGS_OFF_TIMEOUT_Y + DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET,
+                 DISPLAY_SETTINGS_ADJUST_BTN_W, DISPLAY_SETTINGS_ADJUST_BTN_H)) {
+      pressedButton = BTN_DISPLAY_OFF_TIMEOUT_INC;
+      selectedButton = BTN_DISPLAY_OFF_TIMEOUT_INC;
+      displayOffTimeoutIndex = constrain((int)displayOffTimeoutIndex + 1, 0, displayOffTimeoutOptionCount - 1);
+      saveDisplaySettings();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      waitingForRelease = true;
+      return;
+    }
+
+    if (isInside(x, y, DISPLAY_SETTINGS_MINUS_X, DISPLAY_SETTINGS_SLEEP_Y + DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET,
+                 DISPLAY_SETTINGS_ADJUST_BTN_W, DISPLAY_SETTINGS_ADJUST_BTN_H)) {
+      pressedButton = BTN_DISPLAY_SLEEP_DEC;
+      selectedButton = BTN_DISPLAY_SLEEP_DEC;
+      stepDisplayOption(displaySleepBrightness, displaySleepBrightnessOptions, displaySleepBrightnessOptionCount, -1);
+      saveDisplaySettings();
+      applyDisplayBacklight();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      waitingForRelease = true;
+      return;
+    }
+
+    if (isInside(x, y, DISPLAY_SETTINGS_PLUS_X, DISPLAY_SETTINGS_SLEEP_Y + DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET,
+                 DISPLAY_SETTINGS_ADJUST_BTN_W, DISPLAY_SETTINGS_ADJUST_BTN_H)) {
+      pressedButton = BTN_DISPLAY_SLEEP_INC;
+      selectedButton = BTN_DISPLAY_SLEEP_INC;
+      stepDisplayOption(displaySleepBrightness, displaySleepBrightnessOptions, displaySleepBrightnessOptionCount, 1);
+      saveDisplaySettings();
+      applyDisplayBacklight();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      waitingForRelease = true;
+      return;
+    }
+
+    if (isInside(x, y, DISPLAY_SETTINGS_SLEEP_NOW_X, DISPLAY_SETTINGS_SLEEP_NOW_Y,
+                 DISPLAY_SETTINGS_SLEEP_NOW_W, DISPLAY_SETTINGS_SLEEP_NOW_H)) {
+      pressedButton = BTN_DISPLAY_SLEEP_NOW;
+      selectedButton = BTN_DISPLAY_SLEEP_NOW;
+      displayDimmed = false;
+      screenAwake = false;
+      suppressWakeUntilRelease = true;
+      applyDisplayBacklight();
+      waitingForRelease = true;
+      return;
+    }
+
+    if (isInside(x, y, DISPLAY_SETTINGS_THEME_X, DISPLAY_SETTINGS_THEME_Y,
+                 DISPLAY_SETTINGS_THEME_W, DISPLAY_SETTINGS_THEME_H)) {
+      pressedButton = BTN_DISPLAY_THEME_TOGGLE;
+      selectedButton = BTN_DISPLAY_THEME_TOGGLE;
+      themeMode = (themeMode == THEME_DARK) ? THEME_LIGHT : THEME_DARK;
+      applyThemePalette();
+      saveDisplaySettings();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      topBarNeedsRedraw = true;
+      waitingForRelease = true;
       return;
     }
   }
@@ -7594,12 +8478,9 @@ void handleTouch(int x, int y) {
   else if (currentScreen == SCREEN_REVERSE) {
 
     if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
-
-  queueScreenButton(BTN_BACK, SCREEN_CONTROLLER_SETTINGS);
-
-
-  return;
-}
+      queueScreenButton(BTN_BACK, reverseReturnScreen);
+      return;
+    }
 
     int startY = 40;
     int spacing = 45;
@@ -7617,14 +8498,6 @@ void handleTouch(int x, int y) {
           bool linked[CHANNEL_COUNT] = {false, false, false, false};
           getLinkedReverseChannels(activeModel, i, linked);
           bool newState = !models[activeModel].reverse[i];
-
-          if (currentDrive == DRIVE_TANK &&
-              getModelTankMode(activeModel) == TANK_MODE_RIGHT_STICK &&
-              (i == 0 || i == 1)) {
-            linked[0] = true;
-            linked[1] = true;
-            newState = !models[activeModel].reverse[0];
-          }
 
           for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
             if (!linked[ch]) continue;
@@ -8995,6 +9868,11 @@ void drawStickBase(int x, int y, int size) {
   static bool spriteReady = false;
   static int spriteSize = 0;
 
+  if (stickBaseSpriteNeedsRebuild && spriteReady) {
+    stickBaseSprite.deleteSprite();
+    spriteReady = false;
+  }
+
   if (!spriteReady || spriteSize != size) {
     if (spriteReady) {
       stickBaseSprite.deleteSprite();
@@ -9007,6 +9885,8 @@ void drawStickBase(int x, int y, int size) {
       drawStickBaseDirect(x, y, size);
       return;
     }
+
+    stickBaseSprite.fillSprite(COLOR_BG);
 
     int radius = 10;
 
@@ -9050,6 +9930,7 @@ void drawStickBase(int x, int y, int size) {
 
     spriteReady = true;
     spriteSize = size;
+    stickBaseSpriteNeedsRebuild = false;
   }
 
   stickBaseSprite.pushSprite(x, y);
@@ -9953,7 +10834,7 @@ void drawControllerIcon(int x, int y, int s, uint16_t iconColor) {
 
 // ==== BACK ICON ====
 void drawBackIcon(int x, int y, int s, uint16_t iconColor) {
-  int size = 24 * s;
+  int size = 18 * s;
   drawRgb565IconTinted(x, y, size, size, icon_BACK, ICON_BACK_W, ICON_BACK_H, iconColor);
 }
 
@@ -9965,7 +10846,7 @@ void drawCarIcon(int x, int y, int s, uint16_t iconColor) {
 
 // ==== HOME ICON ====
 void drawHomeIcon(int x, int y, int s, uint16_t iconColor) {
-  int size = 24 * s;
+  int size = 18 * s;
   drawRgb565IconTinted(x, y, size, size, icon_HOME, ICON_HOME_W, ICON_HOME_H, iconColor);
 }
 // ==== REVERSE ICON ====
@@ -9984,6 +10865,12 @@ void drawTrimIcon(int x, int y, int s, uint16_t iconColor) {
 void drawFailsafeIcon(int x, int y, int s, uint16_t iconColor) {
   int size = 24 * s;
   drawRgb565IconTinted(x, y, size, size, icon_FAILSAFE, ICON_FAILSAFE_W, ICON_FAILSAFE_H, iconColor);
+}
+
+// ==== ENDPOINT ICON ====
+void drawEndpointIcon(int x, int y, int s, uint16_t iconColor) {
+  int size = 24 * s;
+  drawRgb565IconTinted(x, y, size, size, icon_ENDPOINT, ICON_ENDPOINT_W, ICON_ENDPOINT_H, iconColor);
 }
 
 void drawExpoIcon(int x, int y, int s, uint16_t iconColor) {
