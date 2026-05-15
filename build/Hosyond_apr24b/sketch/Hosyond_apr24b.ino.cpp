@@ -164,7 +164,8 @@
   // Most external-module hosts use an inverted S.Port/Data line.
   // -1 = keep existing, otherwise 0..2 maps to elrsInvertModes entry.
   #define ELRS_FORCE_INVERT_MODE 2
-  #define ELRS_VERBOSE_SERIAL_DEBUG true
+  #define RADIO_PROTOCOL_SERIAL_DEBUG false
+  #define ELRS_VERBOSE_SERIAL_DEBUG false
   // The inverter is out of circuit now, so go back to normal ELRS traffic.
   #define ELRS_PROBE_UNTIL_MODULE_FRAMES false
   #define ELRS_RX_ONLY_DIAGNOSTIC false
@@ -869,6 +870,7 @@ enum NumpadTarget {
   void sanitizeWifiText(char *value, size_t maxLen, bool allowEmpty);
   void sanitizeOtaSettings();
   void logOtaNetworkState(const char *label);
+  void logPartitionInfo(const char *label, const esp_partition_t *partition);
   bool isOtaKeyboardTarget(KeyboardTarget target);
   const char* getKeyboardTargetLabel(KeyboardTarget target);
   void drawKeyboardPreview();
@@ -932,131 +934,131 @@ enum NumpadTarget {
   void fireSpaceEnemyBullet();
   bool spaceEnemiesRemaining();
 
-#line 1459 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 1461 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void initModelDefaults(int i);
-#line 1665 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 1667 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void selectModelSlot(int modelIndex);
-#line 1691 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 1693 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void beginModelNameEdit(int modelIndex);
-#line 3020 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 3072 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void setup();
-#line 3158 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 3210 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void loop();
-#line 4959 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 5011 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawThickLine(int x1, int y1, int x2, int y2, uint16_t c);
-#line 4964 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 5016 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawThickCircle(int x, int y, int r, uint16_t c);
-#line 4969 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 5021 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawThickRoundRect(int x, int y, int w, int h, int r, uint16_t c);
-#line 4974 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 5026 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawGradientControl(int x, int y, int w, int h, int radius, uint16_t baseColor, uint16_t outlineColor);
-#line 5219 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 5271 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawMenuScreen();
-#line 5263 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 5315 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 static float wrapBattleAngle(float angle);
-#line 5270 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 5322 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 static int countAliveBattleEnemies();
-#line 5278 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 5330 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 static bool battleWorldToScreen(float wx, float wy, float &sx, float &scale, float &forward);
-#line 5295 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 5347 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 static bool battlePositionBlocked(float x, float y);
-#line 5306 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 5358 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 static void spawnBattleWave(unsigned long now);
-#line 5819 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 5871 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawControllerSettings();
-#line 6477 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 6529 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawModelSettings();
-#line 6686 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 6738 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void closeKeyboard();
-#line 6921 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 6973 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void saveModels();
-#line 6933 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 6985 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void loadModels();
-#line 6943 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 6995 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void handleTouch(int x, int y);
-#line 7885 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 7937 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 bool handleKeyboardTouch(int x, int y);
-#line 8073 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8125 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawMainScreenStatic();
-#line 8108 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8160 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawModelPanelSemiStatic();
-#line 8148 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8200 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawMainScreenDynamic();
-#line 8389 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8441 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawTankIcon(int x, int y, int w, int h, uint16_t iconColor);
-#line 8393 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8445 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawQuadXIcon(int x, int y, int w, int h, uint16_t iconColor);
-#line 8397 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8449 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawTankBars(int x, int y, int w, int h, float left, float right);
-#line 8528 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8580 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawRightPanel(int x, int y, int w, int h);
-#line 8581 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
-void drawCenteredBar(int x, int y, int w, int h, float value);
-#line 8610 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
-void drawQuadBars(int x, int y, int w, int h, float m1, float m2, float m3, float m4);
-#line 8622 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
-void drawBottomBar(int x, int y, int w, int h, float value);
 #line 8633 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+void drawCenteredBar(int x, int y, int w, int h, float value);
+#line 8662 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+void drawQuadBars(int x, int y, int w, int h, float m1, float m2, float m3, float m4);
+#line 8674 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+void drawBottomBar(int x, int y, int w, int h, float value);
+#line 8685 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawSignalBars(int x, int y, int strength);
-#line 8652 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8704 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawBattery(int x, int y, int level, bool present, bool charging);
-#line 8698 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8750 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawTopBarStatic();
-#line 8724 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8776 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawTopBarDynamic();
-#line 8839 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8891 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 uint16_t fadeColor(uint16_t color, float factor);
-#line 8853 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8905 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 uint16_t tankThrottleColor(float t);
-#line 8867 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8919 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 uint16_t throttleColor(float t);
-#line 8893 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8945 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawStickBaseDirect(int x, int y, int size);
-#line 8939 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 8991 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawStickBase(int x, int y, int size);
-#line 9004 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9056 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawStickKnob(int x, int y, int size, int posX, int posY);
-#line 9031 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9083 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawReverseStatic();
-#line 9085 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9137 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawReverseDynamic();
-#line 9207 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9259 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawTrimStatic();
-#line 9245 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9297 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawTrimDynamic();
-#line 9299 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9351 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawFailsafeStatic();
-#line 9360 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9412 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawFailsafeDynamic();
-#line 9415 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9467 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawKeyboardStatic();
-#line 9472 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9524 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawKeyboardDynamic();
-#line 9521 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9573 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void handleKeyboardSelect();
-#line 9531 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9583 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawModelNameStatic();
-#line 9562 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9614 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawModelNameDynamic();
-#line 9895 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9947 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawControllerIcon(int x, int y, int s, uint16_t iconColor);
-#line 9907 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9959 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawCarIcon(int x, int y, int s, uint16_t iconColor);
-#line 9913 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9965 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawHomeIcon(int x, int y, int s, uint16_t iconColor);
-#line 9918 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9970 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawReverseIcon(int x, int y, int s, uint16_t iconColor);
-#line 9924 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9976 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawTrimIcon(int x, int y, int s, uint16_t iconColor);
-#line 9930 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 9982 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawFailsafeIcon(int x, int y, int s, uint16_t iconColor);
-#line 9969 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 10021 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawModelNameIcon(int x, int y, int s, uint16_t iconColor);
-#line 9975 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 10027 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawDriveTypeIcon(int x, int y, int s, uint16_t iconColor);
-#line 9983 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 10035 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
 void drawMixingIcon(int x, int y, int s, uint16_t iconColor);
-#line 933 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
+#line 935 "C:\\Users\\Avala\\OneDrive\\Desktop\\sketch_may7a\\Hosyond_apr24b\\Hosyond_apr24b.ino"
   uint8_t getMixSource(const MixData &mix) {
     return mix.source & MIX_CHANNEL_MASK;
   }
@@ -1841,8 +1843,10 @@ bool setEspNowWifiChannel(uint8_t channel) {
     return true;
   }
 
-  Serial.printf("ESP-NOW channel set failed (set=%d on=%d off=%d)\n",
-                (int)setChan, (int)promiscOn, (int)promiscOff);
+  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    Serial.printf("ESP-NOW channel set failed (set=%d on=%d off=%d)\n",
+                  (int)setChan, (int)promiscOn, (int)promiscOff);
+  }
   return false;
 }
 
@@ -1858,7 +1862,9 @@ bool ensureEspNowPeer(const uint8_t *peerAddress) {
 
   esp_err_t result = esp_now_add_peer(&peerInfo);
   if (result != ESP_OK) {
-    Serial.printf("ESP-NOW add peer failed: %d\n", (int)result);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW add peer failed: %d\n", (int)result);
+    }
     return false;
   }
 
@@ -1883,38 +1889,50 @@ bool initEspNowLink() {
   }
 
   if (!WiFi.STA.started()) {
-    Serial.println("ESP-NOW STA start timed out");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW STA start timed out");
+    }
     return false;
   }
 
   WiFi.disconnect();
   if (!setEspNowWifiChannel(ESPNOW_WIFI_CHANNEL)) {
-    Serial.println("ESP-NOW channel set failed");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW channel set failed");
+    }
     return false;
   }
 
   esp_err_t initResult = esp_now_init();
   if (initResult != ESP_OK) {
-    Serial.printf("ESP-NOW init failed: %d\n", (int)initResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW init failed: %d\n", (int)initResult);
+    }
     return false;
   }
 
   if (esp_now_register_recv_cb(onEspNowReceive) != ESP_OK) {
-    Serial.println("ESP-NOW recv callback registration failed");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW recv callback registration failed");
+    }
     esp_now_deinit();
     return false;
   }
 
   if (esp_now_register_send_cb(onEspNowSend) != ESP_OK) {
-    Serial.println("ESP-NOW send callback registration failed");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW send callback registration failed");
+    }
     esp_now_deinit();
     return false;
   }
 
   espNowReady = true;
 
-  Serial.print("ESP-NOW transmitter ready on channel ");
-  Serial.println(ESPNOW_WIFI_CHANNEL);
+  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    Serial.print("ESP-NOW transmitter ready on channel ");
+    Serial.println(ESPNOW_WIFI_CHANNEL);
+  }
 
   return ensureEspNowPeer(espNowBroadcastAddress);
 }
@@ -1935,6 +1953,21 @@ void logOtaNetworkState(const char *label) {
     (int)WiFi.status(),
     WiFi.channel(),
     otaApSsid);
+}
+
+void logPartitionInfo(const char *label, const esp_partition_t *partition) {
+  if (partition == nullptr) {
+    Serial.printf("%s <null>\n", (label != nullptr) ? label : "partition");
+    return;
+  }
+
+  Serial.printf("%s label=%s type=%u subtype=%u addr=0x%08lX size=0x%08lX\n",
+                (label != nullptr) ? label : "partition",
+                partition->label,
+                (unsigned int)partition->type,
+                (unsigned int)partition->subtype,
+                (unsigned long)partition->address,
+                (unsigned long)partition->size);
 }
 
 bool isOtaKeyboardTarget(KeyboardTarget target) {
@@ -2158,11 +2191,22 @@ void updateOtaService() {
 
         bool updateOk = false;
         if (contentLength > 0) {
+          const esp_partition_t* runningPartition = esp_ota_get_running_partition();
+          const esp_partition_t* bootPartition = esp_ota_get_boot_partition();
           const esp_partition_t* updatePartition = esp_ota_get_next_update_partition(nullptr);
+          Serial.printf("OTA upload len=%d slots=%u\n",
+                        contentLength,
+                        (unsigned int)esp_ota_get_app_partition_count());
+          logPartitionInfo("OTA running", runningPartition);
+          logPartitionInfo("OTA boot", bootPartition);
+          logPartitionInfo("OTA target", updatePartition);
+
           esp_ota_handle_t otaHandle = 0;
           esp_err_t beginErr = esp_ota_begin(updatePartition, (size_t)contentLength, &otaHandle);
           if (beginErr != ESP_OK) {
-            Serial.printf("OTA begin failed: %d\n", (int)beginErr);
+            Serial.printf("OTA begin failed: %d (%s)\n",
+                          (int)beginErr,
+                          esp_err_to_name(beginErr));
           } else {
           size_t remaining = (size_t)contentLength;
           uint8_t buffer[1024];
@@ -2281,7 +2325,9 @@ void sendEspNowControlPacket(unsigned long now) {
 
   esp_err_t sendResult = esp_now_send(destination, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
-    Serial.printf("ESP-NOW send failed: %d\n", (int)sendResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW send failed: %d\n", (int)sendResult);
+    }
   }
 }
 
@@ -2302,7 +2348,9 @@ void sendEspNowPing(unsigned long now) {
 
   esp_err_t sendResult = esp_now_send(destination, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
-    Serial.printf("ESP-NOW ping send failed: %d\n", (int)sendResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW ping send failed: %d\n", (int)sendResult);
+    }
   }
 }
 
@@ -2319,7 +2367,9 @@ void sendEspNowBindCommit(const uint8_t *receiverMac) {
 
   esp_err_t sendResult = esp_now_send(receiverMac, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
-    Serial.printf("ESP-NOW bind commit failed: %d\n", (int)sendResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW bind commit failed: %d\n", (int)sendResult);
+    }
     return;
   }
 
@@ -2919,10 +2969,12 @@ void initElrsUart() {
   elrsTxInvert = elrsInvertModes[elrsInvertModeIndex][1];
   restartElrsUart(elrsBaudCandidates[elrsBaudIndex]);
   elrsInitialized = true;
-  Serial.printf("ELRS UART mode: %s tx=%d rx=%d\n",
-                ELRS_HALF_DUPLEX_MODE ? "half-duplex" : "full-duplex",
-                (int)elrsActiveTxPin,
-                (int)elrsActiveRxPin);
+  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    Serial.printf("ELRS UART mode: %s tx=%d rx=%d\n",
+                  ELRS_HALF_DUPLEX_MODE ? "half-duplex" : "full-duplex",
+                  (int)elrsActiveTxPin,
+                  (int)elrsActiveRxPin);
+  }
 }
 
 void applyElrsUartPinPair(int pinPairIndex) {
@@ -3052,7 +3104,7 @@ void updateElrsLink(unsigned long now) {
   }
 
   static unsigned long lastElrsDebugPrintTime = 0;
-  if (now - lastElrsDebugPrintTime >= 1000) {
+  if (RADIO_PROTOCOL_SERIAL_DEBUG && now - lastElrsDebugPrintTime >= 1000) {
     lastElrsDebugPrintTime = now;
     Serial.printf("ELRS baud=%lu pins(tx=%d,rx=%d,pair=%d) inv(rx=%d,tx=%d) tx=%s rxBytes=%lu rxFrames=%lu devInfo=%lu t14=%lu t29=%lu bindIdx=%u(%d) pCnt=%u name=%s lq=%u\n",
                   (unsigned long)elrsActiveBaud,

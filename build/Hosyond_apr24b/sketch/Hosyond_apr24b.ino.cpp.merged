@@ -164,7 +164,8 @@
   // Most external-module hosts use an inverted S.Port/Data line.
   // -1 = keep existing, otherwise 0..2 maps to elrsInvertModes entry.
   #define ELRS_FORCE_INVERT_MODE 2
-  #define ELRS_VERBOSE_SERIAL_DEBUG true
+  #define RADIO_PROTOCOL_SERIAL_DEBUG false
+  #define ELRS_VERBOSE_SERIAL_DEBUG false
   // The inverter is out of circuit now, so go back to normal ELRS traffic.
   #define ELRS_PROBE_UNTIL_MODULE_FRAMES false
   #define ELRS_RX_ONLY_DIAGNOSTIC false
@@ -869,6 +870,7 @@ enum NumpadTarget {
   void sanitizeWifiText(char *value, size_t maxLen, bool allowEmpty);
   void sanitizeOtaSettings();
   void logOtaNetworkState(const char *label);
+  void logPartitionInfo(const char *label, const esp_partition_t *partition);
   bool isOtaKeyboardTarget(KeyboardTarget target);
   const char* getKeyboardTargetLabel(KeyboardTarget target);
   void drawKeyboardPreview();
@@ -1716,8 +1718,10 @@ bool setEspNowWifiChannel(uint8_t channel) {
     return true;
   }
 
-  Serial.printf("ESP-NOW channel set failed (set=%d on=%d off=%d)\n",
-                (int)setChan, (int)promiscOn, (int)promiscOff);
+  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    Serial.printf("ESP-NOW channel set failed (set=%d on=%d off=%d)\n",
+                  (int)setChan, (int)promiscOn, (int)promiscOff);
+  }
   return false;
 }
 
@@ -1733,7 +1737,9 @@ bool ensureEspNowPeer(const uint8_t *peerAddress) {
 
   esp_err_t result = esp_now_add_peer(&peerInfo);
   if (result != ESP_OK) {
-    Serial.printf("ESP-NOW add peer failed: %d\n", (int)result);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW add peer failed: %d\n", (int)result);
+    }
     return false;
   }
 
@@ -1758,38 +1764,50 @@ bool initEspNowLink() {
   }
 
   if (!WiFi.STA.started()) {
-    Serial.println("ESP-NOW STA start timed out");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW STA start timed out");
+    }
     return false;
   }
 
   WiFi.disconnect();
   if (!setEspNowWifiChannel(ESPNOW_WIFI_CHANNEL)) {
-    Serial.println("ESP-NOW channel set failed");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW channel set failed");
+    }
     return false;
   }
 
   esp_err_t initResult = esp_now_init();
   if (initResult != ESP_OK) {
-    Serial.printf("ESP-NOW init failed: %d\n", (int)initResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW init failed: %d\n", (int)initResult);
+    }
     return false;
   }
 
   if (esp_now_register_recv_cb(onEspNowReceive) != ESP_OK) {
-    Serial.println("ESP-NOW recv callback registration failed");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW recv callback registration failed");
+    }
     esp_now_deinit();
     return false;
   }
 
   if (esp_now_register_send_cb(onEspNowSend) != ESP_OK) {
-    Serial.println("ESP-NOW send callback registration failed");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW send callback registration failed");
+    }
     esp_now_deinit();
     return false;
   }
 
   espNowReady = true;
 
-  Serial.print("ESP-NOW transmitter ready on channel ");
-  Serial.println(ESPNOW_WIFI_CHANNEL);
+  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    Serial.print("ESP-NOW transmitter ready on channel ");
+    Serial.println(ESPNOW_WIFI_CHANNEL);
+  }
 
   return ensureEspNowPeer(espNowBroadcastAddress);
 }
@@ -1810,6 +1828,21 @@ void logOtaNetworkState(const char *label) {
     (int)WiFi.status(),
     WiFi.channel(),
     otaApSsid);
+}
+
+void logPartitionInfo(const char *label, const esp_partition_t *partition) {
+  if (partition == nullptr) {
+    Serial.printf("%s <null>\n", (label != nullptr) ? label : "partition");
+    return;
+  }
+
+  Serial.printf("%s label=%s type=%u subtype=%u addr=0x%08lX size=0x%08lX\n",
+                (label != nullptr) ? label : "partition",
+                partition->label,
+                (unsigned int)partition->type,
+                (unsigned int)partition->subtype,
+                (unsigned long)partition->address,
+                (unsigned long)partition->size);
 }
 
 bool isOtaKeyboardTarget(KeyboardTarget target) {
@@ -2033,11 +2066,22 @@ void updateOtaService() {
 
         bool updateOk = false;
         if (contentLength > 0) {
+          const esp_partition_t* runningPartition = esp_ota_get_running_partition();
+          const esp_partition_t* bootPartition = esp_ota_get_boot_partition();
           const esp_partition_t* updatePartition = esp_ota_get_next_update_partition(nullptr);
+          Serial.printf("OTA upload len=%d slots=%u\n",
+                        contentLength,
+                        (unsigned int)esp_ota_get_app_partition_count());
+          logPartitionInfo("OTA running", runningPartition);
+          logPartitionInfo("OTA boot", bootPartition);
+          logPartitionInfo("OTA target", updatePartition);
+
           esp_ota_handle_t otaHandle = 0;
           esp_err_t beginErr = esp_ota_begin(updatePartition, (size_t)contentLength, &otaHandle);
           if (beginErr != ESP_OK) {
-            Serial.printf("OTA begin failed: %d\n", (int)beginErr);
+            Serial.printf("OTA begin failed: %d (%s)\n",
+                          (int)beginErr,
+                          esp_err_to_name(beginErr));
           } else {
           size_t remaining = (size_t)contentLength;
           uint8_t buffer[1024];
@@ -2156,7 +2200,9 @@ void sendEspNowControlPacket(unsigned long now) {
 
   esp_err_t sendResult = esp_now_send(destination, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
-    Serial.printf("ESP-NOW send failed: %d\n", (int)sendResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW send failed: %d\n", (int)sendResult);
+    }
   }
 }
 
@@ -2177,7 +2223,9 @@ void sendEspNowPing(unsigned long now) {
 
   esp_err_t sendResult = esp_now_send(destination, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
-    Serial.printf("ESP-NOW ping send failed: %d\n", (int)sendResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW ping send failed: %d\n", (int)sendResult);
+    }
   }
 }
 
@@ -2194,7 +2242,9 @@ void sendEspNowBindCommit(const uint8_t *receiverMac) {
 
   esp_err_t sendResult = esp_now_send(receiverMac, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
-    Serial.printf("ESP-NOW bind commit failed: %d\n", (int)sendResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW bind commit failed: %d\n", (int)sendResult);
+    }
     return;
   }
 
@@ -2794,10 +2844,12 @@ void initElrsUart() {
   elrsTxInvert = elrsInvertModes[elrsInvertModeIndex][1];
   restartElrsUart(elrsBaudCandidates[elrsBaudIndex]);
   elrsInitialized = true;
-  Serial.printf("ELRS UART mode: %s tx=%d rx=%d\n",
-                ELRS_HALF_DUPLEX_MODE ? "half-duplex" : "full-duplex",
-                (int)elrsActiveTxPin,
-                (int)elrsActiveRxPin);
+  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    Serial.printf("ELRS UART mode: %s tx=%d rx=%d\n",
+                  ELRS_HALF_DUPLEX_MODE ? "half-duplex" : "full-duplex",
+                  (int)elrsActiveTxPin,
+                  (int)elrsActiveRxPin);
+  }
 }
 
 void applyElrsUartPinPair(int pinPairIndex) {
@@ -2927,7 +2979,7 @@ void updateElrsLink(unsigned long now) {
   }
 
   static unsigned long lastElrsDebugPrintTime = 0;
-  if (now - lastElrsDebugPrintTime >= 1000) {
+  if (RADIO_PROTOCOL_SERIAL_DEBUG && now - lastElrsDebugPrintTime >= 1000) {
     lastElrsDebugPrintTime = now;
     Serial.printf("ELRS baud=%lu pins(tx=%d,rx=%d,pair=%d) inv(rx=%d,tx=%d) tx=%s rxBytes=%lu rxFrames=%lu devInfo=%lu t14=%lu t29=%lu bindIdx=%u(%d) pCnt=%u name=%s lq=%u\n",
                   (unsigned long)elrsActiveBaud,

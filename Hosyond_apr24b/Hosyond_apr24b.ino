@@ -162,7 +162,8 @@
   // Most external-module hosts use an inverted S.Port/Data line.
   // -1 = keep existing, otherwise 0..2 maps to elrsInvertModes entry.
   #define ELRS_FORCE_INVERT_MODE 2
-  #define ELRS_VERBOSE_SERIAL_DEBUG true
+  #define RADIO_PROTOCOL_SERIAL_DEBUG false
+  #define ELRS_VERBOSE_SERIAL_DEBUG false
   // The inverter is out of circuit now, so go back to normal ELRS traffic.
   #define ELRS_PROBE_UNTIL_MODULE_FRAMES false
   #define ELRS_RX_ONLY_DIAGNOSTIC false
@@ -302,8 +303,13 @@ enum NumpadTarget {
   bool otaModeActive = false;
   bool otaServiceReady = false;
   bool otaUsingSoftAP = false;
+  bool otaApReady = false;
+  bool otaStaAutoConnectEnabled = false;
+  bool otaStaConnectPending = false;
   bool otaUpdateInProgress = false;
   bool otaRestartPending = false;
+  unsigned long otaStaAutoConnectAfterMs = 0;
+  unsigned long otaStaConnectStartTime = 0;
   unsigned long espNowBindingStartTime = 0;
   unsigned long espNowBindSuccessTime = 0;
   unsigned long espNowLastBindCommitTime = 0;
@@ -859,6 +865,13 @@ enum NumpadTarget {
   void drawProtocolDynamic();
   void drawElrsScreen();
   void drawElrsDynamic();
+  void sanitizeWifiText(char *value, size_t maxLen, bool allowEmpty);
+  void sanitizeOtaSettings();
+  void logOtaNetworkState(const char *label);
+  void logPartitionInfo(const char *label, const esp_partition_t *partition);
+  bool isOtaKeyboardTarget(KeyboardTarget target);
+  const char* getKeyboardTargetLabel(KeyboardTarget target);
+  void drawKeyboardPreview();
   void startOtaMode();
   void stopOtaMode();
   void updateOtaService();
@@ -1209,6 +1222,35 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     EEPROM.commit();
   }
 
+  void sanitizeWifiText(char *value, size_t maxLen, bool allowEmpty) {
+    if (value == nullptr || maxLen == 0) return;
+
+    size_t writeIndex = 0;
+    for (size_t readIndex = 0; readIndex < maxLen; readIndex++) {
+      unsigned char ch = (unsigned char)value[readIndex];
+      if (ch == '\0') {
+        break;
+      }
+
+      if (isprint(ch)) {
+        value[writeIndex++] = (char)ch;
+      }
+    }
+
+    value[writeIndex] = '\0';
+
+    if (!allowEmpty && writeIndex == 0) {
+      strncpy(value, OTA_AP_SSID, maxLen);
+      value[maxLen] = '\0';
+    }
+  }
+
+  void sanitizeOtaSettings() {
+    sanitizeWifiText(otaStaSsid, OTA_STA_SSID_STORAGE_BYTES, true);
+    sanitizeWifiText(otaStaPassword, OTA_STA_PASSWORD_STORAGE_BYTES, true);
+    sanitizeWifiText(otaApSsid, OTA_AP_SSID_STORAGE_BYTES, false);
+  }
+
   void loadOtaSettings() {
     if (EEPROM.read(EEPROM_OTA_VERSION_ADDR) != OTA_SETTINGS_STORAGE_VERSION) {
       strncpy(otaStaSsid, OTA_STA_SSID, OTA_STA_SSID_STORAGE_BYTES);
@@ -1217,6 +1259,7 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
       otaStaPassword[OTA_STA_PASSWORD_STORAGE_BYTES] = '\0';
       strncpy(otaApSsid, OTA_AP_SSID, OTA_AP_SSID_STORAGE_BYTES);
       otaApSsid[OTA_AP_SSID_STORAGE_BYTES] = '\0';
+      sanitizeOtaSettings();
       return;
     }
 
@@ -1238,13 +1281,12 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     }
     otaApSsid[OTA_AP_SSID_STORAGE_BYTES] = '\0';
 
-    if (strlen(otaApSsid) == 0) {
-      strncpy(otaApSsid, OTA_AP_SSID, OTA_AP_SSID_STORAGE_BYTES);
-      otaApSsid[OTA_AP_SSID_STORAGE_BYTES] = '\0';
-    }
+    sanitizeOtaSettings();
   }
 
   void saveOtaSettings() {
+    sanitizeOtaSettings();
+
     int addr = EEPROM_OTA_STA_SSID_ADDR;
     for (int i = 0; i < OTA_STA_SSID_STORAGE_BYTES; i++) {
       char ch = (i < (int)strlen(otaStaSsid)) ? otaStaSsid[i] : '\0';
@@ -1674,8 +1716,10 @@ bool setEspNowWifiChannel(uint8_t channel) {
     return true;
   }
 
-  Serial.printf("ESP-NOW channel set failed (set=%d on=%d off=%d)\n",
-                (int)setChan, (int)promiscOn, (int)promiscOff);
+  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    Serial.printf("ESP-NOW channel set failed (set=%d on=%d off=%d)\n",
+                  (int)setChan, (int)promiscOn, (int)promiscOff);
+  }
   return false;
 }
 
@@ -1691,7 +1735,9 @@ bool ensureEspNowPeer(const uint8_t *peerAddress) {
 
   esp_err_t result = esp_now_add_peer(&peerInfo);
   if (result != ESP_OK) {
-    Serial.printf("ESP-NOW add peer failed: %d\n", (int)result);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW add peer failed: %d\n", (int)result);
+    }
     return false;
   }
 
@@ -1716,40 +1762,98 @@ bool initEspNowLink() {
   }
 
   if (!WiFi.STA.started()) {
-    Serial.println("ESP-NOW STA start timed out");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW STA start timed out");
+    }
     return false;
   }
 
   WiFi.disconnect();
   if (!setEspNowWifiChannel(ESPNOW_WIFI_CHANNEL)) {
-    Serial.println("ESP-NOW channel set failed");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW channel set failed");
+    }
     return false;
   }
 
   esp_err_t initResult = esp_now_init();
   if (initResult != ESP_OK) {
-    Serial.printf("ESP-NOW init failed: %d\n", (int)initResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW init failed: %d\n", (int)initResult);
+    }
     return false;
   }
 
   if (esp_now_register_recv_cb(onEspNowReceive) != ESP_OK) {
-    Serial.println("ESP-NOW recv callback registration failed");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW recv callback registration failed");
+    }
     esp_now_deinit();
     return false;
   }
 
   if (esp_now_register_send_cb(onEspNowSend) != ESP_OK) {
-    Serial.println("ESP-NOW send callback registration failed");
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ESP-NOW send callback registration failed");
+    }
     esp_now_deinit();
     return false;
   }
 
   espNowReady = true;
 
-  Serial.print("ESP-NOW transmitter ready on channel ");
-  Serial.println(ESPNOW_WIFI_CHANNEL);
+  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    Serial.print("ESP-NOW transmitter ready on channel ");
+    Serial.println(ESPNOW_WIFI_CHANNEL);
+  }
 
   return ensureEspNowPeer(espNowBroadcastAddress);
+}
+
+void logOtaNetworkState(const char *label) {
+  wifi_mode_t wifiMode = WIFI_MODE_NULL;
+  esp_wifi_get_mode(&wifiMode);
+
+  IPAddress apIp = WiFi.softAPIP();
+  IPAddress staIp = WiFi.localIP();
+
+  Serial.printf(
+    "%s mode=%d apIP=%u.%u.%u.%u staIP=%u.%u.%u.%u staStatus=%d channel=%u apSSID='%s'\n",
+    (label != nullptr) ? label : "OTA",
+    (int)wifiMode,
+    apIp[0], apIp[1], apIp[2], apIp[3],
+    staIp[0], staIp[1], staIp[2], staIp[3],
+    (int)WiFi.status(),
+    WiFi.channel(),
+    otaApSsid);
+}
+
+void logPartitionInfo(const char *label, const esp_partition_t *partition) {
+  if (partition == nullptr) {
+    Serial.printf("%s <null>\n", (label != nullptr) ? label : "partition");
+    return;
+  }
+
+  Serial.printf("%s label=%s type=%u subtype=%u addr=0x%08lX size=0x%08lX\n",
+                (label != nullptr) ? label : "partition",
+                partition->label,
+                (unsigned int)partition->type,
+                (unsigned int)partition->subtype,
+                (unsigned long)partition->address,
+                (unsigned long)partition->size);
+}
+
+bool isOtaKeyboardTarget(KeyboardTarget target) {
+  return target == KEYBOARD_TARGET_OTA_STA_SSID ||
+         target == KEYBOARD_TARGET_OTA_STA_PASSWORD ||
+         target == KEYBOARD_TARGET_OTA_AP_SSID;
+}
+
+const char* getKeyboardTargetLabel(KeyboardTarget target) {
+  if (target == KEYBOARD_TARGET_OTA_STA_SSID) return "WiFi SSID";
+  if (target == KEYBOARD_TARGET_OTA_STA_PASSWORD) return "Home Pass";
+  if (target == KEYBOARD_TARGET_OTA_AP_SSID) return "AP Name";
+  return "Text";
 }
 
 void startOtaMode() {
@@ -1766,34 +1870,77 @@ void startOtaMode() {
   espNowProtocolActive = false;
   espNowProtocolStartTime = 0;
 
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.setSleep(false);
-  WiFi.setHostname(OTA_HOSTNAME);
+  sanitizeOtaSettings();
+  Serial.println("OTA: starting WiFi service");
 
-  bool staConnected = false;
-  if (strlen(otaStaSsid) > 0) {
-    WiFi.begin(otaStaSsid, otaStaPassword);
-    unsigned long connectStart = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - connectStart < 8000) {
-      delay(20);
-    }
-    staConnected = (WiFi.status() == WL_CONNECTED);
-  }
+  WiFi.softAPdisconnect(true);
+  WiFi.disconnect(true, false);
+  delay(100);
+  WiFi.mode(WIFI_MODE_NULL);
+  delay(100);
 
-  bool apReady = WiFi.softAP(otaApSsid, OTA_AP_PASSWORD);
-  if (!apReady && !staConnected) {
+  if (!WiFi.mode(WIFI_AP_STA)) {
+    Serial.println("OTA: failed to enter WIFI_AP_STA mode");
     otaModeActive = false;
     otaServiceReady = false;
     otaUsingSoftAP = false;
+    otaApReady = false;
+    otaStaAutoConnectEnabled = false;
+    otaStaAutoConnectAfterMs = 0;
+    otaStaConnectPending = false;
+    fullRedraw = true;
+    uiNeedsRedraw = true;
+    return;
+  }
+  WiFi.setSleep(false);
+  WiFi.setHostname(OTA_HOSTNAME);
+
+  otaApReady = WiFi.softAP(otaApSsid, OTA_AP_PASSWORD, 1, false, 1);
+  if (!otaApReady) {
+    Serial.printf("OTA: softAP start failed for SSID '%s'\n", otaApSsid);
+  } else {
+    delay(100);
+    logOtaNetworkState("OTA: AP started");
+  }
+
+  bool staConfigured = false;
+  otaStaAutoConnectEnabled = false;
+  otaStaAutoConnectAfterMs = 0;
+  otaStaConnectPending = false;
+  otaStaConnectStartTime = 0;
+  if (strlen(otaStaSsid) > 0) {
+    size_t passwordLen = strlen(otaStaPassword);
+    bool passwordUsable = (passwordLen == 0 || passwordLen >= 8);
+    if (!passwordUsable) {
+      Serial.printf("OTA: STA password for '%s' is too short (%u), skipping STA connect\n",
+                    otaStaSsid, (unsigned int)passwordLen);
+    } else {
+      staConfigured = true;
+      otaStaAutoConnectEnabled = true;
+      otaStaAutoConnectAfterMs = millis() + 15000UL;
+      Serial.printf("OTA: AP ready, deferring STA connect to '%s' while AP is available\n",
+                    otaStaSsid);
+    }
+  }
+
+  if (!otaApReady && !staConfigured) {
+    otaModeActive = false;
+    otaServiceReady = false;
+    otaUsingSoftAP = false;
+    otaApReady = false;
+    otaStaAutoConnectEnabled = false;
+    otaStaAutoConnectAfterMs = 0;
+    otaStaConnectPending = false;
     fullRedraw = true;
     uiNeedsRedraw = true;
     return;
   }
 
-  otaUsingSoftAP = !staConnected;
+  otaUsingSoftAP = otaApReady;
   otaUpdateInProgress = false;
   otaRestartPending = false;
   otaHttpServer.begin();
+  logOtaNetworkState("OTA: HTTP server ready");
 
   otaModeActive = true;
   otaServiceReady = true;
@@ -1814,6 +1961,11 @@ void stopOtaMode() {
   otaModeActive = false;
   otaServiceReady = false;
   otaUsingSoftAP = false;
+  otaApReady = false;
+  otaStaAutoConnectEnabled = false;
+  otaStaAutoConnectAfterMs = 0;
+  otaStaConnectPending = false;
+  otaStaConnectStartTime = 0;
   otaRestartPending = false;
 
   if (getModelProtocol(activeModel) == PROTOCOL_ESPNOW) {
@@ -1826,6 +1978,42 @@ void stopOtaMode() {
 
 void updateOtaService() {
   if (!otaModeActive || !otaServiceReady) return;
+
+  if (otaStaAutoConnectEnabled &&
+      !otaStaConnectPending &&
+      WiFi.status() != WL_CONNECTED) {
+    bool apHasClients = otaApReady && WiFi.softAPgetStationNum() > 0;
+    if (!apHasClients && millis() >= otaStaAutoConnectAfterMs) {
+      Serial.printf("OTA: starting deferred STA connect to '%s'\n", otaStaSsid);
+      WiFi.begin(otaStaSsid, otaStaPassword);
+      otaStaConnectPending = true;
+      otaStaConnectStartTime = millis();
+      uiNeedsRedraw = true;
+      fullRedraw = true;
+    }
+  }
+
+  if (otaStaConnectPending) {
+    wl_status_t staStatus = WiFi.status();
+    if (staStatus == WL_CONNECTED) {
+      otaStaConnectPending = false;
+      otaUsingSoftAP = false;
+      logOtaNetworkState("OTA: STA connected");
+      uiNeedsRedraw = true;
+      fullRedraw = true;
+    } else if (millis() - otaStaConnectStartTime >= 8000) {
+      otaStaConnectPending = false;
+      if (!otaApReady) {
+        otaHttpServer.stop();
+        otaModeActive = false;
+        otaServiceReady = false;
+      }
+      Serial.printf("OTA: STA connect timed out for '%s' (status=%d)\n",
+                    otaStaSsid, (int)staStatus);
+      uiNeedsRedraw = true;
+      fullRedraw = true;
+    }
+  }
 
   WiFiClient client = otaHttpServer.available();
   if (client) {
@@ -1876,11 +2064,22 @@ void updateOtaService() {
 
         bool updateOk = false;
         if (contentLength > 0) {
+          const esp_partition_t* runningPartition = esp_ota_get_running_partition();
+          const esp_partition_t* bootPartition = esp_ota_get_boot_partition();
           const esp_partition_t* updatePartition = esp_ota_get_next_update_partition(nullptr);
+          Serial.printf("OTA upload len=%d slots=%u\n",
+                        contentLength,
+                        (unsigned int)esp_ota_get_app_partition_count());
+          logPartitionInfo("OTA running", runningPartition);
+          logPartitionInfo("OTA boot", bootPartition);
+          logPartitionInfo("OTA target", updatePartition);
+
           esp_ota_handle_t otaHandle = 0;
           esp_err_t beginErr = esp_ota_begin(updatePartition, (size_t)contentLength, &otaHandle);
           if (beginErr != ESP_OK) {
-            Serial.printf("OTA begin failed: %d\n", (int)beginErr);
+            Serial.printf("OTA begin failed: %d (%s)\n",
+                          (int)beginErr,
+                          esp_err_to_name(beginErr));
           } else {
           size_t remaining = (size_t)contentLength;
           uint8_t buffer[1024];
@@ -1999,7 +2198,9 @@ void sendEspNowControlPacket(unsigned long now) {
 
   esp_err_t sendResult = esp_now_send(destination, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
-    Serial.printf("ESP-NOW send failed: %d\n", (int)sendResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW send failed: %d\n", (int)sendResult);
+    }
   }
 }
 
@@ -2020,7 +2221,9 @@ void sendEspNowPing(unsigned long now) {
 
   esp_err_t sendResult = esp_now_send(destination, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
-    Serial.printf("ESP-NOW ping send failed: %d\n", (int)sendResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW ping send failed: %d\n", (int)sendResult);
+    }
   }
 }
 
@@ -2037,7 +2240,9 @@ void sendEspNowBindCommit(const uint8_t *receiverMac) {
 
   esp_err_t sendResult = esp_now_send(receiverMac, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
-    Serial.printf("ESP-NOW bind commit failed: %d\n", (int)sendResult);
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ESP-NOW bind commit failed: %d\n", (int)sendResult);
+    }
     return;
   }
 
@@ -2637,10 +2842,12 @@ void initElrsUart() {
   elrsTxInvert = elrsInvertModes[elrsInvertModeIndex][1];
   restartElrsUart(elrsBaudCandidates[elrsBaudIndex]);
   elrsInitialized = true;
-  Serial.printf("ELRS UART mode: %s tx=%d rx=%d\n",
-                ELRS_HALF_DUPLEX_MODE ? "half-duplex" : "full-duplex",
-                (int)elrsActiveTxPin,
-                (int)elrsActiveRxPin);
+  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    Serial.printf("ELRS UART mode: %s tx=%d rx=%d\n",
+                  ELRS_HALF_DUPLEX_MODE ? "half-duplex" : "full-duplex",
+                  (int)elrsActiveTxPin,
+                  (int)elrsActiveRxPin);
+  }
 }
 
 void applyElrsUartPinPair(int pinPairIndex) {
@@ -2770,7 +2977,7 @@ void updateElrsLink(unsigned long now) {
   }
 
   static unsigned long lastElrsDebugPrintTime = 0;
-  if (now - lastElrsDebugPrintTime >= 1000) {
+  if (RADIO_PROTOCOL_SERIAL_DEBUG && now - lastElrsDebugPrintTime >= 1000) {
     lastElrsDebugPrintTime = now;
     Serial.printf("ELRS baud=%lu pins(tx=%d,rx=%d,pair=%d) inv(rx=%d,tx=%d) tx=%s rxBytes=%lu rxFrames=%lu devInfo=%lu t14=%lu t29=%lu bindIdx=%u(%d) pCnt=%u name=%s lq=%u\n",
                   (unsigned long)elrsActiveBaud,
@@ -3081,7 +3288,7 @@ void loop() {
     // even when there is no touch/D-pad activity.
     if (now - lastProtocolAutoRefreshTime >= 250) {
       lastProtocolAutoRefreshTime = now;
-      if (protocol == PROTOCOL_ELRS || espNowBindingMode || showSuccess) {
+      if (protocol == PROTOCOL_ELRS || espNowBindingMode || showSuccess || otaModeActive) {
         uiNeedsRedraw = true;
       }
     }
@@ -6004,6 +6211,12 @@ void composeProtocolStatusText(char *bindStatus, size_t bindStatusSize, uint16_t
     uint16_t resolvedColor = COLOR_ACCENT_HI;
     if (otaUpdateInProgress) {
       snprintf(bindStatus, bindStatusSize, "OTA update in progress");
+    } else if (otaStaConnectPending && otaUsingSoftAP) {
+      IPAddress ip = WiFi.softAPIP();
+      snprintf(bindStatus, bindStatusSize, "OTA AP %u.%u.%u.%u + STA...",
+               ip[0], ip[1], ip[2], ip[3]);
+    } else if (otaStaConnectPending) {
+      snprintf(bindStatus, bindStatusSize, "OTA connecting STA...");
     } else if (otaServiceReady) {
       IPAddress ip = otaUsingSoftAP ? WiFi.softAPIP() : WiFi.localIP();
       if ((uint32_t)ip == 0) {
@@ -6198,9 +6411,10 @@ void drawOtaSettingsStatic() {
   tft.setTextColor(COLOR_TEXT);
   tft.drawCentreString("OTA Settings", 120, 38, 2);
   tft.drawCentreString("Select field, then type", 120, 58, 2);
+  tft.drawCentreString("AP password: anubisota", 120, 72, 2);
 
-  const char* labels[3] = {"WiFi SSID", "WiFi Pass", "AP Name"};
-  int rowY = 88;
+  const char* labels[3] = {"Home SSID", "Home Pass", "AP Name"};
+  int rowY = 96;
   for (int i = 0; i < 3; i++) {
     tft.setTextColor(COLOR_TEXT);
     tft.drawString(labels[i], 12, rowY + 10, 2);
@@ -6221,9 +6435,25 @@ void drawOtaSettingsDynamic() {
   strncpy(apText, otaApSsid, OTA_AP_SSID_STORAGE_BYTES);
   apText[OTA_AP_SSID_STORAGE_BYTES] = '\0';
 
-  int passLen = (int)strlen(otaStaPassword);
+  if (keyboardActive) {
+    if (keyboardTarget == KEYBOARD_TARGET_OTA_STA_SSID) {
+      strncpy(ssidText, keyboardBuffer.c_str(), OTA_STA_SSID_STORAGE_BYTES);
+      ssidText[OTA_STA_SSID_STORAGE_BYTES] = '\0';
+    } else if (keyboardTarget == KEYBOARD_TARGET_OTA_AP_SSID) {
+      strncpy(apText, keyboardBuffer.c_str(), OTA_AP_SSID_STORAGE_BYTES);
+      apText[OTA_AP_SSID_STORAGE_BYTES] = '\0';
+    }
+  }
+
+  const char* passwordSource = otaStaPassword;
+  if (keyboardActive && keyboardTarget == KEYBOARD_TARGET_OTA_STA_PASSWORD) {
+    passwordSource = keyboardBuffer.c_str();
+  }
+
+  int passLen = (int)strlen(passwordSource);
   if (passLen > OTA_STA_PASSWORD_STORAGE_BYTES) passLen = OTA_STA_PASSWORD_STORAGE_BYTES;
-  for (int i = 0; i < passLen; i++) passText[i] = '*';
+  bool showPassword = (keyboardActive && keyboardTarget == KEYBOARD_TARGET_OTA_STA_PASSWORD);
+  for (int i = 0; i < passLen; i++) passText[i] = showPassword ? passwordSource[i] : '*';
   passText[passLen] = '\0';
 
   const char* values[3] = {
@@ -6232,7 +6462,7 @@ void drawOtaSettingsDynamic() {
     (strlen(apText) > 0) ? apText : "<empty>"
   };
 
-  int rowY = 88;
+  int rowY = 96;
   for (int i = 0; i < 3; i++) {
     tft.fillRoundRect(100, rowY + 2, 126, 26, 6, COLOR_PANEL);
     tft.drawRoundRect(98, rowY, 130, 30, 8, COLOR_ACCENT);
@@ -9267,8 +9497,32 @@ void drawKeyboardStatic() {
   }
 }
 
+void drawKeyboardPreview() {
+  if (!isOtaKeyboardTarget(keyboardTarget)) return;
+
+  char preview[33];
+  const char *source = keyboardBuffer.c_str();
+  size_t sourceLen = strlen(source);
+  size_t copyLen = sourceLen;
+  if (copyLen > sizeof(preview) - 1) {
+    copyLen = sizeof(preview) - 1;
+  }
+
+  memset(preview, 0, sizeof(preview));
+  memcpy(preview, source, copyLen);
+  preview[copyLen] = '\0';
+
+  tft.fillRoundRect(8, kbY - 34, 224, 28, 6, COLOR_PANEL);
+  tft.drawRoundRect(8, kbY - 34, 224, 28, 6, COLOR_ACCENT);
+  tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+  tft.drawString(getKeyboardTargetLabel(keyboardTarget), 14, kbY - 30, 2);
+  tft.setTextColor(COLOR_ACCENT_HI, COLOR_PANEL);
+  tft.drawRightString((copyLen > 0) ? preview : "<empty>", 224, kbY - 30, 2);
+}
+
 // ==== KEYBOARD DYNAMIC ====
 void drawKeyboardDynamic() {
+  drawKeyboardPreview();
 
   for (int r = 0; r < KB_ROWS; r++) {
     for (int c = 0; c < KB_COLS; c++) {
