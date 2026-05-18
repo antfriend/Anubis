@@ -156,10 +156,9 @@
   #define ESPNOW_HEADER_SIGNAL_TIMEOUT_MS 2000
   #define ESPNOW_BIND_TIMEOUT_MS 15000
   #define ESPNOW_BIND_COMMIT_RETRY_MS 300
-  // External ELRS modules normally use a single S.Port/Data/Signal line.
-  // For the Ranger Nano direct test, use GPIO43 on a non-inverted half-duplex bus.
-  #define ELRS_HALF_DUPLEX_MODE true
-  #define ELRS_UART_DATA_PIN 43
+  // Locked UART mode for the RadioMaster Pocket internal ELRS module.
+  #define ELRS_HALF_DUPLEX_MODE false
+  #define ELRS_UART_DATA_PIN 44
 #if ELRS_HALF_DUPLEX_MODE
   #define ELRS_UART_TX_PIN_DEFAULT ELRS_UART_DATA_PIN
   #define ELRS_UART_RX_PIN_DEFAULT ELRS_UART_DATA_PIN
@@ -176,17 +175,23 @@
   #define ELRS_PARAM_READ_INTERVAL_MS 120
   #define ELRS_PARAM_SCAN_FALLBACK_MAX 64
   #define ELRS_TX_SYNC_PRIMARY 0xC8
+  #define ELRS_TX_MODULE_ADDR 0xEE
+  #define ELRS_FORCE_BAUD 5250000UL
   // -1 = auto-try both pin pairs, 0/1 = force a single pin-pair mapping.
-  #define ELRS_FORCE_PIN_PAIR_INDEX 0
-  // Most external-module hosts use an inverted S.Port/Data line.
+  #define ELRS_FORCE_PIN_PAIR_INDEX 1
+  // Lock to the first mode that produced valid frames.
   // -1 = keep existing, otherwise 0..2 maps to elrsInvertModes entry.
-  #define ELRS_FORCE_INVERT_MODE 2
-  #define RADIO_PROTOCOL_SERIAL_DEBUG false
+  #define ELRS_FORCE_INVERT_MODE 0
+  #define RADIO_PROTOCOL_SERIAL_DEBUG true
   #define ELRS_VERBOSE_SERIAL_DEBUG false
-  // The inverter is out of circuit now, so go back to normal ELRS traffic.
+  // For internal RadioMaster ELRS modules, actively drive CRSF traffic so the
+  // module has a reason to answer.
   #define ELRS_PROBE_UNTIL_MODULE_FRAMES false
   #define ELRS_RX_ONLY_DIAGNOSTIC false
   #define ELRS_RX_READ_BUDGET 256
+  #define ELRS_PASSIVE_SNIFF_MODE false
+  #define ELRS_SNIFF_HOST_TO_MODULE_PIN 43
+  #define ELRS_SNIFF_MODULE_TO_HOST_PIN 44
 
   enum EspNowMessageType : uint8_t {
   ESPNOW_MSG_CONTROL = 0x43,
@@ -340,6 +345,26 @@ enum NumpadTarget {
   uint8_t espNowPendingBindMac[ESP_NOW_ETH_ALEN] = { 0, 0, 0, 0, 0, 0 };
   const uint8_t espNowBroadcastAddress[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
   HardwareSerial &elrsSerial = Serial1;
+  HardwareSerial elrsHostSniffSerial(2);
+  struct ElrsSniffStats {
+    uint32_t byteCount = 0;
+    uint32_t frameCount = 0;
+    uint32_t type16Count = 0;
+    uint32_t type2CCount = 0;
+    uint32_t type2DCount = 0;
+    uint32_t type28Count = 0;
+    uint32_t type29Count = 0;
+    uint32_t type2BCount = 0;
+    uint32_t type32Count = 0;
+    uint32_t type3ACount = 0;
+    uint32_t otherCount = 0;
+    uint8_t lastType = 0;
+    uint8_t frame[64] = {};
+    uint8_t frameLen = 0;
+    bool frameUpdated = false;
+  };
+  ElrsSniffStats elrsHostToModuleSniff;
+  ElrsSniffStats elrsModuleToHostSniff;
   bool elrsInitialized = false;
   bool elrsProtocolActive = false;
   volatile bool elrsModulePresent = false;
@@ -357,7 +382,11 @@ enum NumpadTarget {
   volatile uint32_t elrsType1CCount = 0;
   volatile uint32_t elrsType1DCount = 0;
   volatile uint32_t elrsType29Count = 0;
+  volatile uint32_t elrsType2ECount = 0;
+  volatile uint32_t elrsType3ACount = 0;
   volatile uint32_t elrsTypeOtherCount = 0;
+  volatile uint8_t elrsLastFrameType = 0;
+  volatile uint8_t elrsLastOtherFrameType = 0;
   volatile uint32_t elrsSyncC8Count = 0;
   volatile uint32_t elrsSyncEECount = 0;
   volatile uint32_t elrsSyncEACount = 0;
@@ -365,6 +394,8 @@ enum NumpadTarget {
   volatile uint32_t elrsPrintableByteCount = 0;
   volatile uint8_t elrsRecentBytes[16] = {};
   volatile uint8_t elrsRecentByteIndex = 0;
+  volatile uint8_t elrsLast2EFrame[32] = {};
+  volatile uint8_t elrsLast2EFrameLen = 0;
   unsigned long lastElrsTxTime = 0;
   unsigned long lastElrsDevicePingTime = 0;
   unsigned long elrsBindCommandSentTime = 0;
@@ -375,6 +406,8 @@ enum NumpadTarget {
   bool elrsBindAwaitingResult = false;
   uint8_t elrsBindFieldIndex = 0;
   bool elrsBindFieldKnown = false;
+  uint8_t elrsBindCommandStep = 0;
+  uint8_t elrsBindCommandTimeout = 0;
   uint8_t elrsParameterCount = 0;
   uint8_t elrsParameterVersion = 0;
   uint8_t elrsParamScanIndex = 0;
@@ -384,6 +417,7 @@ enum NumpadTarget {
   volatile unsigned long lastElrsLinkStatsTime = 0;
   volatile unsigned long lastElrsDeviceInfoTime = 0;
   char elrsDeviceName[16] = "";
+  char elrsBindCommandInfo[32] = "";
   const bool elrsInvertModes[][2] = {
     {false, false}, // RX normal, TX normal
     {true,  false}, // RX inverted, TX normal
@@ -393,7 +427,7 @@ enum NumpadTarget {
   int elrsInvertModeIndex = 0;
   bool elrsRxInvert = false;
   bool elrsTxInvert = false;
-  const uint32_t elrsBaudCandidates[] = {400000, 420000, 115200};
+  const uint32_t elrsBaudCandidates[] = {ELRS_FORCE_BAUD};
   const int elrsBaudCandidateCount = (int)(sizeof(elrsBaudCandidates) / sizeof(elrsBaudCandidates[0]));
   int elrsBaudIndex = 0;
   uint32_t elrsActiveBaud = 0;
@@ -479,6 +513,16 @@ enum NumpadTarget {
   #define MODEL_NAME_HOLD_MS 700
   #define BATTERY_ADC_PIN 9
   #define ADS1115_I2C_ADDR 0x48
+  #define MCP23017_I2C_ADDR_MIN 0x20
+  #define MCP23017_I2C_ADDR_MAX 0x27
+  #define MCP23017_IODIRB_REG 0x01
+  #define MCP23017_GPPUB_REG 0x0D
+  #define MCP23017_GPIOB_REG 0x13
+  #define MCP23017_DPAD_SELECT_BIT 0
+  #define MCP23017_DPAD_LEFT_BIT 1
+  #define MCP23017_DPAD_UP_BIT 2
+  #define MCP23017_DPAD_DOWN_BIT 3
+  #define MCP23017_DPAD_RIGHT_BIT 4
   #define ADS1115_REG_CONVERSION 0x00
   #define ADS1115_REG_CONFIG 0x01
   #define ADS1115_GAIN_4_096V 0x0200
@@ -753,9 +797,12 @@ enum NumpadTarget {
   bool batteryPresent = false;
   bool batteryCharging = false;
   bool ads1115Ready = false;
+  bool mcp23017Ready = false;
   bool stickFilterInitialized = false;
+  uint8_t mcp23017Address = MCP23017_I2C_ADDR_MIN;
   uint8_t adsConsecutiveReadFails = 0;
   unsigned long lastAdsReconnectAttemptMs = 0;
+  unsigned long lastMcpReconnectAttemptMs = 0;
   unsigned long lastBatterySampleTime = 0;
   unsigned long lastStickSampleTime = 0;
   float batteryFilteredVoltage = 0.0f;
@@ -927,9 +974,14 @@ enum NumpadTarget {
   void drawGameMenuButton();
   bool initAds1115();
   bool readAds1115SingleEnded(uint8_t channel, int16_t &value);
+  bool initMcp23017();
+  uint8_t readMcp23017PortB();
+  void scanI2cBus(const char *label);
+  void probeI2cAddress(uint8_t addr);
   void updateStickInputs(unsigned long now);
   float normalizeStickAxis(int16_t raw, int16_t center);
   void updateChannelOutputs();
+  void buildProtocolOutputChannels(float channels[CHANNEL_COUNT]);
   float applyExpoCurve(float value, int expoPercent);
   bool updateEndpointSideLatch(int channel);
   bool isEndpointHighSideSelected(int channel);
@@ -974,11 +1026,17 @@ enum NumpadTarget {
   void updateEspNowLink(unsigned long now);
   void initElrsUart();
   void updateElrsLink(unsigned long now);
+  void initElrsPassiveSniffer();
+  void updateElrsPassiveSniffer(unsigned long now);
+  void readElrsSniffSerial(HardwareSerial &port, ElrsSniffStats &stats);
+  void logElrsSniffSummary(const char *label, ElrsSniffStats &stats);
+  void logElrsSniffFrame(const char *label, ElrsSniffStats &stats);
   void sendElrsChannelFrame();
   void elrsSendFrame(const uint8_t *frame, size_t len);
   void sendElrsDevicePing();
   void sendElrsBindCommandTo(uint8_t destination);
   void sendElrsLuaBindWrite(uint8_t fieldIndex);
+  void sendElrsLuaBindExecWrite(uint8_t fieldIndex);
   void sendElrsBindCommand();
   void sendElrsParameterRead(uint8_t fieldIndex, uint8_t chunkIndex);
   void updateElrsParameterDiscovery(unsigned long now);
@@ -2464,6 +2522,9 @@ void sendEspNowControlPacket(unsigned long now) {
   if (!initEspNowLink()) return;
   if (espNowBindingMode) return;
 
+  float protocolChannels[CHANNEL_COUNT];
+  buildProtocolOutputChannels(protocolChannels);
+
   EspNowControlPacket packet = {};
   packet.magic = ESPNOW_LINK_MAGIC;
   packet.version = ESPNOW_LINK_VERSION;
@@ -2478,7 +2539,7 @@ void sendEspNowControlPacket(unsigned long now) {
   if (batteryCharging) packet.flags |= ESPNOW_FLAG_BATTERY_CHARGING;
 
   for (int i = 0; i < CHANNEL_COUNT; i++) {
-    float constrainedValue = constrain(outputChannels[i], -1.0f, 1.0f);
+    float constrainedValue = constrain(protocolChannels[i], -1.0f, 1.0f);
     packet.channels[i] = (int16_t)roundf(constrainedValue * 1000.0f);
   }
 
@@ -2810,13 +2871,16 @@ void elrsSendFrame(const uint8_t *frame, size_t len) {
 }
 
 void sendElrsChannelFrame() {
+  float protocolChannels[CHANNEL_COUNT];
+  buildProtocolOutputChannels(protocolChannels);
+
   uint16_t channels[16];
   for (int i = 0; i < 16; i++) channels[i] = 992;
 
-  channels[0] = channelToCrsf(outputChannels[0]);  // CH1 RX
-  channels[1] = channelToCrsf(outputChannels[1]);  // CH2 RY
-  channels[2] = channelToCrsf(outputChannels[2]);  // CH3 LY
-  channels[3] = channelToCrsf(outputChannels[3]);  // CH4 LX
+  channels[0] = channelToCrsf(protocolChannels[0]);  // CH1 preset output
+  channels[1] = channelToCrsf(protocolChannels[1]);  // CH2 preset output
+  channels[2] = channelToCrsf(protocolChannels[2]);  // CH3 preset output
+  channels[3] = channelToCrsf(protocolChannels[3]);  // CH4 preset output
 
   uint8_t payload[22] = {0};
   uint16_t bitPos = 0;
@@ -2833,18 +2897,14 @@ void sendElrsChannelFrame() {
 
   // CRSF packet format: [dest/sync][len][type][payload...][crc]
   uint8_t frame[26];
-  // CRSF serial sync/address byte.
-  frame[0] = ELRS_TX_SYNC_PRIMARY;
+  // The Pocket drives host->module RC traffic with destination address 0xEE.
+  frame[0] = ELRS_TX_MODULE_ADDR;
   frame[1] = 0x18;  // len = type(1) + payload(22) + crc(1)
   frame[2] = 0x16;  // RC_CHANNELS_PACKED
   memcpy(&frame[3], payload, sizeof(payload));
   frame[25] = crsfCrc8(&frame[2], 1 + sizeof(payload));
 
   elrsSendFrame(frame, sizeof(frame));
-  if (ELRS_TX_SYNC_PRIMARY != 0xC8) {
-    frame[0] = 0xC8;
-    elrsSendFrame(frame, sizeof(frame));
-  }
 }
 
 void sendElrsDevicePing() {
@@ -2870,15 +2930,26 @@ void sendElrsDevicePing() {
 }
 
 void sendElrsBindCommand() {
-  // Start a short bind-command burst to improve compatibility with modules
-  // that expect repeated bind pulses (similar to Lua bind behavior).
-  sendElrsBindCommandTo(0xEE); // TX module destination
-  sendElrsBindCommandTo(0xEC); // RX destination (forwarded over RF by module)
-  sendElrsLuaBindWrite(elrsBindFieldKnown ? elrsBindFieldIndex : 0x11);
+  uint8_t bindFieldIndex = elrsBindFieldKnown ? elrsBindFieldIndex : 0x11;
+  if (!elrsBindFieldKnown && strcmp(elrsDeviceName, "RM Pocket") == 0 && elrsParameterCount >= 28) {
+    bindFieldIndex = 28;
+  }
+  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    Serial.printf("ELRS TX bind start field=%u known=%d name=%s pCnt=%u\n",
+                  (unsigned int)bindFieldIndex,
+                  (int)elrsBindFieldKnown,
+                  (elrsDeviceName[0] != '\0') ? elrsDeviceName : "-",
+                  (unsigned int)elrsParameterCount);
+  }
+  // Mirror the real Pocket bind sequence:
+  // 1) housekeeping write to field 0, value 0
+  // 2) bind click on the discovered bind field
+  sendElrsLuaCommandWrite(0x00, 0x00);
+  sendElrsLuaBindWrite(bindFieldIndex);
   elrsBindCommandSentTime = millis();
   elrsBindAwaitingResult = true;
   elrsBindAwaitUntil = elrsBindCommandSentTime + 10000UL;
-  elrsBindBurstUntil = elrsBindCommandSentTime + 3000UL;
+  elrsBindBurstUntil = elrsBindCommandSentTime + 1200UL;
   lastElrsBindBurstSendTime = elrsBindCommandSentTime;
 }
 
@@ -2925,28 +2996,41 @@ void sendElrsBindCommandTo(uint8_t destination) {
   }
 }
 
-void sendElrsLuaBindWrite(uint8_t fieldIndex) {
-  // Mirrors the common ELRS Lua bind write:
-  // C8 06 2D EE EF [field] 01 CRC
+void sendElrsLuaCommandWrite(uint8_t fieldIndex, uint8_t step) {
   uint8_t frame[8];
-  frame[0] = ELRS_TX_SYNC_PRIMARY;
+  frame[0] = ELRS_TX_MODULE_ADDR;
   frame[1] = 0x06;
   frame[2] = 0x2D;
   frame[3] = 0xEE;
   frame[4] = 0xEF;
   frame[5] = fieldIndex;
-  frame[6] = 0x01;
+  frame[6] = step;
   frame[7] = crsfCrc8(&frame[2], 5);
-  elrsSendFrame(frame, sizeof(frame));
-  if (ELRS_TX_SYNC_PRIMARY != 0xC8) {
-    frame[0] = 0xC8;
-    elrsSendFrame(frame, sizeof(frame));
+  if (ELRS_VERBOSE_SERIAL_DEBUG) {
+    Serial.printf("ELRS TX 2D field=%u step=%u frame=", (unsigned int)fieldIndex, (unsigned int)step);
+    for (size_t i = 0; i < sizeof(frame); i++) {
+      Serial.printf("%02X", frame[i]);
+      if (i + 1 != sizeof(frame)) Serial.print(' ');
+    }
+    Serial.println();
   }
+  elrsSendFrame(frame, sizeof(frame));
+}
+
+void sendElrsLuaBindWrite(uint8_t fieldIndex) {
+  // Step 1 = CLICK, which is what the ELRS Lua script sends when the user
+  // presses the bind command.
+  sendElrsLuaCommandWrite(fieldIndex, 0x01);
+}
+
+void sendElrsLuaBindExecWrite(uint8_t fieldIndex) {
+  // The Pocket keeps nudging the bind command while the module reports EXEC.
+  sendElrsLuaCommandWrite(fieldIndex, 0x06);
 }
 
 void sendElrsParameterRead(uint8_t fieldIndex, uint8_t chunkIndex) {
   uint8_t frame[8];
-  frame[0] = ELRS_TX_SYNC_PRIMARY;
+  frame[0] = ELRS_TX_MODULE_ADDR;
   frame[1] = 0x06;
   frame[2] = 0x2C;
   frame[3] = 0xEE;
@@ -2955,10 +3039,6 @@ void sendElrsParameterRead(uint8_t fieldIndex, uint8_t chunkIndex) {
   frame[6] = chunkIndex;
   frame[7] = crsfCrc8(&frame[2], 5);
   elrsSendFrame(frame, sizeof(frame));
-  if (ELRS_TX_SYNC_PRIMARY != 0xC8) {
-    frame[0] = 0xC8;
-    elrsSendFrame(frame, sizeof(frame));
-  }
 }
 
 void updateElrsParameterDiscovery(unsigned long now) {
@@ -3033,9 +3113,154 @@ void parseElrsParameterEntryFrame(const uint8_t *frame, uint8_t expected) {
   label[out] = '\0';
   if (out == 0) return;
 
-  if (containsIgnoreCase(label, "bind")) {
+  bool isBindField = containsIgnoreCase(label, "bind");
+  if (isBindField) {
     elrsBindFieldIndex = fieldIndex;
     elrsBindFieldKnown = true;
+  }
+
+  int valueStart = labelStart + out + 1;
+  if (!isBindField || valueStart + 1 >= payloadEnd) return;
+
+  elrsBindCommandStep = frame[valueStart];
+  elrsBindCommandTimeout = frame[valueStart + 1];
+
+  int infoStart = valueStart + 2;
+  int infoOut = 0;
+  for (int i = infoStart; i < payloadEnd && infoOut < (int)sizeof(elrsBindCommandInfo) - 1; i++) {
+    char c = (char)frame[i];
+    if (c == '\0') break;
+    if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) break;
+    elrsBindCommandInfo[infoOut++] = c;
+  }
+  elrsBindCommandInfo[infoOut] = '\0';
+}
+
+void readElrsSniffSerial(HardwareSerial &port, ElrsSniffStats &stats) {
+  static uint8_t frameBuffers[2][64];
+  static uint8_t frameIndices[2] = {0, 0};
+  static uint8_t frameExpected[2] = {0, 0};
+
+  int slot = (&port == &elrsSerial) ? 0 : 1;
+  uint8_t *frame = frameBuffers[slot];
+  uint8_t &index = frameIndices[slot];
+  uint8_t &expected = frameExpected[slot];
+
+  while (port.available() > 0) {
+    uint8_t byteIn = (uint8_t)port.read();
+    stats.byteCount++;
+
+    if (index == 0) {
+      if (byteIn != 0xC8 && byteIn != 0xEE && byteIn != 0xEA && byteIn != 0xEC) {
+        continue;
+      }
+      frame[index++] = byteIn;
+      continue;
+    }
+
+    if (index == 1) {
+      if (byteIn < 2 || byteIn > 62) {
+        index = 0;
+        expected = 0;
+        continue;
+      }
+      frame[index++] = byteIn;
+      expected = byteIn + 2;
+      continue;
+    }
+
+    frame[index++] = byteIn;
+    if (expected == 0 || index < expected) continue;
+
+    uint8_t len = frame[1];
+    uint8_t type = frame[2];
+    uint8_t crc = frame[expected - 1];
+    uint8_t calculated = crsfCrc8(&frame[2], len - 1);
+    if (crc == calculated) {
+      stats.frameCount++;
+      stats.lastType = type;
+
+      if (type == 0x16) stats.type16Count++;
+      else if (type == 0x2C) stats.type2CCount++;
+      else if (type == 0x2D) stats.type2DCount++;
+      else if (type == 0x28) stats.type28Count++;
+      else if (type == 0x29) stats.type29Count++;
+      else if (type == 0x2B) stats.type2BCount++;
+      else if (type == 0x32) stats.type32Count++;
+      else if (type == 0x3A) stats.type3ACount++;
+      else stats.otherCount++;
+
+      if (type == 0x28 || type == 0x29 || type == 0x2B || type == 0x2C || type == 0x2D || type == 0x32) {
+        memcpy(stats.frame, frame, expected);
+        stats.frameLen = expected;
+        stats.frameUpdated = true;
+      }
+    }
+
+    index = 0;
+    expected = 0;
+  }
+}
+
+void logElrsSniffFrame(const char *label, ElrsSniffStats &stats) {
+  if (!stats.frameUpdated || stats.frameLen == 0) return;
+
+  Serial.printf("%s frame=", label);
+  for (uint8_t i = 0; i < stats.frameLen; i++) {
+    Serial.printf("%02X", stats.frame[i]);
+    if (i + 1 != stats.frameLen) Serial.print(' ');
+  }
+  Serial.println();
+  stats.frameUpdated = false;
+}
+
+void logElrsSniffSummary(const char *label, ElrsSniffStats &stats) {
+  Serial.printf("%s bytes=%lu frames=%lu t16=%lu t28=%lu t29=%lu t2B=%lu t2C=%lu t2D=%lu t32=%lu t3A=%lu other=%lu lastType=0x%02X(%s)\n",
+                label,
+                (unsigned long)stats.byteCount,
+                (unsigned long)stats.frameCount,
+                (unsigned long)stats.type16Count,
+                (unsigned long)stats.type28Count,
+                (unsigned long)stats.type29Count,
+                (unsigned long)stats.type2BCount,
+                (unsigned long)stats.type2CCount,
+                (unsigned long)stats.type2DCount,
+                (unsigned long)stats.type32Count,
+                (unsigned long)stats.type3ACount,
+                (unsigned long)stats.otherCount,
+                (unsigned int)stats.lastType,
+                elrsFrameTypeName(stats.lastType));
+  logElrsSniffFrame(label, stats);
+}
+
+const char* elrsFrameTypeName(uint8_t type) {
+  switch (type) {
+    case 0x28: return "PING_DEVICES";
+    case 0x14: return "LINK_STATS";
+    case 0x16: return "RC_CHANNELS";
+    case 0x1C: return "RX_ID";
+    case 0x1D: return "LINK_STATS_TX";
+    case 0x29: return "DEVICE_INFO";
+    case 0x2B: return "PARAM_ENTRY";
+    case 0x2C: return "PARAM_READ";
+    case 0x2D: return "PARAM_WRITE";
+    case 0x2E: return "PARAM_VALUE";
+    case 0x32: return "COMMAND";
+    case 0x3A: return "RADIO_ID";
+    default:   return "OTHER";
+  }
+}
+
+const char* elrsCommandStepName(uint8_t step) {
+  switch (step) {
+    case 0: return "IDLE";
+    case 1: return "CLICK";
+    case 2: return "EXEC";
+    case 3: return "ASK";
+    case 4: return "CONFIRM";
+    case 5: return "CANCEL";
+    case 6: return "QUERY";
+    default: return "UNKNOWN";
   }
 }
 
@@ -3087,6 +3312,7 @@ void readElrsSerial(unsigned long now) {
     uint8_t calculated = crsfCrc8(&frame[2], len - 1);
     if (crc == calculated) {
       elrsRxFrameCount++;
+      elrsLastFrameType = type;
       if (type == 0x16) {
         elrsType16Count++;
       } else if (type == 0x14) {
@@ -3097,10 +3323,19 @@ void readElrsSerial(unsigned long now) {
         elrsType1DCount++;
       } else if (type == 0x29) {
         elrsType29Count++;
+      } else if (type == 0x2E) {
+        elrsType2ECount++;
+        uint8_t copyLen = expected;
+        if (copyLen > sizeof(elrsLast2EFrame)) copyLen = sizeof(elrsLast2EFrame);
+        memcpy((void*)elrsLast2EFrame, frame, copyLen);
+        elrsLast2EFrameLen = copyLen;
+      } else if (type == 0x3A) {
+        elrsType3ACount++;
       } else if (type == 0x2B) {
         // Parameter settings entry (response to 0x2C reads)
       } else {
         elrsTypeOtherCount++;
+        elrsLastOtherFrameType = type;
       }
 
       if ((type == 0x14 || type == 0x1D) && len >= 12) {
@@ -3123,6 +3358,11 @@ void readElrsSerial(unsigned long now) {
 }
 
 void initElrsUart() {
+#if ELRS_PASSIVE_SNIFF_MODE
+  initElrsPassiveSniffer();
+  elrsInitialized = true;
+  return;
+#endif
   #if ELRS_FORCE_PIN_PAIR_INDEX >= 0
   elrsPinPairIndex = ELRS_FORCE_PIN_PAIR_INDEX % elrsPinPairCount;
   #endif
@@ -3146,6 +3386,27 @@ void initElrsUart() {
                   (int)elrsActiveTxPin,
                   (int)elrsActiveRxPin);
   }
+}
+
+void initElrsPassiveSniffer() {
+  elrsSerial.end();
+  elrsHostSniffSerial.end();
+
+  pinMode(ELRS_SNIFF_MODULE_TO_HOST_PIN, INPUT_PULLUP);
+  pinMode(ELRS_SNIFF_HOST_TO_MODULE_PIN, INPUT_PULLUP);
+
+  elrsSerial.begin(ELRS_FORCE_BAUD, SERIAL_8N1, ELRS_SNIFF_MODULE_TO_HOST_PIN, -1, false);
+  elrsSerial.setMode(UART_MODE_UART);
+  elrsSerial.setRxInvert(false);
+
+  elrsHostSniffSerial.begin(ELRS_FORCE_BAUD, SERIAL_8N1, ELRS_SNIFF_HOST_TO_MODULE_PIN, -1, false);
+  elrsHostSniffSerial.setMode(UART_MODE_UART);
+  elrsHostSniffSerial.setRxInvert(false);
+
+  Serial.printf("ELRS passive sniffer: host->module rx=%d module->host rx=%d baud=%lu\n",
+                ELRS_SNIFF_HOST_TO_MODULE_PIN,
+                ELRS_SNIFF_MODULE_TO_HOST_PIN,
+                (unsigned long)ELRS_FORCE_BAUD);
 }
 
 void applyElrsUartPinPair(int pinPairIndex) {
@@ -3200,6 +3461,11 @@ void advanceElrsSerialMode() {
 void updateElrsLink(unsigned long now) {
   if (!elrsInitialized) return;
 
+#if ELRS_PASSIVE_SNIFF_MODE
+  updateElrsPassiveSniffer(now);
+  return;
+#endif
+
   readElrsSerial(now);
 
   elrsModulePresent = (lastElrsSerialRxTime > 0) &&
@@ -3216,9 +3482,18 @@ void updateElrsLink(unsigned long now) {
   }
   if (elrsBindBurstUntil > now && (now - lastElrsBindBurstSendTime >= 200UL)) {
     lastElrsBindBurstSendTime = now;
-    sendElrsBindCommandTo(0xEE);
-    sendElrsBindCommandTo(0xEC);
-    sendElrsLuaBindWrite(elrsBindFieldKnown ? elrsBindFieldIndex : 0x11);
+    uint8_t bindFieldIndex = elrsBindFieldKnown ? elrsBindFieldIndex : 0x11;
+    if (!elrsBindFieldKnown && strcmp(elrsDeviceName, "RM Pocket") == 0 && elrsParameterCount >= 28) {
+      bindFieldIndex = 28;
+    }
+    sendElrsLuaCommandWrite(0x00, 0x00);
+    if (elrsBindCommandStep == 3) {
+      sendElrsLuaCommandWrite(bindFieldIndex, 0x04);
+    } else if (elrsBindCommandStep == 2) {
+      sendElrsLuaBindExecWrite(bindFieldIndex);
+    } else {
+      sendElrsLuaBindWrite(bindFieldIndex);
+    }
   }
 
   if (getModelProtocol(activeModel) != PROTOCOL_ELRS) {
@@ -3229,21 +3504,23 @@ void updateElrsLink(unsigned long now) {
   elrsProtocolActive = true;
 
   bool haveModuleFrames = hasElrsModuleFrames();
-  bool allowSerialModeRetry = true;
+  bool haveAnyValidFrames = (elrsRxFrameCount > 0);
+  bool allowSerialModeRetry = false;
 #if ELRS_HALF_DUPLEX_MODE
   // Single-wire mode is sensitive to UART restarts; hopping baud/invert states
   // here can wedge the link, so keep it on the known-stable mode.
   allowSerialModeRetry = false;
 #endif
   if (allowSerialModeRetry &&
-      !haveModuleFrames &&
+      !haveAnyValidFrames &&
       (now - lastElrsBaudRetryTime >= ELRS_BAUD_RETRY_MS)) {
     lastElrsBaudRetryTime = now;
     advanceElrsSerialMode();
   }
 
   bool onElrsControlScreen = (currentScreen == SCREEN_PROTOCOL || currentScreen == SCREEN_ELRS);
-  unsigned long txIntervalMs = onElrsControlScreen ? 200UL : ELRS_CRSF_TX_INTERVAL_MS;
+  bool keepAliveBindTraffic = elrsBindAwaitingResult || (elrsBindBurstUntil > now) || (elrsBindCommandStep == 2);
+  unsigned long txIntervalMs = (onElrsControlScreen && !keepAliveBindTraffic) ? 200UL : ELRS_CRSF_TX_INTERVAL_MS;
   bool probeListenOnly = ELRS_PROBE_UNTIL_MODULE_FRAMES && !haveModuleFrames && !elrsLinkActive;
 #if ELRS_RX_ONLY_DIAGNOSTIC
   probeListenOnly = true;
@@ -3252,7 +3529,7 @@ void updateElrsLink(unsigned long now) {
     lastElrsTxTime = now;
     // Keep channel traffic minimal while on ELRS control screens so module
     // can respond to ping/parameter/bind frames on a busy single-wire bus.
-    if (!probeListenOnly && (!onElrsControlScreen || elrsLinkActive)) {
+    if (!probeListenOnly && (!onElrsControlScreen || elrsLinkActive || keepAliveBindTraffic)) {
       sendElrsChannelFrame();
     }
   }
@@ -3262,7 +3539,7 @@ void updateElrsLink(unsigned long now) {
       sendElrsDevicePing();
     }
   }
-  if (!probeListenOnly) {
+  if (!probeListenOnly && !keepAliveBindTraffic) {
     updateElrsParameterDiscovery(now);
   }
 
@@ -3274,59 +3551,156 @@ void updateElrsLink(unsigned long now) {
     signalStrength = 0;
   }
 
-  static unsigned long lastElrsDebugPrintTime = 0;
-  if (RADIO_PROTOCOL_SERIAL_DEBUG && now - lastElrsDebugPrintTime >= 1000) {
-    lastElrsDebugPrintTime = now;
-    Serial.printf("ELRS baud=%lu pins(tx=%d,rx=%d,pair=%d) inv(rx=%d,tx=%d) tx=%s rxBytes=%lu rxFrames=%lu devInfo=%lu t14=%lu t29=%lu bindIdx=%u(%d) pCnt=%u name=%s lq=%u\n",
-                  (unsigned long)elrsActiveBaud,
-                  (int)elrsActiveTxPin,
-                  (int)elrsActiveRxPin,
-                  elrsPinPairIndex,
-                  (int)elrsRxInvert,
-                  (int)elrsTxInvert,
-                  hasElrsTxOnlyActivity(now) ? "on" : "off",
-                  (unsigned long)elrsRxByteCount,
-                  (unsigned long)elrsRxFrameCount,
-                  (unsigned long)elrsDeviceInfoCount,
-                  (unsigned long)elrsType14Count,
-                  (unsigned long)elrsType29Count,
-                  (unsigned int)elrsBindFieldIndex,
-                  (int)elrsBindFieldKnown,
-                  (unsigned int)elrsParameterCount,
-                  (elrsDeviceName[0] != '\0') ? elrsDeviceName : "-",
-                  (unsigned int)elrsUplinkLq);
-    if (ELRS_VERBOSE_SERIAL_DEBUG) {
-      Serial.printf("ELRS pins tx=%d rx=%d modeSlot=%d\n",
-                    (int)elrsActiveTxPin,
-                    (int)elrsActiveRxPin,
-                    elrsPinPairIndex);
-      if (elrsRxFrameCount == 0) {
-        Serial.printf("ELRS raw sig C8=%lu EE=%lu EA=%lu EC=%lu printable=%lu/%lu sample=",
-                      (unsigned long)elrsSyncC8Count,
-                      (unsigned long)elrsSyncEECount,
-                      (unsigned long)elrsSyncEACount,
-                      (unsigned long)elrsSyncECCount,
-                      (unsigned long)elrsPrintableByteCount,
-                      (unsigned long)elrsRxByteCount);
-        uint8_t start = elrsRecentByteIndex;
-        for (int i = 0; i < 16; i++) {
-          uint8_t b = elrsRecentBytes[(start + i) & 0x0F];
-          Serial.printf("%02X", b);
-          if (i != 15) Serial.print(' ');
-        }
-        Serial.println();
-      }
-      Serial.printf("ELRS types 16=%lu 14=%lu 1C=%lu 1D=%lu 29=%lu other=%lu\n",
-                    (unsigned long)elrsType16Count,
-                    (unsigned long)elrsType14Count,
-                    (unsigned long)elrsType1CCount,
-                    (unsigned long)elrsType1DCount,
-                    (unsigned long)elrsType29Count,
-                    (unsigned long)elrsTypeOtherCount);
-      Serial.printf("ELRS rxPin=%d edges=%lu\n",
-                    elrsActiveRxPin,
-                    (unsigned long)elrsRxEdgeCount);
+  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    static bool lastModulePresent = false;
+    static bool lastLinkActive = false;
+    static bool lastBindFieldKnown = false;
+    static uint8_t lastBindCommandStepLogged = 0xFF;
+    static uint8_t lastBindCommandTimeoutLogged = 0xFF;
+    static uint8_t lastLoggedLq = 0xFF;
+    static char lastDeviceNameLogged[sizeof(elrsDeviceName)] = "";
+    static char lastBindInfoLogged[sizeof(elrsBindCommandInfo)] = "";
+
+    bool deviceNameChanged = (strcmp(lastDeviceNameLogged, elrsDeviceName) != 0);
+    bool bindInfoChanged = (strcmp(lastBindInfoLogged, elrsBindCommandInfo) != 0);
+
+    if (elrsModulePresent && (!lastModulePresent || deviceNameChanged)) {
+      Serial.printf("ELRS module online: name=%s params=%u bindField=%s%u baud=%lu\n",
+                    (elrsDeviceName[0] != '\0') ? elrsDeviceName : "-",
+                    (unsigned int)elrsParameterCount,
+                    elrsBindFieldKnown ? "" : "?",
+                    (unsigned int)elrsBindFieldIndex,
+                    (unsigned long)elrsActiveBaud);
+    } else if (!elrsModulePresent && lastModulePresent) {
+      Serial.println("ELRS module offline");
     }
+
+    if (elrsBindFieldKnown && (!lastBindFieldKnown || deviceNameChanged)) {
+      Serial.printf("ELRS bind field ready: index=%u name=%s params=%u\n",
+                    (unsigned int)elrsBindFieldIndex,
+                    (elrsDeviceName[0] != '\0') ? elrsDeviceName : "-",
+                    (unsigned int)elrsParameterCount);
+    }
+
+    if (elrsBindCommandStep != lastBindCommandStepLogged ||
+        elrsBindCommandTimeout != lastBindCommandTimeoutLogged ||
+        bindInfoChanged) {
+      if (elrsBindFieldKnown || elrsBindCommandStep != 0 || elrsBindCommandInfo[0] != '\0') {
+        Serial.printf("ELRS bind state=%s(%u) timeout=%u info=%s\n",
+                      elrsCommandStepName(elrsBindCommandStep),
+                      (unsigned int)elrsBindCommandStep,
+                      (unsigned int)elrsBindCommandTimeout,
+                      (elrsBindCommandInfo[0] != '\0') ? elrsBindCommandInfo : "-");
+      }
+    }
+
+    if (elrsLinkActive && (!lastLinkActive || elrsUplinkLq != lastLoggedLq)) {
+      Serial.printf("ELRS link active: lq=%u name=%s\n",
+                    (unsigned int)elrsUplinkLq,
+                    (elrsDeviceName[0] != '\0') ? elrsDeviceName : "-");
+    } else if (!elrsLinkActive && lastLinkActive) {
+      Serial.println("ELRS link lost");
+    }
+
+    lastModulePresent = elrsModulePresent;
+    lastLinkActive = elrsLinkActive;
+    lastBindFieldKnown = elrsBindFieldKnown;
+    lastBindCommandStepLogged = elrsBindCommandStep;
+    lastBindCommandTimeoutLogged = elrsBindCommandTimeout;
+    lastLoggedLq = elrsUplinkLq;
+    strncpy(lastDeviceNameLogged, elrsDeviceName, sizeof(lastDeviceNameLogged) - 1);
+    lastDeviceNameLogged[sizeof(lastDeviceNameLogged) - 1] = '\0';
+    strncpy(lastBindInfoLogged, elrsBindCommandInfo, sizeof(lastBindInfoLogged) - 1);
+    lastBindInfoLogged[sizeof(lastBindInfoLogged) - 1] = '\0';
+
+    if (ELRS_VERBOSE_SERIAL_DEBUG) {
+      static unsigned long lastElrsVerbosePrintTime = 0;
+      if (now - lastElrsVerbosePrintTime >= 1000) {
+        lastElrsVerbosePrintTime = now;
+        Serial.printf("ELRS baud=%lu pins(tx=%d,rx=%d,pair=%d) inv(rx=%d,tx=%d) tx=%s rxBytes=%lu rxFrames=%lu devInfo=%lu t14=%lu t29=%lu t2E=%lu radioId=%lu other=%lu lastType=0x%02X(%s) otherLast=0x%02X(%s) bindIdx=%u(%d) bindCmd=%u(%s) bindTmo=%u bindInfo=%s pCnt=%u name=%s lq=%u\n",
+                      (unsigned long)elrsActiveBaud,
+                      (int)elrsActiveTxPin,
+                      (int)elrsActiveRxPin,
+                      elrsPinPairIndex,
+                      (int)elrsRxInvert,
+                      (int)elrsTxInvert,
+                      hasElrsTxOnlyActivity(now) ? "on" : "off",
+                      (unsigned long)elrsRxByteCount,
+                      (unsigned long)elrsRxFrameCount,
+                      (unsigned long)elrsDeviceInfoCount,
+                      (unsigned long)elrsType14Count,
+                      (unsigned long)elrsType29Count,
+                      (unsigned long)elrsType2ECount,
+                      (unsigned long)elrsType3ACount,
+                      (unsigned long)elrsTypeOtherCount,
+                      (unsigned int)elrsLastFrameType,
+                      elrsFrameTypeName(elrsLastFrameType),
+                      (unsigned int)elrsLastOtherFrameType,
+                      elrsFrameTypeName(elrsLastOtherFrameType),
+                      (unsigned int)elrsBindFieldIndex,
+                      (int)elrsBindFieldKnown,
+                      (unsigned int)elrsBindCommandStep,
+                      elrsCommandStepName(elrsBindCommandStep),
+                      (unsigned int)elrsBindCommandTimeout,
+                      (elrsBindCommandInfo[0] != '\0') ? elrsBindCommandInfo : "-",
+                      (unsigned int)elrsParameterCount,
+                      (elrsDeviceName[0] != '\0') ? elrsDeviceName : "-",
+                      (unsigned int)elrsUplinkLq);
+        Serial.printf("ELRS pins tx=%d rx=%d modeSlot=%d\n",
+                      (int)elrsActiveTxPin,
+                      (int)elrsActiveRxPin,
+                      elrsPinPairIndex);
+        if (elrsRxFrameCount == 0) {
+          Serial.printf("ELRS raw sig C8=%lu EE=%lu EA=%lu EC=%lu printable=%lu/%lu sample=",
+                        (unsigned long)elrsSyncC8Count,
+                        (unsigned long)elrsSyncEECount,
+                        (unsigned long)elrsSyncEACount,
+                        (unsigned long)elrsSyncECCount,
+                        (unsigned long)elrsPrintableByteCount,
+                        (unsigned long)elrsRxByteCount);
+          uint8_t start = elrsRecentByteIndex;
+          for (int i = 0; i < 16; i++) {
+            uint8_t b = elrsRecentBytes[(start + i) & 0x0F];
+            Serial.printf("%02X", b);
+            if (i != 15) Serial.print(' ');
+          }
+          Serial.println();
+        }
+        Serial.printf("ELRS types 16=%lu 14=%lu 1C=%lu 1D=%lu 29=%lu 2E=%lu 3A=%lu other=%lu\n",
+                      (unsigned long)elrsType16Count,
+                      (unsigned long)elrsType14Count,
+                      (unsigned long)elrsType1CCount,
+                      (unsigned long)elrsType1DCount,
+                      (unsigned long)elrsType29Count,
+                      (unsigned long)elrsType2ECount,
+                      (unsigned long)elrsType3ACount,
+                      (unsigned long)elrsTypeOtherCount);
+        if (elrsLast2EFrameLen > 0) {
+          Serial.print("ELRS last2E=");
+          for (uint8_t i = 0; i < elrsLast2EFrameLen; i++) {
+            Serial.printf("%02X", elrsLast2EFrame[i]);
+            if (i + 1 != elrsLast2EFrameLen) Serial.print(' ');
+          }
+          Serial.println();
+        }
+        Serial.printf("ELRS rxPin=%d edges=%lu\n",
+                      elrsActiveRxPin,
+                      (unsigned long)elrsRxEdgeCount);
+      }
+    }
+  }
+}
+
+void updateElrsPassiveSniffer(unsigned long now) {
+  (void)now;
+  readElrsSniffSerial(elrsHostSniffSerial, elrsHostToModuleSniff);
+  readElrsSniffSerial(elrsSerial, elrsModuleToHostSniff);
+
+  static unsigned long lastElrsSniffPrintTime = 0;
+  if (RADIO_PROTOCOL_SERIAL_DEBUG && millis() - lastElrsSniffPrintTime >= 1000) {
+    lastElrsSniffPrintTime = millis();
+    logElrsSniffSummary("SNIFF H->M", elrsHostToModuleSniff);
+    logElrsSniffSummary("SNIFF M->H", elrsModuleToHostSniff);
   }
 }
 
@@ -3369,6 +3743,9 @@ void onEspNowReceive(const esp_now_recv_info_t *info, const uint8_t *data, int l
 
 void setup() {
   Serial.begin(115200);
+  delay(1200);
+  Serial.println();
+  Serial.println("Booting Hosyond transmitter...");
 
   SPI.begin(12, 13, 11, 10);
 
@@ -3382,17 +3759,15 @@ void setup() {
   analogReadResolution(12);
   analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
 
-  pinMode(2, INPUT_PULLUP);
-  pinMode(3, INPUT_PULLUP);
-  pinMode(14, INPUT_PULLUP);
-  pinMode(21, INPUT_PULLUP);
-
   tft.init();
   tft.setRotation(0);
   tft.invertDisplay(true);
     
   Wire.begin(16, 15);
+  scanI2cBus("startup");
+  probeI2cAddress(0x18);
   touchPanel.begin();
+  initMcp23017();
   initAds1115();
   lastActivityTime = millis();
   splashStartTime = millis();
@@ -3515,7 +3890,9 @@ void setup() {
   trimRenderX = models[activeModel].trimX[currentTrimPage];
   trimRenderY = models[activeModel].trimY[currentTrimPage];
   initElrsUart();
+#if !ELRS_PASSIVE_SNIFF_MODE
   initEspNowLink();
+#endif
   }
 
 void loop() {
@@ -3548,10 +3925,17 @@ void loop() {
     lastTouchPollTime = now;
   }
 
-  bool select = digitalRead(2) == LOW;
-  bool down  = digitalRead(3) == LOW;
-  bool left  = digitalRead(14) == LOW;
-  bool right = digitalRead(21) == LOW;
+  uint8_t dpadPortB = readMcp23017PortB();
+  if (!mcp23017Ready && now - lastMcpReconnectAttemptMs >= ADS1115_RECONNECT_INTERVAL_MS) {
+    lastMcpReconnectAttemptMs = now;
+    initMcp23017();
+    dpadPortB = readMcp23017PortB();
+  }
+  bool select = ((dpadPortB & (1U << MCP23017_DPAD_SELECT_BIT)) == 0);
+  bool left   = ((dpadPortB & (1U << MCP23017_DPAD_LEFT_BIT)) == 0);
+  bool up     = ((dpadPortB & (1U << MCP23017_DPAD_UP_BIT)) == 0);
+  bool down   = ((dpadPortB & (1U << MCP23017_DPAD_DOWN_BIT)) == 0);
+  bool right  = ((dpadPortB & (1U << MCP23017_DPAD_RIGHT_BIT)) == 0);
 
   bool userActive = false;
 
@@ -3565,7 +3949,9 @@ void loop() {
   updateStickInputs(now);
   updateBatteryState();
   updateOtaService();
+#if !ELRS_PASSIVE_SNIFF_MODE
   updateEspNowLink(now);
+#endif
   updateElrsLink(now);
 
   static int lastProtocolBindSeconds = -1;
@@ -5243,6 +5629,135 @@ bool initAds1115() {
   return true;
 }
 
+void scanI2cBus(const char *label) {
+  Serial.printf("I2C scan");
+  if (label != nullptr && label[0] != '\0') {
+    Serial.printf(" (%s)", label);
+  }
+  Serial.println(":");
+  Serial.println("ADDR  STATUS  DEVICE");
+
+  for (uint8_t addr = 0x03; addr <= 0x77; addr++) {
+    Wire.beginTransmission(addr);
+    uint8_t result = Wire.endTransmission();
+    const char *status = (result == 0) ? "ACK" : "--";
+    const char *device = "";
+
+    if (result == 0) {
+      if (addr >= MCP23017_I2C_ADDR_MIN && addr <= MCP23017_I2C_ADDR_MAX) {
+        device = "MCP23017-compatible";
+      } else if (addr == ADS1115_I2C_ADDR) {
+        device = "ADS1115";
+      } else if (addr == 0x38) {
+        device = "touch-controller?";
+      } else if (addr == 0x3C || addr == 0x3D) {
+        device = "OLED/SSD1306?";
+      } else if (addr == 0x68) {
+        device = "RTC/IMU?";
+      } else if (addr == 0x76 || addr == 0x77) {
+        device = "baro/sensor?";
+      } else {
+        device = "unknown";
+      }
+    }
+
+    Serial.printf("0x%02X  %-6s  %s\n", addr, status, device);
+  }
+}
+
+void probeI2cAddress(uint8_t addr) {
+  static const uint8_t regs[] = {
+    0x00, // MCP23017 IODIRA
+    0x01, // MCP23017 IODIRB
+    0x12, // MCP23017 GPIOA
+    0x13, // MCP23017 GPIOB
+    0x0A, // MCP23017 IOCON
+    0x0B  // MCP23017 IOCON (banked pair)
+  };
+
+  Serial.printf("I2C probe 0x%02X:\n", addr);
+  for (uint8_t i = 0; i < sizeof(regs); i++) {
+    uint8_t reg = regs[i];
+    Wire.beginTransmission(addr);
+    Wire.write(reg);
+    uint8_t txResult = Wire.endTransmission(false);
+    if (txResult != 0) {
+      Serial.printf("  reg 0x%02X -> write failed (%u)\n", reg, txResult);
+      continue;
+    }
+
+    uint8_t value = 0xFF;
+    int rxCount = Wire.requestFrom((int)addr, 1);
+    if (rxCount == 1) {
+      value = Wire.read();
+      Serial.printf("  reg 0x%02X -> 0x%02X\n", reg, value);
+    } else {
+      Serial.printf("  reg 0x%02X -> read failed (%d)\n", reg, rxCount);
+    }
+  }
+}
+
+bool initMcp23017() {
+  bool found = false;
+  for (uint8_t addr = MCP23017_I2C_ADDR_MIN; addr <= MCP23017_I2C_ADDR_MAX; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      mcp23017Address = addr;
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) {
+    Serial.println("MCP23017 not detected, D-pad unavailable.");
+    mcp23017Ready = false;
+    return false;
+  }
+
+  // Configure all of port B as pulled-up inputs.
+  Wire.beginTransmission(mcp23017Address);
+  Wire.write(MCP23017_IODIRB_REG);
+  Wire.write(0xFF);
+  if (Wire.endTransmission() != 0) {
+    Serial.println("MCP23017 IODIRB config failed.");
+    mcp23017Ready = false;
+    return false;
+  }
+
+  Wire.beginTransmission(mcp23017Address);
+  Wire.write(MCP23017_GPPUB_REG);
+  Wire.write(0xFF);
+  if (Wire.endTransmission() != 0) {
+    Serial.println("MCP23017 GPPUB config failed.");
+    mcp23017Ready = false;
+    return false;
+  }
+
+  mcp23017Ready = true;
+  Serial.printf("MCP23017 ready at 0x%02X for D-pad on PB0..PB4\n", mcp23017Address);
+  return true;
+}
+
+uint8_t readMcp23017PortB() {
+  if (!mcp23017Ready) return 0xFF;
+
+  Wire.beginTransmission(mcp23017Address);
+  Wire.write(MCP23017_GPIOB_REG);
+  if (Wire.endTransmission(false) != 0) {
+    mcp23017Ready = false;
+    Serial.println("MCP23017 read start failed, retrying later.");
+    return 0xFF;
+  }
+
+  if (Wire.requestFrom((int)mcp23017Address, 1) != 1) {
+    mcp23017Ready = false;
+    Serial.println("MCP23017 read failed, retrying later.");
+    return 0xFF;
+  }
+
+  return Wire.read();
+}
+
 bool readAds1115SingleEnded(uint8_t channel, int16_t &value) {
   if (channel > 3) return false;
 
@@ -5465,6 +5980,35 @@ void updateChannelOutputs() {
   rightY = outputChannels[1];
   leftY = outputChannels[2];
   leftThrottle = outputChannels[3];
+}
+
+void buildProtocolOutputChannels(float channels[CHANNEL_COUNT]) {
+  for (int i = 0; i < CHANNEL_COUNT; i++) {
+    channels[i] = outputChannels[i];
+  }
+
+  DriveType driveType = getModelDriveType(activeModel);
+  TankControlMode tankMode = getModelTankMode(activeModel);
+
+  if (driveType == DRIVE_TANK) {
+    // Keep the receiver wiring stable across tank presets by always driving
+    // the primary motor outputs on CH1/CH2. The source feeding those outputs
+    // changes with the selected control style.
+    if (tankMode == TANK_MODE_DUAL_STICK) {
+      channels[0] = rightY;  // CH1 -> right track
+      channels[1] = leftY;   // CH2 -> left track
+    } else {
+      float throttle = rightY;
+      float turn = rightThrottle;
+      channels[0] = constrain(throttle - turn, -1.0f, 1.0f);  // CH1 -> right track
+      channels[1] = constrain(throttle + turn, -1.0f, 1.0f);  // CH2 -> left track
+    }
+  } else if (driveType == DRIVE_CAR) {
+    // Car presets keep steering and throttle on CH1/CH2 regardless of whether
+    // the user prefers one-stick or split-stick steering.
+    channels[0] = getCarSteeringOutput();  // CH1 -> steering
+    channels[1] = getCarThrottleOutput();  // CH2 -> throttle
+  }
 }
 
 void updateBatteryState() {
