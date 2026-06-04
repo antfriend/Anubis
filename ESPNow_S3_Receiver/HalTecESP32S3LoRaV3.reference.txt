@@ -1,0 +1,2045 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <math.h>
+#include <pgmspace.h>
+
+// Heltec WiFi LoRa 32 (V3) retro console
+// Reserved by onboard hardware:
+//   OLED: GPIO17, GPIO18, GPIO21
+//   LoRa: GPIO8-14
+//   LED:  GPIO35
+//   Vext: GPIO36
+//
+// Default control wiring:
+//   Left joystick  X/Y -> GPIO1 / GPIO2
+//   Right joystick X/Y -> GPIO3 / GPIO4
+//   D-pad UP/DOWN/LEFT/RIGHT/SELECT -> GPIO5 / GPIO6 / GPIO7 / GPIO15 / GPIO16
+//   Joystick click buttons A/B -> GPIO19 / GPIO20
+
+constexpr uint8_t OLED_ADDR = 0x3C;
+constexpr uint8_t OLED_WIDTH = 128;
+constexpr uint8_t OLED_HEIGHT = 64;
+constexpr uint8_t OLED_PAGES = OLED_HEIGHT / 8;
+
+constexpr uint8_t PIN_JOY_L_X = 1;
+constexpr uint8_t PIN_JOY_L_Y = 2;
+constexpr uint8_t PIN_JOY_R_X = 3;
+constexpr uint8_t PIN_JOY_R_Y = 4;
+constexpr uint8_t PIN_DPAD_UP = 19;
+constexpr uint8_t PIN_DPAD_DOWN = 20;
+constexpr uint8_t PIN_DPAD_LEFT = 7;
+constexpr uint8_t PIN_DPAD_RIGHT = 15;
+constexpr uint8_t PIN_DPAD_SELECT = 16;
+constexpr uint8_t PIN_BTN_A = 5;
+constexpr uint8_t PIN_BTN_B = 6;
+constexpr uint8_t PIN_BOOT_BUTTON = 0;
+
+constexpr bool INVERT_LEFT_X = false;
+constexpr bool INVERT_LEFT_Y = true;
+constexpr bool INVERT_RIGHT_X = false;
+constexpr bool INVERT_RIGHT_Y = true;
+
+constexpr int JOY_LOW = 1200;
+constexpr int JOY_HIGH = 2900;
+
+constexpr uint8_t PIN_VEXT = Vext;
+constexpr uint8_t PIN_OLED_RESET = RST_OLED;
+
+constexpr uint32_t FRAME_MS = 33;
+constexpr uint32_t SPLASH_MS = 1500;
+constexpr uint8_t MAX_STARS = 22;
+constexpr uint32_t BOOT_DEBOUNCE_MS = 30;
+constexpr uint32_t BOOT_LONG_PRESS_MS = 700;
+constexpr uint32_t BOOT_MULTI_PRESS_WINDOW_MS = 600;
+constexpr bool OLED_FLIP_HORIZONTAL = true;
+constexpr bool OLED_FLIP_VERTICAL = false;
+constexpr bool BRICK_BREAKER_FLIP_VERTICAL = true;
+constexpr bool SPACE_RAID_FLIP_VERTICAL = true;
+
+enum class GameId : uint8_t;
+struct Ghost;
+struct BootButtonEvents;
+
+static const uint8_t GLYPH_SPACE[5] PROGMEM = {0x00, 0x00, 0x00, 0x00, 0x00};
+static const uint8_t GLYPH_DASH[5] PROGMEM = {0x08, 0x08, 0x08, 0x08, 0x08};
+static const uint8_t GLYPH_DOT[5] PROGMEM = {0x00, 0x00, 0x00, 0x18, 0x18};
+static const uint8_t GLYPH_COLON[5] PROGMEM = {0x00, 0x18, 0x00, 0x18, 0x00};
+static const uint8_t GLYPH_SLASH[5] PROGMEM = {0x02, 0x04, 0x08, 0x10, 0x20};
+static const uint8_t GLYPH_EXCL[5] PROGMEM = {0x08, 0x08, 0x08, 0x00, 0x08};
+static const uint8_t GLYPH_0[5] PROGMEM = {0x3E, 0x45, 0x49, 0x51, 0x3E};
+static const uint8_t GLYPH_1[5] PROGMEM = {0x00, 0x21, 0x7F, 0x01, 0x00};
+static const uint8_t GLYPH_2[5] PROGMEM = {0x23, 0x45, 0x49, 0x51, 0x21};
+static const uint8_t GLYPH_3[5] PROGMEM = {0x22, 0x41, 0x49, 0x49, 0x36};
+static const uint8_t GLYPH_4[5] PROGMEM = {0x0C, 0x14, 0x24, 0x7F, 0x04};
+static const uint8_t GLYPH_5[5] PROGMEM = {0x72, 0x51, 0x51, 0x51, 0x4E};
+static const uint8_t GLYPH_6[5] PROGMEM = {0x1E, 0x29, 0x49, 0x49, 0x06};
+static const uint8_t GLYPH_7[5] PROGMEM = {0x40, 0x47, 0x48, 0x50, 0x60};
+static const uint8_t GLYPH_8[5] PROGMEM = {0x36, 0x49, 0x49, 0x49, 0x36};
+static const uint8_t GLYPH_9[5] PROGMEM = {0x30, 0x49, 0x49, 0x4A, 0x3C};
+static const uint8_t GLYPH_A[5] PROGMEM = {0x1F, 0x24, 0x44, 0x24, 0x1F};
+static const uint8_t GLYPH_B[5] PROGMEM = {0x7F, 0x49, 0x49, 0x49, 0x36};
+static const uint8_t GLYPH_C[5] PROGMEM = {0x3E, 0x41, 0x41, 0x41, 0x22};
+static const uint8_t GLYPH_D[5] PROGMEM = {0x7F, 0x41, 0x41, 0x22, 0x1C};
+static const uint8_t GLYPH_E[5] PROGMEM = {0x7F, 0x49, 0x49, 0x49, 0x41};
+static const uint8_t GLYPH_F[5] PROGMEM = {0x7F, 0x48, 0x48, 0x48, 0x40};
+static const uint8_t GLYPH_G[5] PROGMEM = {0x3E, 0x41, 0x49, 0x49, 0x2E};
+static const uint8_t GLYPH_H[5] PROGMEM = {0x7F, 0x08, 0x08, 0x08, 0x7F};
+static const uint8_t GLYPH_I[5] PROGMEM = {0x00, 0x41, 0x7F, 0x41, 0x00};
+static const uint8_t GLYPH_J[5] PROGMEM = {0x02, 0x01, 0x01, 0x7E, 0x00};
+static const uint8_t GLYPH_K[5] PROGMEM = {0x7F, 0x08, 0x14, 0x22, 0x41};
+static const uint8_t GLYPH_L[5] PROGMEM = {0x7F, 0x01, 0x01, 0x01, 0x01};
+static const uint8_t GLYPH_M[5] PROGMEM = {0x7F, 0x20, 0x18, 0x20, 0x7F};
+static const uint8_t GLYPH_N[5] PROGMEM = {0x7F, 0x10, 0x08, 0x04, 0x7F};
+static const uint8_t GLYPH_O[5] PROGMEM = {0x3E, 0x41, 0x41, 0x41, 0x3E};
+static const uint8_t GLYPH_P[5] PROGMEM = {0x7F, 0x48, 0x48, 0x48, 0x30};
+static const uint8_t GLYPH_Q[5] PROGMEM = {0x3E, 0x41, 0x45, 0x42, 0x3D};
+static const uint8_t GLYPH_R[5] PROGMEM = {0x7F, 0x48, 0x4C, 0x4A, 0x31};
+static const uint8_t GLYPH_S[5] PROGMEM = {0x31, 0x49, 0x49, 0x49, 0x46};
+static const uint8_t GLYPH_T[5] PROGMEM = {0x40, 0x40, 0x7F, 0x40, 0x40};
+static const uint8_t GLYPH_U[5] PROGMEM = {0x7E, 0x01, 0x01, 0x01, 0x7E};
+static const uint8_t GLYPH_V[5] PROGMEM = {0x7C, 0x02, 0x01, 0x02, 0x7C};
+static const uint8_t GLYPH_W[5] PROGMEM = {0x7E, 0x01, 0x0E, 0x01, 0x7E};
+static const uint8_t GLYPH_X[5] PROGMEM = {0x63, 0x14, 0x08, 0x14, 0x63};
+static const uint8_t GLYPH_Y[5] PROGMEM = {0x70, 0x08, 0x07, 0x08, 0x70};
+static const uint8_t GLYPH_Z[5] PROGMEM = {0x43, 0x45, 0x49, 0x51, 0x61};
+
+const uint8_t* glyphForChar(char c) {
+  if (c >= 'a' && c <= 'z') {
+    c = static_cast<char>(c - 32);
+  }
+  switch (c) {
+    case 'A': return GLYPH_A;
+    case 'B': return GLYPH_B;
+    case 'C': return GLYPH_C;
+    case 'D': return GLYPH_D;
+    case 'E': return GLYPH_E;
+    case 'F': return GLYPH_F;
+    case 'G': return GLYPH_G;
+    case 'H': return GLYPH_H;
+    case 'I': return GLYPH_I;
+    case 'J': return GLYPH_J;
+    case 'K': return GLYPH_K;
+    case 'L': return GLYPH_L;
+    case 'M': return GLYPH_M;
+    case 'N': return GLYPH_N;
+    case 'O': return GLYPH_O;
+    case 'P': return GLYPH_P;
+    case 'Q': return GLYPH_Q;
+    case 'R': return GLYPH_R;
+    case 'S': return GLYPH_S;
+    case 'T': return GLYPH_T;
+    case 'U': return GLYPH_U;
+    case 'V': return GLYPH_V;
+    case 'W': return GLYPH_W;
+    case 'X': return GLYPH_X;
+    case 'Y': return GLYPH_Y;
+    case 'Z': return GLYPH_Z;
+    case '0': return GLYPH_0;
+    case '1': return GLYPH_1;
+    case '2': return GLYPH_2;
+    case '3': return GLYPH_3;
+    case '4': return GLYPH_4;
+    case '5': return GLYPH_5;
+    case '6': return GLYPH_6;
+    case '7': return GLYPH_7;
+    case '8': return GLYPH_8;
+    case '9': return GLYPH_9;
+    case '-': return GLYPH_DASH;
+    case '.': return GLYPH_DOT;
+    case ':': return GLYPH_COLON;
+    case '/': return GLYPH_SLASH;
+    case '!': return GLYPH_EXCL;
+    default: return GLYPH_SPACE;
+  }
+}
+
+struct TinyOLED {
+  uint8_t buffer[OLED_WIDTH * OLED_PAGES];
+
+  void command(uint8_t value) {
+    Wire.beginTransmission(OLED_ADDR);
+    Wire.write(0x00);
+    Wire.write(value);
+    Wire.endTransmission();
+  }
+
+  void begin() {
+    pinMode(PIN_VEXT, OUTPUT);
+    digitalWrite(PIN_VEXT, LOW);
+    delay(20);
+
+    pinMode(PIN_OLED_RESET, OUTPUT);
+    digitalWrite(PIN_OLED_RESET, LOW);
+    delay(20);
+    digitalWrite(PIN_OLED_RESET, HIGH);
+
+    Wire.begin(SDA_OLED, SCL_OLED);
+    Wire.setClock(400000);
+
+    command(0xAE);
+    command(0xD5); command(0x80);
+    command(0xA8); command(0x3F);
+    command(0xD3); command(0x00);
+    command(0x40);
+    command(0x8D); command(0x14);
+    command(0x20); command(0x00);
+    // Keep controller mapping fixed; orientation is handled in software pixels.
+    command(0xA0);
+    command(0xC0);
+    command(0xDA); command(0x12);
+    command(0x81); command(0xCF);
+    command(0xD9); command(0xF1);
+    command(0xDB); command(0x40);
+    command(0xA4);
+    command(0xA6);
+    command(0x2E);
+    command(0xAF);
+    clear();
+    display();
+  }
+
+  void clear() {
+    memset(buffer, 0, sizeof(buffer));
+  }
+
+  void setPixel(int x, int y, bool on = true) {
+    if (x < 0 || x >= OLED_WIDTH || y < 0 || y >= OLED_HEIGHT) {
+      return;
+    }
+    const int tx = OLED_FLIP_HORIZONTAL ? (OLED_WIDTH - 1 - x) : x;
+    const int ty = OLED_FLIP_VERTICAL ? (OLED_HEIGHT - 1 - y) : y;
+    const uint16_t index = tx + (ty / 8) * OLED_WIDTH;
+    const uint8_t mask = 1 << (ty & 7);
+    if (on) {
+      buffer[index] |= mask;
+    } else {
+      buffer[index] &= ~mask;
+    }
+  }
+
+  void drawLine(int x0, int y0, int x1, int y1) {
+    int dx = abs(x1 - x0);
+    int sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0);
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+
+    while (true) {
+      setPixel(x0, y0);
+      if (x0 == x1 && y0 == y1) {
+        break;
+      }
+      int e2 = err << 1;
+      if (e2 >= dy) {
+        err += dy;
+        x0 += sx;
+      }
+      if (e2 <= dx) {
+        err += dx;
+        y0 += sy;
+      }
+    }
+  }
+
+  void drawRect(int x, int y, int w, int h) {
+    drawLine(x, y, x + w - 1, y);
+    drawLine(x, y + h - 1, x + w - 1, y + h - 1);
+    drawLine(x, y, x, y + h - 1);
+    drawLine(x + w - 1, y, x + w - 1, y + h - 1);
+  }
+
+  void fillRect(int x, int y, int w, int h) {
+    for (int iy = 0; iy < h; ++iy) {
+      for (int ix = 0; ix < w; ++ix) {
+        setPixel(x + ix, y + iy);
+      }
+    }
+  }
+
+  void drawCircle(int cx, int cy, int r) {
+    int x = r;
+    int y = 0;
+    int err = 1 - x;
+    while (x >= y) {
+      setPixel(cx + x, cy + y);
+      setPixel(cx + y, cy + x);
+      setPixel(cx - y, cy + x);
+      setPixel(cx - x, cy + y);
+      setPixel(cx - x, cy - y);
+      setPixel(cx - y, cy - x);
+      setPixel(cx + y, cy - x);
+      setPixel(cx + x, cy - y);
+      ++y;
+      if (err < 0) {
+        err += 2 * y + 1;
+      } else {
+        --x;
+        err += 2 * (y - x) + 1;
+      }
+    }
+  }
+
+  void fillCircle(int cx, int cy, int r) {
+    for (int y = -r; y <= r; ++y) {
+      for (int x = -r; x <= r; ++x) {
+        if ((x * x) + (y * y) <= r * r) {
+          setPixel(cx + x, cy + y);
+        }
+      }
+    }
+  }
+
+  void drawChar(int x, int y, char c, uint8_t scale = 1) {
+    const uint8_t* glyph = glyphForChar(c);
+    for (uint8_t col = 0; col < 5; ++col) {
+      uint8_t bits = pgm_read_byte(glyph + col);
+      for (uint8_t row = 0; row < 7; ++row) {
+        if (bits & (1 << row)) {
+          for (uint8_t sx = 0; sx < scale; ++sx) {
+            for (uint8_t sy = 0; sy < scale; ++sy) {
+              setPixel(x + (col * scale) + sx, y + (row * scale) + sy);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  void drawText(int x, int y, const char* text, uint8_t scale = 1) {
+    while (*text) {
+      drawChar(x, y, *text, scale);
+      x += 6 * scale;
+      ++text;
+    }
+  }
+
+  int textWidth(const char* text, uint8_t scale = 1) {
+    return static_cast<int>(strlen(text)) * 6 * scale;
+  }
+
+  void drawCenteredText(int y, const char* text, uint8_t scale = 1) {
+    const int w = textWidth(text, scale);
+    drawText((OLED_WIDTH - w) / 2, y, text, scale);
+  }
+
+  void display() {
+    for (uint8_t page = 0; page < OLED_PAGES; ++page) {
+      command(0xB0 + page);
+      command(0x00);
+      command(0x10);
+      for (uint8_t x = 0; x < OLED_WIDTH; x += 16) {
+        Wire.beginTransmission(OLED_ADDR);
+        Wire.write(0x40);
+        for (uint8_t i = 0; i < 16; ++i) {
+          Wire.write(buffer[(page * OLED_WIDTH) + x + i]);
+        }
+        Wire.endTransmission();
+      }
+    }
+  }
+};
+
+TinyOLED display;
+
+template <typename T>
+T clampValue(T value, T low, T high) {
+  return value < low ? low : (value > high ? high : value);
+}
+
+float frand(float low, float high) {
+  return low + ((high - low) * (static_cast<float>(random(0, 10000)) / 10000.0f));
+}
+
+float wrapValue(float value, float maxValue) {
+  while (value < 0.0f) value += maxValue;
+  while (value >= maxValue) value -= maxValue;
+  return value;
+}
+
+float distSq(float x1, float y1, float x2, float y2) {
+  const float dx = x1 - x2;
+  const float dy = y1 - y2;
+  return (dx * dx) + (dy * dy);
+}
+
+struct InputState {
+  bool up = false;
+  bool down = false;
+  bool left = false;
+  bool right = false;
+  bool select = false;
+  bool a = false;
+  bool b = false;
+
+  bool upPressed = false;
+  bool downPressed = false;
+  bool leftPressed = false;
+  bool rightPressed = false;
+  bool selectPressed = false;
+  bool aPressed = false;
+  bool bPressed = false;
+
+  int8_t moveX = 0;
+  int8_t moveY = 0;
+  int8_t aimX = 0;
+  int8_t aimY = 0;
+};
+
+InputState input;
+InputState previousInput;
+bool bootWasPressed = false;
+bool bootLongPressFired = false;
+uint32_t bootPressStartedAt = 0;
+uint32_t bootLastShortReleaseAt = 0;
+uint8_t bootShortPressCount = 0;
+
+struct BootButtonEvents {
+  bool downPulse = false;
+  bool selectPulse = false;
+  bool backPulse = false;
+};
+
+int8_t readAnalogDirection(uint8_t pin, bool invert) {
+  const int value = analogRead(pin);
+  int8_t direction = 0;
+  if (value < JOY_LOW) {
+    direction = -1;
+  } else if (value > JOY_HIGH) {
+    direction = 1;
+  }
+  return invert ? -direction : direction;
+}
+
+void setupControls() {
+  pinMode(PIN_DPAD_UP, INPUT_PULLUP);
+  pinMode(PIN_DPAD_DOWN, INPUT_PULLUP);
+  pinMode(PIN_DPAD_LEFT, INPUT_PULLUP);
+  pinMode(PIN_DPAD_RIGHT, INPUT_PULLUP);
+  pinMode(PIN_DPAD_SELECT, INPUT_PULLUP);
+  pinMode(PIN_BTN_A, INPUT_PULLUP);
+  pinMode(PIN_BTN_B, INPUT_PULLUP);
+  pinMode(PIN_BOOT_BUTTON, INPUT_PULLUP);
+  analogReadResolution(12);
+}
+
+BootButtonEvents readBootButtonEvents() {
+  BootButtonEvents events;
+  const uint32_t now = millis();
+  const bool pressed = digitalRead(PIN_BOOT_BUTTON) == LOW;
+
+  if (pressed && !bootWasPressed) {
+    bootPressStartedAt = now;
+    bootLongPressFired = false;
+  }
+
+  if (pressed && !bootLongPressFired && (now - bootPressStartedAt) >= BOOT_LONG_PRESS_MS) {
+    events.selectPulse = true;
+    bootLongPressFired = true;
+    bootShortPressCount = 0;
+  }
+
+  if (!pressed && bootWasPressed) {
+    const uint32_t pressDuration = now - bootPressStartedAt;
+    if (!bootLongPressFired && pressDuration >= BOOT_DEBOUNCE_MS) {
+      events.downPulse = true;
+
+      if ((now - bootLastShortReleaseAt) <= BOOT_MULTI_PRESS_WINDOW_MS) {
+        bootShortPressCount++;
+      } else {
+        bootShortPressCount = 1;
+      }
+      bootLastShortReleaseAt = now;
+
+      if (bootShortPressCount >= 3) {
+        events.backPulse = true;
+        bootShortPressCount = 0;
+      }
+    }
+  }
+
+  if (!pressed && (now - bootLastShortReleaseAt) > BOOT_MULTI_PRESS_WINDOW_MS) {
+    bootShortPressCount = 0;
+  }
+
+  bootWasPressed = pressed;
+  return events;
+}
+
+void readControls() {
+  previousInput = input;
+  input = {};
+  const BootButtonEvents bootEvents = readBootButtonEvents();
+
+  const int8_t joyLX = readAnalogDirection(PIN_JOY_L_X, INVERT_LEFT_X);
+  const int8_t joyLY = readAnalogDirection(PIN_JOY_L_Y, INVERT_LEFT_Y);
+  const int8_t joyRX = readAnalogDirection(PIN_JOY_R_X, INVERT_RIGHT_X);
+  const int8_t joyRY = readAnalogDirection(PIN_JOY_R_Y, INVERT_RIGHT_Y);
+
+  input.up = (digitalRead(PIN_DPAD_UP) == LOW) || (joyLY < 0);
+  input.down = (digitalRead(PIN_DPAD_DOWN) == LOW) || (joyLY > 0);
+  input.left = (digitalRead(PIN_DPAD_LEFT) == LOW) || (joyLX < 0);
+  input.right = (digitalRead(PIN_DPAD_RIGHT) == LOW) || (joyLX > 0);
+  input.select = digitalRead(PIN_DPAD_SELECT) == LOW;
+  input.a = digitalRead(PIN_BTN_A) == LOW;
+  input.b = digitalRead(PIN_BTN_B) == LOW;
+
+  input.moveX = input.left ? -1 : (input.right ? 1 : 0);
+  input.moveY = input.up ? -1 : (input.down ? 1 : 0);
+  input.aimX = joyRX;
+  input.aimY = joyRY;
+
+  input.upPressed = input.up && !previousInput.up;
+  input.downPressed = input.down && !previousInput.down;
+  input.leftPressed = input.left && !previousInput.left;
+  input.rightPressed = input.right && !previousInput.right;
+  input.selectPressed = input.select && !previousInput.select;
+  input.aPressed = input.a && !previousInput.a;
+  input.bPressed = input.b && !previousInput.b;
+
+  if (bootEvents.downPulse) {
+    input.down = true;
+    input.downPressed = true;
+    input.moveY = 1;
+  }
+  if (bootEvents.selectPulse) {
+    input.select = true;
+    input.selectPressed = true;
+  }
+  if (bootEvents.backPulse) {
+    input.b = true;
+    input.bPressed = true;
+  }
+}
+
+struct Star {
+  uint8_t x;
+  uint8_t y;
+};
+
+Star stars[MAX_STARS];
+
+enum class GameId : uint8_t {
+  Snake,
+  BrickBreaker,
+  SpaceRaid,
+  Asteroids,
+  DotChase,
+  TankZone,
+  Count
+};
+
+const char* GAME_NAMES[] = {
+  "SNAKE",
+  "BRICK BREAKER",
+  "SPACE RAID",
+  "ASTEROIDS",
+  "DOT CHASE",
+  "TANK ZONE"
+};
+
+enum class ScreenMode : uint8_t {
+  Splash,
+  Menu,
+  InGame
+};
+
+ScreenMode screenMode = ScreenMode::Splash;
+GameId selectedGame = GameId::Snake;
+GameId activeGame = GameId::Snake;
+bool paused = false;
+uint32_t splashEndsAt = 0;
+uint32_t lastFrameAt = 0;
+
+// ---------------- Snake ----------------
+struct SnakeSegment {
+  int8_t x;
+  int8_t y;
+};
+
+struct SnakeState {
+  SnakeSegment body[64];
+  uint8_t length = 0;
+  int8_t dirX = 1;
+  int8_t dirY = 0;
+  int8_t nextDirX = 1;
+  int8_t nextDirY = 0;
+  int8_t foodX = 5;
+  int8_t foodY = 4;
+  uint16_t score = 0;
+  bool over = false;
+  uint32_t nextStepAt = 0;
+} snake;
+
+bool snakeOccupies(int x, int y) {
+  for (uint8_t i = 0; i < snake.length; ++i) {
+    if (snake.body[i].x == x && snake.body[i].y == y) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void snakeSpawnFood() {
+  do {
+    snake.foodX = random(0, 16);
+    snake.foodY = random(0, 8);
+  } while (snakeOccupies(snake.foodX, snake.foodY));
+}
+
+void resetSnake() {
+  snake = {};
+  snake.length = 4;
+  snake.dirX = 1;
+  snake.nextDirX = 1;
+  snake.body[0] = {7, 4};
+  snake.body[1] = {6, 4};
+  snake.body[2] = {5, 4};
+  snake.body[3] = {4, 4};
+  snake.score = 0;
+  snake.over = false;
+  snake.nextStepAt = millis() + 180;
+  snakeSpawnFood();
+}
+
+void updateSnake() {
+  if (snake.over) {
+    if (input.aPressed || input.selectPressed) {
+      resetSnake();
+    }
+    return;
+  }
+
+  if (input.upPressed && snake.dirY == 0) {
+    snake.nextDirX = 0;
+    snake.nextDirY = -1;
+  } else if (input.downPressed && snake.dirY == 0) {
+    snake.nextDirX = 0;
+    snake.nextDirY = 1;
+  } else if (input.leftPressed && snake.dirX == 0) {
+    snake.nextDirX = -1;
+    snake.nextDirY = 0;
+  } else if (input.rightPressed && snake.dirX == 0) {
+    snake.nextDirX = 1;
+    snake.nextDirY = 0;
+  }
+
+  const uint32_t now = millis();
+  if (now < snake.nextStepAt) {
+    return;
+  }
+  snake.nextStepAt = now + clampValue<uint32_t>(180 - (snake.score * 4), 70, 180);
+  snake.dirX = snake.nextDirX;
+  snake.dirY = snake.nextDirY;
+
+  SnakeSegment newHead = snake.body[0];
+  newHead.x += snake.dirX;
+  newHead.y += snake.dirY;
+
+  if (newHead.x < 0 || newHead.x >= 16 || newHead.y < 0 || newHead.y >= 8 || snakeOccupies(newHead.x, newHead.y)) {
+    snake.over = true;
+    return;
+  }
+
+  const bool ateFood = newHead.x == snake.foodX && newHead.y == snake.foodY;
+  const uint8_t oldLength = snake.length;
+  if (ateFood && snake.length < 63) {
+    snake.length++;
+    snake.score += 10;
+  }
+  for (int i = snake.length - 1; i > 0; --i) {
+    snake.body[i] = snake.body[i - 1];
+  }
+  snake.body[0] = newHead;
+
+  if (!ateFood) {
+    if (snake.length > oldLength) {
+      snake.length = oldLength;
+    }
+  } else {
+    snakeSpawnFood();
+  }
+}
+
+void renderSnake() {
+  display.clear();
+  for (int i = 0; i < 16; ++i) {
+    display.setPixel(i * 8, 0);
+  }
+  for (uint8_t i = 0; i < snake.length; ++i) {
+    display.fillRect(snake.body[i].x * 8 + 1, snake.body[i].y * 8 + 1, 6, 6);
+  }
+  display.fillCircle(snake.foodX * 8 + 4, snake.foodY * 8 + 4, 2);
+
+  char scoreText[20];
+  snprintf(scoreText, sizeof(scoreText), "SCORE:%u", snake.score);
+  display.drawText(2, 2, scoreText, 1);
+
+  if (snake.over) {
+    display.drawRect(18, 20, 92, 24);
+    display.drawCenteredText(25, "GAME OVER", 1);
+    display.drawCenteredText(35, "A RESTART", 1);
+  }
+}
+
+// ---------------- Brick Breaker ----------------
+constexpr uint8_t BREAK_COLS = 8;
+constexpr uint8_t BREAK_ROWS = 4;
+
+struct BrickBreakerState {
+  bool bricks[BREAK_ROWS][BREAK_COLS];
+  float paddleX = 48.0f;
+  float ballX = 64.0f;
+  float ballY = 48.0f;
+  float ballVX = 1.7f;
+  float ballVY = -1.7f;
+  uint8_t lives = 3;
+  uint16_t score = 0;
+  bool launched = false;
+  bool over = false;
+  uint8_t wave = 1;
+} breakout;
+
+void resetBreakoutBricks() {
+  for (uint8_t y = 0; y < BREAK_ROWS; ++y) {
+    for (uint8_t x = 0; x < BREAK_COLS; ++x) {
+      breakout.bricks[y][x] = true;
+    }
+  }
+}
+
+void resetBreakout(bool fullReset = true) {
+  if (fullReset) {
+    breakout = {};
+    breakout.lives = 3;
+    breakout.wave = 1;
+    breakout.score = 0;
+    resetBreakoutBricks();
+  }
+  breakout.paddleX = 50.0f;
+  breakout.ballX = breakout.paddleX + 12.0f;
+  breakout.ballY = 52.0f;
+  breakout.ballVX = random(0, 2) == 0 ? -1.6f : 1.6f;
+  breakout.ballVY = -1.7f - (0.15f * breakout.wave);
+  breakout.launched = false;
+  breakout.over = false;
+}
+
+bool breakoutHasBricks() {
+  for (uint8_t y = 0; y < BREAK_ROWS; ++y) {
+    for (uint8_t x = 0; x < BREAK_COLS; ++x) {
+      if (breakout.bricks[y][x]) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void updateBreakout() {
+  if (breakout.over) {
+    if (input.aPressed || input.selectPressed) {
+      resetBreakout(true);
+    }
+    return;
+  }
+
+  breakout.paddleX += input.moveX * 3.5f;
+  breakout.paddleX = clampValue(breakout.paddleX, 2.0f, 102.0f);
+
+  if (!breakout.launched) {
+    breakout.ballX = breakout.paddleX + 12.0f;
+    if (input.aPressed || input.selectPressed) {
+      breakout.launched = true;
+    }
+    return;
+  }
+
+  breakout.ballX += breakout.ballVX;
+  breakout.ballY += breakout.ballVY;
+
+  if (breakout.ballX <= 2 || breakout.ballX >= 125) {
+    breakout.ballVX = -breakout.ballVX;
+    breakout.ballX = clampValue(breakout.ballX, 2.0f, 125.0f);
+  }
+  if (breakout.ballY <= 10) {
+    breakout.ballVY = fabsf(breakout.ballVY);
+    breakout.ballY = 10;
+  }
+
+  const float paddleY = 56.0f;
+  if (breakout.ballY >= paddleY - 2 && breakout.ballY <= paddleY + 4 &&
+      breakout.ballX >= breakout.paddleX && breakout.ballX <= breakout.paddleX + 24) {
+    breakout.ballVY = -fabsf(breakout.ballVY);
+    const float offset = (breakout.ballX - (breakout.paddleX + 12.0f)) / 12.0f;
+    breakout.ballVX = offset * 2.4f;
+  }
+
+  for (uint8_t row = 0; row < BREAK_ROWS; ++row) {
+    for (uint8_t col = 0; col < BREAK_COLS; ++col) {
+      if (!breakout.bricks[row][col]) {
+        continue;
+      }
+      const int bx = col * 16 + 1;
+      const int by = row * 7 + 12;
+      if (breakout.ballX >= bx && breakout.ballX <= bx + 14 &&
+          breakout.ballY >= by && breakout.ballY <= by + 5) {
+        breakout.bricks[row][col] = false;
+        breakout.ballVY = -breakout.ballVY;
+        breakout.score += 5;
+      }
+    }
+  }
+
+  if (!breakoutHasBricks()) {
+    breakout.wave++;
+    resetBreakoutBricks();
+    resetBreakout(false);
+  }
+
+  if (breakout.ballY > OLED_HEIGHT) {
+    if (breakout.lives > 0) {
+      breakout.lives--;
+    }
+    if (breakout.lives == 0) {
+      breakout.over = true;
+    } else {
+      resetBreakout(false);
+    }
+  }
+}
+
+void renderBreakout() {
+  display.clear();
+  const auto sy = [](int y) -> int {
+    return BRICK_BREAKER_FLIP_VERTICAL ? (OLED_HEIGHT - 1 - y) : y;
+  };
+
+  char hud[24];
+  snprintf(hud, sizeof(hud), "S:%u L:%u", breakout.score, breakout.lives);
+  display.drawText(2, 1, hud, 1);
+
+  for (uint8_t row = 0; row < BREAK_ROWS; ++row) {
+    for (uint8_t col = 0; col < BREAK_COLS; ++col) {
+      if (breakout.bricks[row][col]) {
+        const int rawY = row * 7 + 12;
+        const int drawY = BRICK_BREAKER_FLIP_VERTICAL ? sy(rawY + 4) : rawY;
+        display.fillRect(col * 16 + 1, drawY, 14, 5);
+      }
+    }
+  }
+
+  const int rawPaddleY = 56;
+  const int drawPaddleY = BRICK_BREAKER_FLIP_VERTICAL ? sy(rawPaddleY + 3) : rawPaddleY;
+  display.fillRect(static_cast<int>(breakout.paddleX), drawPaddleY, 24, 4);
+  display.fillCircle(static_cast<int>(breakout.ballX), sy(static_cast<int>(breakout.ballY)), 2);
+
+  if (!breakout.launched && !breakout.over) {
+    display.drawCenteredText(34, "A TO LAUNCH", 1);
+  }
+  if (breakout.over) {
+    display.drawRect(16, 20, 96, 24);
+    display.drawCenteredText(25, "ROUND OVER", 1);
+    display.drawCenteredText(35, "A RESTART", 1);
+  }
+}
+
+// ---------------- Space Raid ----------------
+constexpr uint8_t RAID_COLS = 6;
+constexpr uint8_t RAID_ROWS = 3;
+
+struct SpaceRaidState {
+  bool enemy[RAID_ROWS][RAID_COLS];
+  float formationX = 18.0f;
+  float formationY = 12.0f;
+  int8_t dir = 1;
+  uint32_t nextStepAt = 0;
+  uint32_t nextShotAt = 0;
+  float playerX = 60.0f;
+  bool playerShotActive = false;
+  float playerShotX = 0.0f;
+  float playerShotY = 0.0f;
+  bool enemyShotActive = false;
+  float enemyShotX = 0.0f;
+  float enemyShotY = 0.0f;
+  uint8_t lives = 3;
+  uint16_t score = 0;
+  uint8_t wave = 1;
+  bool over = false;
+} raid;
+
+void resetRaidWave() {
+  for (uint8_t y = 0; y < RAID_ROWS; ++y) {
+    for (uint8_t x = 0; x < RAID_COLS; ++x) {
+      raid.enemy[y][x] = true;
+    }
+  }
+  raid.formationX = 18.0f;
+  raid.formationY = 12.0f;
+  raid.dir = 1;
+  raid.nextStepAt = millis() + 300;
+  raid.playerShotActive = false;
+  raid.enemyShotActive = false;
+}
+
+void resetSpaceRaid(bool fullReset = true) {
+  if (fullReset) {
+    raid = {};
+    raid.lives = 3;
+    raid.wave = 1;
+    raid.score = 0;
+  }
+  raid.playerX = 60.0f;
+  raid.over = false;
+  resetRaidWave();
+}
+
+bool raidEnemiesRemaining() {
+  for (uint8_t y = 0; y < RAID_ROWS; ++y) {
+    for (uint8_t x = 0; x < RAID_COLS; ++x) {
+      if (raid.enemy[y][x]) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void spawnEnemyShot() {
+  if (raid.enemyShotActive) {
+    return;
+  }
+  uint8_t candidates[RAID_COLS];
+  uint8_t count = 0;
+  for (uint8_t col = 0; col < RAID_COLS; ++col) {
+    for (int row = RAID_ROWS - 1; row >= 0; --row) {
+      if (raid.enemy[row][col]) {
+        candidates[count++] = col * 10 + row;
+        break;
+      }
+    }
+  }
+  if (count == 0) {
+    return;
+  }
+  const uint8_t pick = candidates[random(0, count)];
+  const uint8_t col = pick / 10;
+  const uint8_t row = pick % 10;
+  raid.enemyShotActive = true;
+  raid.enemyShotX = raid.formationX + col * 16 + 6;
+  raid.enemyShotY = raid.formationY + row * 10 + 7;
+}
+
+void updateSpaceRaid() {
+  if (raid.over) {
+    if (input.aPressed || input.selectPressed) {
+      resetSpaceRaid(true);
+    }
+    return;
+  }
+
+  raid.playerX += input.moveX * 3.0f;
+  raid.playerX = clampValue(raid.playerX, 4.0f, 116.0f);
+
+  if ((input.aPressed || input.selectPressed) && !raid.playerShotActive) {
+    raid.playerShotActive = true;
+    raid.playerShotX = raid.playerX + 4.0f;
+    raid.playerShotY = 54.0f;
+  }
+
+  const uint32_t now = millis();
+  if (now >= raid.nextStepAt) {
+    raid.nextStepAt = now + clampValue<uint32_t>(330 - raid.wave * 18, 90, 330);
+    raid.formationX += raid.dir * 4.0f;
+    if (raid.formationX < 4.0f || raid.formationX > 44.0f) {
+      raid.dir = -raid.dir;
+      raid.formationY += 6.0f;
+    }
+    if (random(0, 100) < 35) {
+      spawnEnemyShot();
+    }
+  }
+
+  if (raid.playerShotActive) {
+    raid.playerShotY -= 5.0f;
+    if (raid.playerShotY < 0.0f) {
+      raid.playerShotActive = false;
+    }
+  }
+  if (raid.enemyShotActive) {
+    raid.enemyShotY += 3.0f + (0.3f * raid.wave);
+    if (raid.enemyShotY > OLED_HEIGHT) {
+      raid.enemyShotActive = false;
+    }
+  }
+
+  for (uint8_t row = 0; row < RAID_ROWS; ++row) {
+    for (uint8_t col = 0; col < RAID_COLS; ++col) {
+      if (!raid.enemy[row][col]) {
+        continue;
+      }
+      const float ex = raid.formationX + col * 16;
+      const float ey = raid.formationY + row * 10;
+      if (raid.playerShotActive &&
+          raid.playerShotX >= ex && raid.playerShotX <= ex + 10 &&
+          raid.playerShotY >= ey && raid.playerShotY <= ey + 7) {
+        raid.enemy[row][col] = false;
+        raid.playerShotActive = false;
+        raid.score += 20;
+      }
+      if (ey > 50.0f) {
+        raid.over = true;
+      }
+    }
+  }
+
+  if (raid.enemyShotActive &&
+      raid.enemyShotX >= raid.playerX && raid.enemyShotX <= raid.playerX + 8 &&
+      raid.enemyShotY >= 56.0f && raid.enemyShotY <= 61.0f) {
+    raid.enemyShotActive = false;
+    if (raid.lives > 0) {
+      raid.lives--;
+    }
+    if (raid.lives == 0) {
+      raid.over = true;
+    }
+  }
+
+  if (!raidEnemiesRemaining()) {
+    raid.wave++;
+    resetRaidWave();
+  }
+}
+
+void renderSpaceRaid() {
+  display.clear();
+  const auto sy = [](int y) -> int {
+    return SPACE_RAID_FLIP_VERTICAL ? (OLED_HEIGHT - 1 - y) : y;
+  };
+
+  char hud[24];
+  snprintf(hud, sizeof(hud), "S:%u L:%u", raid.score, raid.lives);
+  display.drawText(2, 1, hud, 1);
+
+  for (uint8_t row = 0; row < RAID_ROWS; ++row) {
+    for (uint8_t col = 0; col < RAID_COLS; ++col) {
+      if (!raid.enemy[row][col]) {
+        continue;
+      }
+      const int ex = static_cast<int>(raid.formationX) + col * 16;
+      const int ey = sy(static_cast<int>(raid.formationY) + row * 10);
+      display.drawRect(ex, ey, 10, 6);
+      display.setPixel(ex + 2, ey + 2);
+      display.setPixel(ex + 7, ey + 2);
+    }
+  }
+
+  const int px = static_cast<int>(raid.playerX);
+  display.drawLine(px, sy(60), px + 4, sy(54));
+  display.drawLine(px + 8, sy(60), px + 4, sy(54));
+  display.drawLine(px, sy(60), px + 8, sy(60));
+
+  if (raid.playerShotActive) {
+    const int shotX = static_cast<int>(raid.playerShotX);
+    const int shotY = static_cast<int>(raid.playerShotY);
+    display.drawLine(shotX, sy(shotY), shotX, sy(shotY - 3));
+  }
+  if (raid.enemyShotActive) {
+    const int shotX = static_cast<int>(raid.enemyShotX);
+    const int shotY = static_cast<int>(raid.enemyShotY);
+    display.drawLine(shotX, sy(shotY), shotX, sy(shotY + 2));
+  }
+
+  if (raid.over) {
+    display.drawRect(16, 20, 96, 24);
+    display.drawCenteredText(25, "SPACE LOST", 1);
+    display.drawCenteredText(35, "A RESTART", 1);
+  }
+}
+
+// ---------------- Asteroids ----------------
+constexpr uint8_t AST_MAX_ROCKS = 8;
+constexpr uint8_t AST_MAX_BULLETS = 6;
+
+struct AstBullet {
+  bool active = false;
+  float x = 0.0f;
+  float y = 0.0f;
+  float vx = 0.0f;
+  float vy = 0.0f;
+  uint8_t life = 0;
+};
+
+struct AstRock {
+  bool active = false;
+  float x = 0.0f;
+  float y = 0.0f;
+  float vx = 0.0f;
+  float vy = 0.0f;
+  float radius = 0.0f;
+  uint8_t size = 0;
+  uint8_t seed = 0;
+};
+
+struct AsteroidsState {
+  float shipX = 64.0f;
+  float shipY = 32.0f;
+  float shipVX = 0.0f;
+  float shipVY = 0.0f;
+  float angleDeg = -90.0f;
+  AstBullet bullets[AST_MAX_BULLETS];
+  AstRock rocks[AST_MAX_ROCKS];
+  uint8_t lives = 3;
+  uint16_t score = 0;
+  uint8_t wave = 1;
+  bool over = false;
+  uint32_t invulnerableUntil = 0;
+} asteroids;
+
+float degreesToRadians(float degrees) {
+  return degrees * 0.01745329252f;
+}
+
+void astSpawnRock(float x, float y, uint8_t size, float vx, float vy) {
+  for (uint8_t i = 0; i < AST_MAX_ROCKS; ++i) {
+    if (!asteroids.rocks[i].active) {
+      asteroids.rocks[i].active = true;
+      asteroids.rocks[i].x = x;
+      asteroids.rocks[i].y = y;
+      asteroids.rocks[i].vx = vx;
+      asteroids.rocks[i].vy = vy;
+      asteroids.rocks[i].size = size;
+      asteroids.rocks[i].radius = size == 3 ? 12.0f : (size == 2 ? 8.0f : 5.0f);
+      asteroids.rocks[i].seed = static_cast<uint8_t>(random(0, 255));
+      break;
+    }
+  }
+}
+
+void astResetWave() {
+  for (uint8_t i = 0; i < AST_MAX_ROCKS; ++i) {
+    asteroids.rocks[i] = {};
+  }
+  const uint8_t rockCount = clampValue<uint8_t>(3 + asteroids.wave, 3, 6);
+  for (uint8_t i = 0; i < rockCount; ++i) {
+    astSpawnRock(
+      random(0, 2) == 0 ? frand(0.0f, 20.0f) : frand(108.0f, 127.0f),
+      frand(0.0f, 63.0f),
+      3,
+      frand(-1.2f, 1.2f),
+      frand(-1.2f, 1.2f)
+    );
+  }
+}
+
+void resetAsteroids(bool fullReset = true) {
+  if (fullReset) {
+    asteroids = {};
+    asteroids.lives = 3;
+    asteroids.wave = 1;
+    asteroids.score = 0;
+  }
+  asteroids.shipX = 64.0f;
+  asteroids.shipY = 32.0f;
+  asteroids.shipVX = 0.0f;
+  asteroids.shipVY = 0.0f;
+  asteroids.angleDeg = -90.0f;
+  asteroids.over = false;
+  asteroids.invulnerableUntil = millis() + 1500;
+  for (uint8_t i = 0; i < AST_MAX_BULLETS; ++i) {
+    asteroids.bullets[i] = {};
+  }
+  astResetWave();
+}
+
+void astFire() {
+  for (uint8_t i = 0; i < AST_MAX_BULLETS; ++i) {
+    if (!asteroids.bullets[i].active) {
+      const float radians = degreesToRadians(asteroids.angleDeg);
+      asteroids.bullets[i].active = true;
+      asteroids.bullets[i].x = asteroids.shipX + cosf(radians) * 6.0f;
+      asteroids.bullets[i].y = asteroids.shipY + sinf(radians) * 6.0f;
+      asteroids.bullets[i].vx = asteroids.shipVX + cosf(radians) * 3.4f;
+      asteroids.bullets[i].vy = asteroids.shipVY + sinf(radians) * 3.4f;
+      asteroids.bullets[i].life = 28;
+      break;
+    }
+  }
+}
+
+bool astHasRocks() {
+  for (uint8_t i = 0; i < AST_MAX_ROCKS; ++i) {
+    if (asteroids.rocks[i].active) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void updateAsteroids() {
+  if (asteroids.over) {
+    if (input.aPressed || input.selectPressed) {
+      resetAsteroids(true);
+    }
+    return;
+  }
+
+  if (input.aimX != 0 || input.aimY != 0) {
+    asteroids.angleDeg = atan2f(static_cast<float>(input.aimY), static_cast<float>(input.aimX)) * 57.2957795f;
+  } else {
+    asteroids.angleDeg += input.moveX * 7.0f;
+  }
+
+  const float radians = degreesToRadians(asteroids.angleDeg);
+  if (input.up) {
+    asteroids.shipVX += cosf(radians) * 0.18f;
+    asteroids.shipVY += sinf(radians) * 0.18f;
+  }
+  if (input.down || input.b) {
+    asteroids.shipVX *= 0.94f;
+    asteroids.shipVY *= 0.94f;
+  }
+
+  asteroids.shipVX = clampValue(asteroids.shipVX, -2.4f, 2.4f);
+  asteroids.shipVY = clampValue(asteroids.shipVY, -2.4f, 2.4f);
+  asteroids.shipX = wrapValue(asteroids.shipX + asteroids.shipVX, 128.0f);
+  asteroids.shipY = wrapValue(asteroids.shipY + asteroids.shipVY, 64.0f);
+
+  if (input.aPressed || input.selectPressed) {
+    astFire();
+  }
+
+  for (uint8_t i = 0; i < AST_MAX_BULLETS; ++i) {
+    AstBullet& bullet = asteroids.bullets[i];
+    if (!bullet.active) {
+      continue;
+    }
+    bullet.x = wrapValue(bullet.x + bullet.vx, 128.0f);
+    bullet.y = wrapValue(bullet.y + bullet.vy, 64.0f);
+    if (bullet.life > 0) {
+      bullet.life--;
+    }
+    if (bullet.life == 0) {
+      bullet.active = false;
+    }
+  }
+
+  for (uint8_t i = 0; i < AST_MAX_ROCKS; ++i) {
+    AstRock& rock = asteroids.rocks[i];
+    if (!rock.active) {
+      continue;
+    }
+    rock.x = wrapValue(rock.x + rock.vx, 128.0f);
+    rock.y = wrapValue(rock.y + rock.vy, 64.0f);
+
+    if (millis() > asteroids.invulnerableUntil &&
+        distSq(rock.x, rock.y, asteroids.shipX, asteroids.shipY) < (rock.radius + 5.0f) * (rock.radius + 5.0f)) {
+      if (asteroids.lives > 0) {
+        asteroids.lives--;
+      }
+      if (asteroids.lives == 0) {
+        asteroids.over = true;
+      } else {
+        asteroids.shipX = 64.0f;
+        asteroids.shipY = 32.0f;
+        asteroids.shipVX = 0.0f;
+        asteroids.shipVY = 0.0f;
+        asteroids.invulnerableUntil = millis() + 1500;
+      }
+      break;
+    }
+
+    for (uint8_t b = 0; b < AST_MAX_BULLETS; ++b) {
+      AstBullet& bullet = asteroids.bullets[b];
+      if (!bullet.active) {
+        continue;
+      }
+      if (distSq(rock.x, rock.y, bullet.x, bullet.y) < rock.radius * rock.radius) {
+        bullet.active = false;
+        rock.active = false;
+        asteroids.score += rock.size == 3 ? 20 : (rock.size == 2 ? 35 : 50);
+        if (rock.size > 1) {
+          astSpawnRock(rock.x, rock.y, rock.size - 1, frand(-1.8f, 1.8f), frand(-1.8f, 1.8f));
+          astSpawnRock(rock.x, rock.y, rock.size - 1, frand(-1.8f, 1.8f), frand(-1.8f, 1.8f));
+        }
+        break;
+      }
+    }
+  }
+
+  if (!astHasRocks()) {
+    asteroids.wave++;
+    astResetWave();
+  }
+}
+
+void renderAsteroids() {
+  display.clear();
+  char hud[24];
+  snprintf(hud, sizeof(hud), "S:%u L:%u", asteroids.score, asteroids.lives);
+  display.drawText(2, 1, hud, 1);
+
+  for (uint8_t i = 0; i < AST_MAX_ROCKS; ++i) {
+    const AstRock& rock = asteroids.rocks[i];
+    if (!rock.active) {
+      continue;
+    }
+    for (uint8_t p = 0; p < 7; ++p) {
+      const float a0 = degreesToRadians((360.0f / 7.0f) * p);
+      const float a1 = degreesToRadians((360.0f / 7.0f) * (p + 1));
+      const float r0 = rock.radius * (0.75f + (((rock.seed + p * 17) % 25) / 100.0f));
+      const float r1 = rock.radius * (0.75f + (((rock.seed + (p + 1) * 17) % 25) / 100.0f));
+      display.drawLine(
+        static_cast<int>(rock.x + cosf(a0) * r0),
+        static_cast<int>(rock.y + sinf(a0) * r0),
+        static_cast<int>(rock.x + cosf(a1) * r1),
+        static_cast<int>(rock.y + sinf(a1) * r1)
+      );
+    }
+  }
+
+  for (uint8_t i = 0; i < AST_MAX_BULLETS; ++i) {
+    if (asteroids.bullets[i].active) {
+      display.setPixel(static_cast<int>(asteroids.bullets[i].x), static_cast<int>(asteroids.bullets[i].y));
+    }
+  }
+
+  if ((millis() / 120) % 2 == 0 || millis() > asteroids.invulnerableUntil) {
+    const float radians = degreesToRadians(asteroids.angleDeg);
+    const int x1 = static_cast<int>(asteroids.shipX + cosf(radians) * 6.0f);
+    const int y1 = static_cast<int>(asteroids.shipY + sinf(radians) * 6.0f);
+    const int x2 = static_cast<int>(asteroids.shipX + cosf(radians + 2.5f) * 5.0f);
+    const int y2 = static_cast<int>(asteroids.shipY + sinf(radians + 2.5f) * 5.0f);
+    const int x3 = static_cast<int>(asteroids.shipX + cosf(radians - 2.5f) * 5.0f);
+    const int y3 = static_cast<int>(asteroids.shipY + sinf(radians - 2.5f) * 5.0f);
+    display.drawLine(x1, y1, x2, y2);
+    display.drawLine(x2, y2, x3, y3);
+    display.drawLine(x3, y3, x1, y1);
+  }
+
+  if (asteroids.over) {
+    display.drawRect(16, 20, 96, 24);
+    display.drawCenteredText(25, "SHIP LOST", 1);
+    display.drawCenteredText(35, "A RESTART", 1);
+  }
+}
+
+// ---------------- Dot Chase ----------------
+constexpr uint8_t CHASE_W = 16;
+constexpr uint8_t CHASE_H = 8;
+
+const char* DOT_MAP[CHASE_H] = {
+  "################",
+  "#..............#",
+  "#.####.##.####.#",
+  "#..............#",
+  "#.##.######.##.#",
+  "#..............#",
+  "#.####.##.####.#",
+  "################"
+};
+
+struct Ghost {
+  int8_t x = 1;
+  int8_t y = 1;
+  int8_t dirX = 0;
+  int8_t dirY = 0;
+};
+
+struct DotChaseState {
+  bool pellets[CHASE_H][CHASE_W];
+  int8_t playerX = 1;
+  int8_t playerY = 1;
+  int8_t dirX = 1;
+  int8_t dirY = 0;
+  int8_t wantedX = 1;
+  int8_t wantedY = 0;
+  Ghost ghosts[2];
+  uint8_t lives = 3;
+  uint16_t score = 0;
+  bool over = false;
+  uint32_t nextStepAt = 0;
+  uint8_t pelletsLeft = 0;
+} chase;
+
+bool chaseWall(int x, int y) {
+  if (x < 0 || x >= CHASE_W || y < 0 || y >= CHASE_H) {
+    return true;
+  }
+  return DOT_MAP[y][x] == '#';
+}
+
+void resetDotChase(bool fullReset = true) {
+  if (fullReset) {
+    chase = {};
+    chase.lives = 3;
+    chase.score = 0;
+  }
+
+  chase.pelletsLeft = 0;
+  for (uint8_t y = 0; y < CHASE_H; ++y) {
+    for (uint8_t x = 0; x < CHASE_W; ++x) {
+      chase.pellets[y][x] = DOT_MAP[y][x] == '.';
+      if (chase.pellets[y][x]) {
+        chase.pelletsLeft++;
+      }
+    }
+  }
+  chase.playerX = 1;
+  chase.playerY = 1;
+  chase.dirX = 1;
+  chase.dirY = 0;
+  chase.wantedX = 1;
+  chase.wantedY = 0;
+  chase.ghosts[0] = {14, 1, -1, 0};
+  chase.ghosts[1] = {14, 6, -1, 0};
+  chase.nextStepAt = millis() + 150;
+  chase.over = false;
+}
+
+void chaseMoveGhost(Ghost& ghost) {
+  int8_t bestDX = ghost.dirX;
+  int8_t bestDY = ghost.dirY;
+  int bestScore = 1000;
+
+  const int8_t options[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+  for (uint8_t i = 0; i < 4; ++i) {
+    const int8_t dx = options[i][0];
+    const int8_t dy = options[i][1];
+    if (chaseWall(ghost.x + dx, ghost.y + dy)) {
+      continue;
+    }
+    if (dx == -ghost.dirX && dy == -ghost.dirY) {
+      continue;
+    }
+    const int distance = abs((ghost.x + dx) - chase.playerX) + abs((ghost.y + dy) - chase.playerY);
+    if (distance < bestScore) {
+      bestScore = distance;
+      bestDX = dx;
+      bestDY = dy;
+    }
+  }
+
+  if (bestScore == 1000) {
+    bestDX = -ghost.dirX;
+    bestDY = -ghost.dirY;
+  }
+  ghost.dirX = bestDX;
+  ghost.dirY = bestDY;
+  if (!chaseWall(ghost.x + ghost.dirX, ghost.y + ghost.dirY)) {
+    ghost.x += ghost.dirX;
+    ghost.y += ghost.dirY;
+  }
+}
+
+void updateDotChase() {
+  if (chase.over) {
+    if (input.aPressed || input.selectPressed) {
+      resetDotChase(true);
+    }
+    return;
+  }
+
+  if (input.upPressed) {
+    chase.wantedX = 0;
+    chase.wantedY = -1;
+  } else if (input.downPressed) {
+    chase.wantedX = 0;
+    chase.wantedY = 1;
+  } else if (input.leftPressed) {
+    chase.wantedX = -1;
+    chase.wantedY = 0;
+  } else if (input.rightPressed) {
+    chase.wantedX = 1;
+    chase.wantedY = 0;
+  }
+
+  const uint32_t now = millis();
+  if (now < chase.nextStepAt) {
+    return;
+  }
+  chase.nextStepAt = now + 140;
+
+  if (!chaseWall(chase.playerX + chase.wantedX, chase.playerY + chase.wantedY)) {
+    chase.dirX = chase.wantedX;
+    chase.dirY = chase.wantedY;
+  }
+  if (!chaseWall(chase.playerX + chase.dirX, chase.playerY + chase.dirY)) {
+    chase.playerX += chase.dirX;
+    chase.playerY += chase.dirY;
+  }
+
+  if (chase.pellets[chase.playerY][chase.playerX]) {
+    chase.pellets[chase.playerY][chase.playerX] = false;
+    if (chase.pelletsLeft > 0) {
+      chase.pelletsLeft--;
+    }
+    chase.score += 5;
+  }
+
+  for (uint8_t i = 0; i < 2; ++i) {
+    chaseMoveGhost(chase.ghosts[i]);
+    if (chase.ghosts[i].x == chase.playerX && chase.ghosts[i].y == chase.playerY) {
+      if (chase.lives > 0) {
+        chase.lives--;
+      }
+      if (chase.lives == 0) {
+        chase.over = true;
+      } else {
+        resetDotChase(false);
+      }
+      return;
+    }
+  }
+
+  if (chase.pelletsLeft == 0) {
+    resetDotChase(false);
+    chase.score += 50;
+  }
+}
+
+void renderDotChase() {
+  display.clear();
+  const int cell = 6;
+  const int offsetX = 8;
+  const int offsetY = 12;
+
+  for (uint8_t y = 0; y < CHASE_H; ++y) {
+    for (uint8_t x = 0; x < CHASE_W; ++x) {
+      const int px = offsetX + x * cell;
+      const int py = offsetY + y * cell;
+      if (DOT_MAP[y][x] == '#') {
+        display.drawRect(px, py, cell, cell);
+      } else if (chase.pellets[y][x]) {
+        display.setPixel(px + 3, py + 3);
+      }
+    }
+  }
+
+  display.fillCircle(offsetX + chase.playerX * cell + 3, offsetY + chase.playerY * cell + 3, 2);
+  for (uint8_t i = 0; i < 2; ++i) {
+    display.drawRect(offsetX + chase.ghosts[i].x * cell + 1, offsetY + chase.ghosts[i].y * cell + 1, 5, 5);
+  }
+
+  char hud[24];
+  snprintf(hud, sizeof(hud), "S:%u L:%u", chase.score, chase.lives);
+  display.drawText(2, 1, hud, 1);
+
+  if (chase.over) {
+    display.drawRect(18, 20, 92, 24);
+    display.drawCenteredText(25, "CHASE LOST", 1);
+    display.drawCenteredText(35, "A RESTART", 1);
+  }
+}
+
+// ---------------- Tank Zone ----------------
+constexpr uint8_t TZ_MAX_ENEMIES = 5;
+constexpr uint8_t TZ_MAX_BULLETS = 12;
+constexpr float TZ_WORLD_LIMIT = 760.0f;
+constexpr bool TANK_ZONE_FLIP_VERTICAL = true;
+
+struct TZEnemy {
+  bool alive = false;
+  float x = 0.0f;
+  float y = 0.0f;
+  float headingDeg = 0.0f;
+  uint32_t nextFireAt = 0;
+};
+
+struct TZBullet {
+  bool active = false;
+  bool fromEnemy = false;
+  float x = 0.0f;
+  float y = 0.0f;
+  float vx = 0.0f;
+  float vy = 0.0f;
+  uint8_t life = 0;
+};
+
+struct TankZoneState {
+  float playerX = 0.0f;
+  float playerY = 0.0f;
+  float playerHeadingDeg = 0.0f;
+  float playerSpeed = 0.0f;
+  TZEnemy enemies[TZ_MAX_ENEMIES];
+  TZBullet bullets[TZ_MAX_BULLETS];
+  uint8_t lives = 3;
+  uint16_t score = 0;
+  uint8_t wave = 1;
+  bool over = false;
+  uint32_t invulnerableUntil = 0;
+} tankZone;
+
+float normalizeDegrees(float value) {
+  while (value < 0.0f) value += 360.0f;
+  while (value >= 360.0f) value -= 360.0f;
+  return value;
+}
+
+float angleDeltaDegrees(float from, float to) {
+  float delta = to - from;
+  while (delta > 180.0f) delta -= 360.0f;
+  while (delta < -180.0f) delta += 360.0f;
+  return delta;
+}
+
+void tankZoneWrap(float& value) {
+  if (value > TZ_WORLD_LIMIT) value = -TZ_WORLD_LIMIT;
+  if (value < -TZ_WORLD_LIMIT) value = TZ_WORLD_LIMIT;
+}
+
+void tankZoneWrapPosition(float& x, float& y) {
+  tankZoneWrap(x);
+  tankZoneWrap(y);
+}
+
+bool tankZoneProject(float wx, float wy, int& sx, int& sy, int& scale) {
+  const float dx = wx - tankZone.playerX;
+  const float dy = wy - tankZone.playerY;
+  const float heading = degreesToRadians(tankZone.playerHeadingDeg);
+  const float sinH = sinf(heading);
+  const float cosH = cosf(heading);
+
+  const float rx = cosH * dx + sinH * dy;
+  const float rz = -sinH * dx + cosH * dy;
+  if (rz <= 20.0f) {
+    return false;
+  }
+
+  const float invZ = 1.0f / rz;
+  sx = static_cast<int>(64.0f + (rx * 120.0f * invZ));
+  sy = static_cast<int>(38.0f - (26.0f * invZ));
+  scale = static_cast<int>(clampValue(2100.0f * invZ, 2.0f, 26.0f));
+  return sx > -20 && sx < 148 && sy > -20 && sy < 84;
+}
+
+void tankZoneSpawnEnemyAt(uint8_t idx) {
+  if (idx >= TZ_MAX_ENEMIES) {
+    return;
+  }
+  TZEnemy& enemy = tankZone.enemies[idx];
+  enemy = {};
+  enemy.alive = true;
+
+  for (uint8_t tries = 0; tries < 30; ++tries) {
+    const float ang = frand(0.0f, 6.28318f);
+    const float radius = frand(280.0f, 560.0f);
+    enemy.x = tankZone.playerX + cosf(ang) * radius;
+    enemy.y = tankZone.playerY + sinf(ang) * radius;
+    tankZoneWrapPosition(enemy.x, enemy.y);
+
+    if (distSq(enemy.x, enemy.y, tankZone.playerX, tankZone.playerY) > (190.0f * 190.0f)) {
+      break;
+    }
+  }
+
+  enemy.headingDeg = frand(0.0f, 360.0f);
+  enemy.nextFireAt = millis() + random(700, 1900);
+}
+
+void tankZoneSpawnWave() {
+  for (uint8_t i = 0; i < TZ_MAX_ENEMIES; ++i) {
+    tankZone.enemies[i] = {};
+  }
+  for (uint8_t i = 0; i < TZ_MAX_BULLETS; ++i) {
+    tankZone.bullets[i] = {};
+  }
+
+  const uint8_t enemyCount = clampValue<uint8_t>(2 + (tankZone.wave / 2), 2, TZ_MAX_ENEMIES);
+  for (uint8_t i = 0; i < enemyCount; ++i) {
+    tankZoneSpawnEnemyAt(i);
+  }
+}
+
+void resetTankZone(bool fullReset = true) {
+  if (fullReset) {
+    tankZone = {};
+    tankZone.lives = 3;
+    tankZone.score = 0;
+    tankZone.wave = 1;
+  }
+  tankZone.playerX = 0.0f;
+  tankZone.playerY = 0.0f;
+  tankZone.playerHeadingDeg = -90.0f;
+  tankZone.playerSpeed = 0.0f;
+  tankZone.over = false;
+  tankZone.invulnerableUntil = millis() + 1400;
+  tankZoneSpawnWave();
+}
+
+void tankZoneSpawnBullet(bool fromEnemy, float x, float y, float headingDeg, float speed, uint8_t life) {
+  for (uint8_t i = 0; i < TZ_MAX_BULLETS; ++i) {
+    TZBullet& bullet = tankZone.bullets[i];
+    if (bullet.active) {
+      continue;
+    }
+    const float radians = degreesToRadians(headingDeg);
+    bullet.active = true;
+    bullet.fromEnemy = fromEnemy;
+    bullet.x = x;
+    bullet.y = y;
+    bullet.vx = cosf(radians) * speed;
+    bullet.vy = sinf(radians) * speed;
+    bullet.life = life;
+    return;
+  }
+}
+
+bool tankZoneEnemiesAlive() {
+  for (uint8_t i = 0; i < TZ_MAX_ENEMIES; ++i) {
+    if (tankZone.enemies[i].alive) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void updateTankZone() {
+  if (tankZone.over) {
+    if (input.aPressed || input.selectPressed) {
+      resetTankZone(true);
+    }
+    return;
+  }
+
+  tankZone.playerHeadingDeg = normalizeDegrees(tankZone.playerHeadingDeg + (input.moveX * 4.5f));
+  if (input.up) {
+    tankZone.playerSpeed += 0.07f;
+  }
+  if (input.down) {
+    tankZone.playerSpeed -= 0.06f;
+  }
+  tankZone.playerSpeed *= 0.97f;
+  tankZone.playerSpeed = clampValue(tankZone.playerSpeed, -1.4f, 2.2f);
+
+  const float playerHeading = degreesToRadians(tankZone.playerHeadingDeg);
+  tankZone.playerX += cosf(playerHeading) * tankZone.playerSpeed;
+  tankZone.playerY += sinf(playerHeading) * tankZone.playerSpeed;
+  tankZoneWrapPosition(tankZone.playerX, tankZone.playerY);
+
+  if (input.aPressed || input.selectPressed) {
+    tankZoneSpawnBullet(false,
+                        tankZone.playerX + cosf(playerHeading) * 16.0f,
+                        tankZone.playerY + sinf(playerHeading) * 16.0f,
+                        tankZone.playerHeadingDeg,
+                        7.0f,
+                        70);
+  }
+
+  const uint32_t now = millis();
+
+  for (uint8_t i = 0; i < TZ_MAX_ENEMIES; ++i) {
+    TZEnemy& enemy = tankZone.enemies[i];
+    if (!enemy.alive) {
+      continue;
+    }
+
+    const float desiredHeading = atan2f(tankZone.playerY - enemy.y, tankZone.playerX - enemy.x) * 57.2957795f;
+    const float delta = angleDeltaDegrees(enemy.headingDeg, desiredHeading);
+    enemy.headingDeg = normalizeDegrees(enemy.headingDeg + clampValue(delta, -2.2f, 2.2f));
+
+    const float enemyHeading = degreesToRadians(enemy.headingDeg);
+    enemy.x += cosf(enemyHeading) * (0.45f + (tankZone.wave * 0.05f));
+    enemy.y += sinf(enemyHeading) * (0.45f + (tankZone.wave * 0.05f));
+    tankZoneWrapPosition(enemy.x, enemy.y);
+
+    const float d2 = distSq(enemy.x, enemy.y, tankZone.playerX, tankZone.playerY);
+    if (d2 < (42.0f * 42.0f) && now > tankZone.invulnerableUntil) {
+      if (tankZone.lives > 0) {
+        tankZone.lives--;
+      }
+      tankZone.invulnerableUntil = now + 1300;
+      tankZone.playerX = 0.0f;
+      tankZone.playerY = 0.0f;
+      tankZone.playerSpeed = 0.0f;
+      if (tankZone.lives == 0) {
+        tankZone.over = true;
+      }
+    }
+
+    if (now >= enemy.nextFireAt && d2 < (520.0f * 520.0f) && fabsf(delta) < 20.0f) {
+      tankZoneSpawnBullet(true, enemy.x, enemy.y, enemy.headingDeg + frand(-6.0f, 6.0f), 3.4f, 95);
+      enemy.nextFireAt = now + random(900, 2200);
+    }
+  }
+
+  for (uint8_t i = 0; i < TZ_MAX_BULLETS; ++i) {
+    TZBullet& bullet = tankZone.bullets[i];
+    if (!bullet.active) {
+      continue;
+    }
+
+    bullet.x += bullet.vx;
+    bullet.y += bullet.vy;
+    tankZoneWrapPosition(bullet.x, bullet.y);
+    if (bullet.life > 0) {
+      bullet.life--;
+    }
+    if (bullet.life == 0) {
+      bullet.active = false;
+      continue;
+    }
+
+    if (bullet.fromEnemy) {
+      if (millis() > tankZone.invulnerableUntil &&
+          distSq(bullet.x, bullet.y, tankZone.playerX, tankZone.playerY) < (18.0f * 18.0f)) {
+        bullet.active = false;
+        if (tankZone.lives > 0) {
+          tankZone.lives--;
+        }
+        tankZone.invulnerableUntil = millis() + 1300;
+        tankZone.playerX = 0.0f;
+        tankZone.playerY = 0.0f;
+        tankZone.playerSpeed = 0.0f;
+        if (tankZone.lives == 0) {
+          tankZone.over = true;
+        }
+      }
+      continue;
+    }
+
+    for (uint8_t e = 0; e < TZ_MAX_ENEMIES; ++e) {
+      TZEnemy& enemy = tankZone.enemies[e];
+      if (!enemy.alive) {
+        continue;
+      }
+      if (distSq(bullet.x, bullet.y, enemy.x, enemy.y) < (28.0f * 28.0f)) {
+        enemy.alive = false;
+        bullet.active = false;
+        tankZone.score += 50;
+        break;
+      }
+    }
+  }
+
+  if (!tankZoneEnemiesAlive()) {
+    tankZone.wave++;
+    tankZoneSpawnWave();
+  }
+}
+
+void renderTankZone() {
+  display.clear();
+
+  const auto sy = [](int y) -> int {
+    return TANK_ZONE_FLIP_VERTICAL ? (OLED_HEIGHT - 1 - y) : y;
+  };
+
+  display.drawLine(0, sy(24), OLED_WIDTH - 1, sy(24));
+  display.drawLine(4, sy(24), 18, sy(17));
+  display.drawLine(18, sy(17), 34, sy(24));
+  display.drawLine(44, sy(24), 58, sy(16));
+  display.drawLine(58, sy(16), 75, sy(24));
+  display.drawLine(92, sy(24), 110, sy(14));
+  display.drawLine(110, sy(14), 126, sy(24));
+
+  for (uint8_t i = 0; i < TZ_MAX_ENEMIES; ++i) {
+    const TZEnemy& enemy = tankZone.enemies[i];
+    if (!enemy.alive) {
+      continue;
+    }
+
+    int sx = 0;
+    int syRaw = 0;
+    int scale = 0;
+    if (!tankZoneProject(enemy.x, enemy.y, sx, syRaw, scale)) {
+      continue;
+    }
+
+    const int top = sy(syRaw);
+    const int bodyW = scale;
+    const int bodyH = scale / 2 + 2;
+    display.drawRect(sx - bodyW / 2, top - bodyH, bodyW, bodyH);
+    display.drawLine(sx - bodyW / 2, top - bodyH, sx, top - bodyH - (scale / 3 + 1));
+    display.drawLine(sx + bodyW / 2, top - bodyH, sx, top - bodyH - (scale / 3 + 1));
+    display.drawLine(sx, top - bodyH, sx, top - bodyH - scale);
+  }
+
+  for (uint8_t i = 0; i < TZ_MAX_BULLETS; ++i) {
+    const TZBullet& bullet = tankZone.bullets[i];
+    if (!bullet.active) {
+      continue;
+    }
+    int sx = 0;
+    int syRaw = 0;
+    int scale = 0;
+    if (!tankZoneProject(bullet.x, bullet.y, sx, syRaw, scale)) {
+      continue;
+    }
+    display.setPixel(sx, sy(syRaw));
+  }
+
+  if ((millis() / 160) % 2 == 0 || millis() > tankZone.invulnerableUntil) {
+    display.drawLine(58, sy(60), 64, sy(54));
+    display.drawLine(70, sy(60), 64, sy(54));
+    display.drawLine(58, sy(60), 70, sy(60));
+  }
+  display.drawLine(62, sy(40), 66, sy(40));
+  display.drawLine(64, sy(38), 64, sy(42));
+
+  char hud[28];
+  snprintf(hud, sizeof(hud), "S:%u L:%u W:%u", tankZone.score, tankZone.lives, tankZone.wave);
+  display.drawText(2, 1, hud, 1);
+
+  if (tankZone.over) {
+    display.drawRect(16, 20, 96, 24);
+    display.drawCenteredText(25, "TANK DOWN", 1);
+    display.drawCenteredText(35, "A RESTART", 1);
+  }
+}
+
+// ---------------- Shell / Menu ----------------
+void buildStars() {
+  for (uint8_t i = 0; i < MAX_STARS; ++i) {
+    stars[i].x = random(0, OLED_WIDTH);
+    stars[i].y = random(0, OLED_HEIGHT);
+  }
+}
+
+void updateStars() {
+  for (uint8_t i = 0; i < MAX_STARS; ++i) {
+    stars[i].x = (stars[i].x == 0) ? OLED_WIDTH - 1 : stars[i].x - 1;
+    if ((i % 3) == 0 && stars[i].x == OLED_WIDTH - 1) {
+      stars[i].y = random(0, OLED_HEIGHT);
+    }
+  }
+}
+
+void startGame(GameId game) {
+  activeGame = game;
+  paused = false;
+  screenMode = ScreenMode::InGame;
+  switch (game) {
+    case GameId::Snake: resetSnake(); break;
+    case GameId::BrickBreaker: resetBreakout(true); break;
+    case GameId::SpaceRaid: resetSpaceRaid(true); break;
+    case GameId::Asteroids: resetAsteroids(true); break;
+    case GameId::DotChase: resetDotChase(true); break;
+    case GameId::TankZone: resetTankZone(true); break;
+    default: break;
+  }
+}
+
+void drawPauseOverlay() {
+  display.drawRect(20, 22, 88, 20);
+  display.drawCenteredText(27, "PAUSED", 1);
+  display.drawCenteredText(35, "SEL RESUME", 1);
+}
+
+void updateMenu() {
+  if (input.upPressed || input.leftPressed) {
+    const int current = static_cast<int>(selectedGame);
+    selectedGame = static_cast<GameId>((current + static_cast<int>(GameId::Count) - 1) % static_cast<int>(GameId::Count));
+  }
+  if (input.downPressed || input.rightPressed) {
+    const int current = static_cast<int>(selectedGame);
+    selectedGame = static_cast<GameId>((current + 1) % static_cast<int>(GameId::Count));
+  }
+  if (input.aPressed || input.selectPressed) {
+    startGame(selectedGame);
+  }
+}
+
+void renderMenu() {
+  display.clear();
+  updateStars();
+  for (uint8_t i = 0; i < MAX_STARS; ++i) {
+    display.setPixel(stars[i].x, stars[i].y);
+  }
+
+  display.drawCenteredText(4, "RETRO LORA", 2);
+  display.drawCenteredText(22, "HELTEC V3", 1);
+
+  const char* title = GAME_NAMES[static_cast<int>(selectedGame)];
+  display.drawRect(10, 30, 108, 16);
+  display.drawCenteredText(35, title, 1);
+
+  display.drawCenteredText(50, "BOOT TAP NEXT", 1);
+  display.drawCenteredText(58, "HOLD PLAY 3X BACK", 1);
+}
+
+void renderSplash() {
+  display.clear();
+  display.drawCenteredText(10, "HELTEC", 2);
+  display.drawCenteredText(30, "RETRO CONSOLE", 1);
+  display.drawCenteredText(42, "LOADING", 1);
+  for (int i = 0; i < 6; ++i) {
+    display.fillRect(34 + i * 10, 54, 6, 4);
+  }
+}
+
+void updateGame() {
+  if (input.bPressed) {
+    screenMode = ScreenMode::Menu;
+    return;
+  }
+  if (input.selectPressed) {
+    paused = !paused;
+  }
+  if (paused) {
+    return;
+  }
+
+  switch (activeGame) {
+    case GameId::Snake: updateSnake(); break;
+    case GameId::BrickBreaker: updateBreakout(); break;
+    case GameId::SpaceRaid: updateSpaceRaid(); break;
+    case GameId::Asteroids: updateAsteroids(); break;
+    case GameId::DotChase: updateDotChase(); break;
+    case GameId::TankZone: updateTankZone(); break;
+    default: break;
+  }
+}
+
+void renderGame() {
+  switch (activeGame) {
+    case GameId::Snake: renderSnake(); break;
+    case GameId::BrickBreaker: renderBreakout(); break;
+    case GameId::SpaceRaid: renderSpaceRaid(); break;
+    case GameId::Asteroids: renderAsteroids(); break;
+    case GameId::DotChase: renderDotChase(); break;
+    case GameId::TankZone: renderTankZone(); break;
+    default: break;
+  }
+  if (paused) {
+    drawPauseOverlay();
+  }
+}
+
+void setup() {
+  randomSeed(static_cast<uint32_t>(micros()));
+  setupControls();
+  display.begin();
+  buildStars();
+  splashEndsAt = millis() + SPLASH_MS;
+  lastFrameAt = millis();
+}
+
+void loop() {
+  readControls();
+
+  const uint32_t now = millis();
+  if (screenMode == ScreenMode::Splash && now >= splashEndsAt) {
+    screenMode = ScreenMode::Menu;
+  }
+  if (now - lastFrameAt < FRAME_MS) {
+    delay(1);
+    return;
+  }
+  lastFrameAt = now;
+
+  switch (screenMode) {
+    case ScreenMode::Splash:
+      renderSplash();
+      break;
+    case ScreenMode::Menu:
+      updateMenu();
+      renderMenu();
+      break;
+    case ScreenMode::InGame:
+      updateGame();
+      renderGame();
+      break;
+  }
+
+  display.display();
+}

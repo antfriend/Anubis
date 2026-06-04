@@ -8,23 +8,33 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <esp_ota_ops.h>
+#include <esp_sleep.h>
+#include <driver/rtc_io.h>
+#include <esp32-hal-rgb-led.h>
+#include <Preferences.h>
+#include <ESP_I2S.h>
+#include <AudioBoard.h>
 
 #include "anubis_rgb565.h"
 #include "menu_icons_rgb565.h"
+#include "cave_johnson_startup_audio.h"
 
-  #define EEPROM_SIZE 512
-  #define MIX_STORAGE_VERSION 2
+  #define EEPROM_SIZE 1024
+  #define MIX_STORAGE_VERSION 3
   #define ESPNOW_BIND_STORAGE_VERSION 1
-  #define FAILSAFE_STORAGE_VERSION 1
-  #define RATE_STORAGE_VERSION 1
-  #define EXPO_STORAGE_VERSION 1
-  #define ENDPOINT_STORAGE_VERSION 1
+  #define FAILSAFE_STORAGE_VERSION 2
+  #define RATE_STORAGE_VERSION 2
+  #define EXPO_STORAGE_VERSION 3
+  #define ENDPOINT_STORAGE_VERSION 2
+  #define ESC_MAP_STORAGE_VERSION 1
   #define EEPROM_MIX_VERSION_ADDR (EEPROM_SIZE - 1)
   #define EEPROM_BIND_VERSION_ADDR (EEPROM_SIZE - 2)
   #define EEPROM_FAILSAFE_VERSION_ADDR (EEPROM_SIZE - 3)
   #define EEPROM_RATE_VERSION_ADDR (EEPROM_SIZE - 4)
   #define EEPROM_EXPO_VERSION_ADDR (EEPROM_SIZE - 5)
   #define EEPROM_ENDPOINT_VERSION_ADDR (EEPROM_SIZE - 6)
+  #define EEPROM_ESC_MAP_VERSION_ADDR (EEPROM_ENDPOINT_VERSION_ADDR - 1)
+  #define EEPROM_ESC_MAP_DATA_ADDR (EEPROM_ESC_MAP_VERSION_ADDR - 2)
   #define MIX_CHANNEL_MASK 0x0F
   #define MIX_REVERSE_SEPARATE_FLAG 0x80
 
@@ -40,8 +50,10 @@
   SCREEN_EXPO,
   SCREEN_RATES,
   SCREEN_PROTOCOL,
+  SCREEN_STICK_CALIBRATION,
   SCREEN_OTA_SETTINGS,
   SCREEN_ELRS,
+  SCREEN_ELRS_RX_CONFIG,
   SCREEN_MODEL_SETTINGS,
   SCREEN_REVERSE,
   SCREEN_TRIM,
@@ -50,8 +62,10 @@
   SCREEN_MODEL_NAME,
   SCREEN_DRIVE_TYPE,
   SCREEN_TANK_MODE,
+  SCREEN_ESC_CHANNEL_SETUP,
   SCREEN_MIXING,
   SCREEN_DISPLAY_SETTINGS,
+  SCREEN_TIMER,
   SCREEN_SPACE_GAME
   };
 
@@ -68,6 +82,7 @@
   BTN_EXPO,
   BTN_RATES,
   BTN_PROTOCOL,
+  BTN_STICK_CAL,
   BTN_PAGE_NAV,
   BTN_PROTOCOL_ELRS,
   BTN_PROTOCOL_ESPNOW,
@@ -75,6 +90,16 @@
   BTN_PROTOCOL_OTA,
   BTN_PROTOCOL_OTA_CFG,
   BTN_ELRS_BIND,
+  BTN_ELRS_RX_CONFIG,
+  BTN_ELRS_TX_POWER_SLIDER,
+  BTN_ELRS_TX_POWER_VALUE,
+  BTN_ELRS_RX_MODEL_ID,
+  BTN_ELRS_RX_FAILSAFE,
+  BTN_ELRS_RX_PWM1,
+  BTN_ELRS_RX_PWM2,
+  BTN_ELRS_RX_PWM3,
+  BTN_ELRS_RX_PWM4,
+  BTN_ELRS_RX_SAVE,
   BTN_DRIVE_TYPE,
   BTN_DRIVE_TANK,
   BTN_DRIVE_CAR,
@@ -82,6 +107,10 @@
   BTN_DRIVE_X_DRONE,
   BTN_TANK_SINGLE,
   BTN_TANK_DUAL,
+  BTN_ESC_CH1,
+  BTN_ESC_CH2,
+  BTN_ESC_CH3,
+  BTN_ESC_CH4,
   BTN_MODEL_NAME,
   BTN_MIXING,
   BTN_DISPLAY_SETTINGS,
@@ -95,6 +124,11 @@
   BTN_DISPLAY_SLEEP_INC,
   BTN_DISPLAY_SLEEP_NOW,
   BTN_DISPLAY_THEME_TOGGLE,
+  BTN_TIMER_COUNT_DOWN,
+  BTN_TIMER_COUNT_UP,
+  BTN_TIMER_START_PAUSE,
+  BTN_TIMER_RESET,
+  BTN_TIMER_KEY,
   BTN_GAME,
   BTN_OPTION_2,
   BTN_OPTION_3,
@@ -121,8 +155,15 @@
   };
 
   #define MAX_MODELS 4
-  #define MIX_COUNT 4
-  #define CHANNEL_COUNT 4
+  #define STICK_AXIS_COUNT 4
+  #define CHANNEL_COUNT 6
+  #define PRESET_MIX_COUNT 4
+  #define USER_MIX_COUNT 4
+  #define MIXES_PER_PAGE 4
+  #define MIX_PAGE_COUNT 2
+  #define MIX_PAGE_PRESET 0
+  #define MIX_PAGE_USER 1
+  #define MIX_COUNT (PRESET_MIX_COUNT + USER_MIX_COUNT)
   #define PROTOCOL_MASK 0x60
   #define PROTOCOL_SHIFT 5
   #define EEPROM_BIND_DATA_ADDR (EEPROM_RATE_VERSION_ADDR - (MAX_MODELS * ESP_NOW_ETH_ALEN))
@@ -139,15 +180,23 @@
   #define EEPROM_OTA_STA_SSID_ADDR (EEPROM_OTA_VERSION_ADDR - OTA_STA_SSID_STORAGE_BYTES)
   #define EEPROM_OTA_STA_PASSWORD_ADDR (EEPROM_OTA_STA_SSID_ADDR - OTA_STA_PASSWORD_STORAGE_BYTES)
   #define EEPROM_OTA_AP_SSID_ADDR (EEPROM_OTA_STA_PASSWORD_ADDR - OTA_AP_SSID_STORAGE_BYTES)
-  #define DISPLAY_SETTINGS_STORAGE_VERSION 2
+  #define DISPLAY_SETTINGS_STORAGE_VERSION 3
   #define EEPROM_DISPLAY_VERSION_ADDR (EEPROM_OTA_AP_SSID_ADDR - 1)
   #define EEPROM_DISPLAY_BRIGHTNESS_ADDR (EEPROM_DISPLAY_VERSION_ADDR - 1)
   #define EEPROM_DISPLAY_SLEEP_BRIGHTNESS_ADDR (EEPROM_DISPLAY_BRIGHTNESS_ADDR - 1)
   #define EEPROM_DISPLAY_TIMEOUT_INDEX_ADDR (EEPROM_DISPLAY_SLEEP_BRIGHTNESS_ADDR - 1)
   #define EEPROM_DISPLAY_OFF_TIMEOUT_INDEX_ADDR (EEPROM_DISPLAY_TIMEOUT_INDEX_ADDR - 1)
   #define EEPROM_DISPLAY_THEME_ADDR (EEPROM_DISPLAY_OFF_TIMEOUT_INDEX_ADDR - 1)
+  #define STICK_CAL_STORAGE_VERSION 1
+  // Calibration remains compiled in for future service use, but hidden from
+  // the user-facing Controller Settings menu while hardcoded values are final.
+  #define STICK_CAL_SCREEN_ENABLED false
+  #define EEPROM_STICK_CAL_VERSION_ADDR (EEPROM_DISPLAY_THEME_ADDR - 1)
+  #define EEPROM_STICK_CAL_MIN_DATA_ADDR (EEPROM_STICK_CAL_VERSION_ADDR - (STICK_AXIS_COUNT * 2))
+  #define EEPROM_STICK_CAL_CENTER_DATA_ADDR (EEPROM_STICK_CAL_MIN_DATA_ADDR - (STICK_AXIS_COUNT * 2))
+  #define EEPROM_STICK_CAL_MAX_DATA_ADDR (EEPROM_STICK_CAL_CENTER_DATA_ADDR - (STICK_AXIS_COUNT * 2))
   #define ESPNOW_LINK_MAGIC 0xA614
-  #define ESPNOW_LINK_VERSION 1
+  #define ESPNOW_LINK_VERSION 2
   #define ESPNOW_WIFI_CHANNEL 6
   #define ESPNOW_SEND_INTERVAL_MS 20
   #define ESPNOW_PING_INTERVAL_MS 100
@@ -156,16 +205,52 @@
   #define ESPNOW_HEADER_SIGNAL_TIMEOUT_MS 2000
   #define ESPNOW_BIND_TIMEOUT_MS 15000
   #define ESPNOW_BIND_COMMIT_RETRY_MS 300
-  // Locked UART mode for the RadioMaster Pocket internal ELRS module.
-  #define ELRS_HALF_DUPLEX_MODE false
-  #define ELRS_UART_DATA_PIN 44
-#if ELRS_HALF_DUPLEX_MODE
-  #define ELRS_UART_TX_PIN_DEFAULT ELRS_UART_DATA_PIN
-  #define ELRS_UART_RX_PIN_DEFAULT ELRS_UART_DATA_PIN
+  #define ESPNOW_SEND_SERIAL_DEBUG false
+  // ELRS module profile:
+  //   ELRS_MODULE_PROFILE_INTERNAL     = RadioMaster Pocket/internal-style full-duplex module
+  //   ELRS_MODULE_PROFILE_RANGER_NANO  = RadioMaster Ranger Nano external one-wire module bay
+  #define ELRS_MODULE_PROFILE_INTERNAL 0
+  #define ELRS_MODULE_PROFILE_RANGER_NANO 1
+  #define ELRS_MODULE_PROFILE_AUTO 2
+  #define ELRS_MODULE_PROFILE ELRS_MODULE_PROFILE_AUTO
+  #define ELRS_PROFILE_DETECT_SWITCH_MS 1500UL
+  #define ELRS_PROFILE_DETECT_ACTIVE_MS 3500UL
+  // Same-pin Ranger probing can wedge the UART when no module is physically
+  // present. Leave this off for the internal-module transmitter build; enable
+  // it only on units where the Ranger Nano is expected.
+  #define ELRS_AUTO_PROBE_RANGER_ON_SILENT_INTERNAL 0
+
+#if ELRS_MODULE_PROFILE == ELRS_MODULE_PROFILE_RANGER_NANO || ELRS_MODULE_PROFILE == ELRS_MODULE_PROFILE_AUTO
+  #define ELRS_HALF_DUPLEX_MODE 1
 #else
+  #define ELRS_HALF_DUPLEX_MODE 0
+#endif
+
+#if ELRS_MODULE_PROFILE == ELRS_MODULE_PROFILE_RANGER_NANO
+  #define ELRS_UART_DATA_PIN 43
+  #define ELRS_FORCE_PIN_PAIR_INDEX 0
+  #define ELRS_FORCE_INVERT_MODE 2
+  #define ELRS_BIND_FALLBACK_FIELD_INDEX 29
+  #define ELRS_SNIFF_SINGLE_WIRE_ONLY 1
+  #define ELRS_PASSIVE_SNIFF_RX_INVERT 1
+#elif ELRS_MODULE_PROFILE == ELRS_MODULE_PROFILE_AUTO
+  #define ELRS_UART_DATA_PIN 43
+  #define ELRS_FORCE_PIN_PAIR_INDEX -1
+  #define ELRS_FORCE_INVERT_MODE -1
+  #define ELRS_BIND_FALLBACK_FIELD_INDEX 28
+  #define ELRS_SNIFF_SINGLE_WIRE_ONLY 1
+  #define ELRS_PASSIVE_SNIFF_RX_INVERT 1
+#else
+  #define ELRS_UART_DATA_PIN 44
+  #define ELRS_FORCE_PIN_PAIR_INDEX 1
+  #define ELRS_FORCE_INVERT_MODE 0
+  #define ELRS_BIND_FALLBACK_FIELD_INDEX 28
+  #define ELRS_SNIFF_SINGLE_WIRE_ONLY 0
+  #define ELRS_PASSIVE_SNIFF_RX_INVERT 0
+#endif
+
   #define ELRS_UART_TX_PIN_DEFAULT 44
   #define ELRS_UART_RX_PIN_DEFAULT 43
-#endif
   #define ELRS_CRSF_TX_INTERVAL_MS 10
   #define ELRS_DEVICE_PING_INTERVAL_MS 500
   #define ELRS_MODULE_TIMEOUT_MS 2000
@@ -174,22 +259,32 @@
   #define ELRS_TX_ONLY_ACTIVE_WINDOW_MS 500
   #define ELRS_PARAM_READ_INTERVAL_MS 120
   #define ELRS_PARAM_SCAN_FALLBACK_MAX 64
+  #define ELRS_BIND_BURST_INTERVAL_MS 150UL
+  #define ELRS_BIND_COMMAND_WINDOW_MS 10000UL
+  #define ELRS_BIND_SERIAL_DEBUG false
+  #define ELRS_LOW_POWER_NO_LINK_TIMEOUT_MS 30000UL
+  #define ELRS_LOW_POWER_FALLBACK_MW 10
+  #define ELRS_RX_WIFI_SSID "ExpressLRS RX"
+  #define ELRS_RX_WIFI_PASSWORD "expresslrs"
+  #define ELRS_RX_WIFI_CONNECT_TIMEOUT_MS 150000UL
+  #define ELRS_RX_HTTP_TIMEOUT_MS 1800UL
   #define ELRS_TX_SYNC_PRIMARY 0xC8
   #define ELRS_TX_MODULE_ADDR 0xEE
   #define ELRS_FORCE_BAUD 5250000UL
-  // -1 = auto-try both pin pairs, 0/1 = force a single pin-pair mapping.
-  #define ELRS_FORCE_PIN_PAIR_INDEX 1
-  // Lock to the first mode that produced valid frames.
-  // -1 = keep existing, otherwise 0..2 maps to elrsInvertModes entry.
-  #define ELRS_FORCE_INVERT_MODE 0
   #define RADIO_PROTOCOL_SERIAL_DEBUG true
   #define ELRS_VERBOSE_SERIAL_DEBUG false
+  #define DRIVE_OUTPUT_SERIAL_DEBUG true
   // For internal RadioMaster ELRS modules, actively drive CRSF traffic so the
   // module has a reason to answer.
   #define ELRS_PROBE_UNTIL_MODULE_FRAMES false
   #define ELRS_RX_ONLY_DIAGNOSTIC false
   #define ELRS_RX_READ_BUDGET 256
+  // Diagnostic only: true listens passively and sends no ELRS traffic.
   #define ELRS_PASSIVE_SNIFF_MODE false
+  #define ELRS_PASSIVE_SNIFF_BAUD ELRS_FORCE_BAUD
+  #define ELRS_SNIFF_LOG_WRITES_IMMEDIATE true
+  #define ELRS_SNIFF_LOG_RC_SAMPLES true
+  #define ELRS_SNIFF_RC_SAMPLE_MS 250
   #define ELRS_SNIFF_HOST_TO_MODULE_PIN 43
   #define ELRS_SNIFF_MODULE_TO_HOST_PIN 44
 
@@ -208,8 +303,18 @@ enum NumpadTarget {
   NUMPAD_TARGET_MIX_OFFSET,
   NUMPAD_TARGET_RATE_VALUE,
   NUMPAD_TARGET_EXPO_VALUE,
-  NUMPAD_TARGET_ENDPOINT_VALUE
+  NUMPAD_TARGET_ENDPOINT_VALUE,
+  NUMPAD_TARGET_ELRS_TX_POWER,
+  NUMPAD_TARGET_ELRS_RX_MODEL_ID,
+  NUMPAD_TARGET_ELRS_RX_FAILSAFE,
+  NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE,
+  NUMPAD_TARGET_TIMER_VALUE
   };
+
+enum StickCalibrationState {
+  STICK_CAL_STATE_CAPTURE_CENTER,
+  STICK_CAL_STATE_SWEEP_RANGE
+};
 
   enum KeyboardTarget {
   KEYBOARD_TARGET_MODEL_NAME,
@@ -235,6 +340,8 @@ enum NumpadTarget {
   uint8_t flags;
   int16_t channels[CHANNEL_COUNT];
   uint16_t txBatteryMillivolts;
+  uint16_t linkLatencyMs;
+  char modelName[20];
   };
 
   struct __attribute__((packed)) EspNowTelemetryPacket {
@@ -283,14 +390,17 @@ enum NumpadTarget {
   struct ModelData {
   char name[20];
 
-  bool reverse[5];
-  bool failsafe[5];
+  bool reverse[CHANNEL_COUNT];
+  bool failsafe[CHANNEL_COUNT];
 
   int trimX[2];
   int trimY[2];
   MixData mixes[MIX_COUNT];
   uint8_t driveType;
   };
+
+  static_assert((MAX_MODELS * sizeof(ModelData)) < EEPROM_STICK_CAL_MAX_DATA_ADDR,
+                "EEPROM model data overlaps settings storage");
 
   struct BattleEnemy {
   float x;
@@ -355,10 +465,13 @@ enum NumpadTarget {
     uint32_t type28Count = 0;
     uint32_t type29Count = 0;
     uint32_t type2BCount = 0;
+    uint32_t type2ECount = 0;
     uint32_t type32Count = 0;
     uint32_t type3ACount = 0;
     uint32_t otherCount = 0;
     uint8_t lastType = 0;
+    uint8_t recentBytes[16] = {};
+    uint8_t recentByteIndex = 0;
     uint8_t frame[64] = {};
     uint8_t frameLen = 0;
     bool frameUpdated = false;
@@ -382,6 +495,7 @@ enum NumpadTarget {
   volatile uint32_t elrsType1CCount = 0;
   volatile uint32_t elrsType1DCount = 0;
   volatile uint32_t elrsType29Count = 0;
+  volatile uint32_t elrsType2BCount = 0;
   volatile uint32_t elrsType2ECount = 0;
   volatile uint32_t elrsType3ACount = 0;
   volatile uint32_t elrsTypeOtherCount = 0;
@@ -406,6 +520,19 @@ enum NumpadTarget {
   bool elrsBindAwaitingResult = false;
   uint8_t elrsBindFieldIndex = 0;
   bool elrsBindFieldKnown = false;
+  uint8_t elrsTxPowerFieldIndex = 0;
+  bool elrsTxPowerFieldKnown = false;
+  bool elrsTxPowerFieldIsSelection = false;
+  bool elrsTxPowerSelectionOneBased = false;
+  uint8_t elrsTxPowerOptionCount = 0;
+  uint16_t elrsTxPowerOptionsMw[16] = {};
+  uint16_t elrsTxPowerMw = 100;
+  uint16_t elrsTxPowerPendingMw = 100;
+  bool elrsTxPowerWritePending = false;
+  bool elrsTxPowerWritePersistPending = true;
+  bool elrsLowPowerFallbackActive = false;
+  unsigned long elrsNoLinkPowerTimerStart = 0;
+  uint16_t modelElrsTxPowerMw[MAX_MODELS] = {100, 100, 100, 100};
   uint8_t elrsBindCommandStep = 0;
   uint8_t elrsBindCommandTimeout = 0;
   uint8_t elrsParameterCount = 0;
@@ -439,12 +566,65 @@ enum NumpadTarget {
   int elrsPinPairIndex = 0;
   uint8_t elrsActiveTxPin = ELRS_UART_TX_PIN_DEFAULT;
   uint8_t elrsActiveRxPin = ELRS_UART_RX_PIN_DEFAULT;
+  uint8_t elrsActiveModuleProfile =
+    (ELRS_MODULE_PROFILE == ELRS_MODULE_PROFILE_RANGER_NANO) ? ELRS_MODULE_PROFILE_RANGER_NANO : ELRS_MODULE_PROFILE_INTERNAL;
+  bool elrsRuntimeHalfDuplex = (ELRS_MODULE_PROFILE == ELRS_MODULE_PROFILE_RANGER_NANO);
+  bool elrsAutoDetectLocked = (ELRS_MODULE_PROFILE != ELRS_MODULE_PROFILE_AUTO);
+  bool elrsNoModuleDetected = false;
+  unsigned long elrsProfileDetectStartTime = 0;
+  unsigned long elrsNoModuleRetryTime = 0;
+  uint32_t elrsProfileDetectStartResponses = 0;
   bool elrsRxInterruptAttached = false;
+  enum ElrsReceiverConfigState : uint8_t {
+    RX_CONFIG_IDLE,
+    RX_CONFIG_CONNECTING,
+    RX_CONFIG_FETCHING,
+    RX_CONFIG_DONE,
+    RX_CONFIG_FAILED
+  };
+  bool elrsReceiverConfigActive = false;
+  ElrsReceiverConfigState elrsReceiverConfigState = RX_CONFIG_IDLE;
+  unsigned long elrsReceiverConfigStartTime = 0;
+  unsigned long elrsReceiverConfigLastUiTime = 0;
+  char elrsReceiverConfigStatus[72] = "Idle";
+  char elrsReceiverConfigDetail[96] = "";
+  char elrsReceiverConfigLastEndpoint[24] = "";
+  char elrsReceiverProductName[44] = "-";
+  char elrsReceiverLuaName[18] = "-";
+  char elrsReceiverUidText[28] = "-";
+  int elrsReceiverWifiInterval = -1;
+  int elrsReceiverUartBaud = -1;
+  int elrsReceiverFailsafe = -1;
+  int elrsReceiverModelId = -1;
+  int elrsReceiverEditFailsafe = 0;
+  int elrsReceiverEditModelId = 255;
+  uint8_t elrsReceiverPwmCount = 0;
+  uint32_t elrsReceiverPwmRaw[16] = {};
+  uint32_t elrsReceiverPwmEditRaw[16] = {};
+  int elrsReceiverPwmFailsafeUs[16] = {};
+  int elrsReceiverPwmEditFailsafeUs[16] = {};
+  int elrsReceiverPwmPins[16] = {};
+  bool elrsReceiverPwmEditTouched[16] = {};
+  uint32_t elrsReceiverPwmEditGeneration[16] = {};
+  int elrsReceiverEditPwmIndex = 0;
+  bool elrsReceiverPwmNumpadArmed = false;
+  int elrsReceiverPwmNumpadArmedIndex = -1;
+  int elrsReceiverPwmNumpadOriginalUs = 0;
+  bool elrsReceiverSaveArmed = false;
+  bool elrsReceiverConfigTouchLocked = false;
+  unsigned long elrsReceiverConfigTouchUnlockAt = 0;
+  unsigned long elrsReceiverConfigNoTouchSince = 0;
+  bool elrsReceiverConfigDirty = false;
+  bool elrsReceiverConfigStaticDirty = true;
+  uint32_t elrsReceiverConfigGeneration = 0;
+  unsigned long elrsReceiverConfigLoadedAt = 0;
+  String elrsReceiverConfigBody = "";
 
   int focusIndex = 0;
   unsigned long lastDpadTime = 0;
   int controllerSettingsPage = 0;
   int modelSettingsPage = 0;
+  const int controllerSettingsPageCount = STICK_CAL_SCREEN_ENABLED ? 3 : 2;
 
   DriveType currentDrive = DRIVE_TANK;
   Screen currentScreen = SCREEN_SPLASH;
@@ -454,34 +634,184 @@ enum NumpadTarget {
 
   bool uiNeedsRedraw = true;
   bool topBarNeedsRedraw = true;
+  bool topBarForceRedraw = true;
   bool touchActive = false;
   bool waitingForRelease = false;
   bool screenChangePending = false;
   bool screenAwake = true;
   bool displayDimmed = false;
+  bool screenOffManual = false;
   bool suppressWakeUntilRelease = false;
   bool fullRedraw = true;
   Screen nextScreen;
   Screen lastScreen = SCREEN_SPLASH;
   Screen reverseReturnScreen = SCREEN_CONTROLLER_SETTINGS;
+  bool backHoldActive = false;
+  bool backHoldTriggered = false;
+  bool backHoldSuppressUntilRelease = false;
+  unsigned long backHoldStartTime = 0;
+  Screen backHoldShortTarget = SCREEN_MAIN;
+  #define BACK_HOLD_HOME_MS 1000UL
+
+  enum TimerMode : uint8_t {
+    TIMER_MODE_COUNT_DOWN,
+    TIMER_MODE_COUNT_UP
+  };
+  TimerMode timerMode = TIMER_MODE_COUNT_DOWN;
+  bool timerRunning = false;
+  bool timerNeedsRedraw = true;
+  bool timerStaticNeedsRedraw = true;
+  unsigned long timerRunStartedAt = 0;
+  unsigned long timerAccumulatedMs = 0;
+  unsigned long timerLastUiTickMs = 0;
+  uint32_t timerTargetSeconds = 0;
+  String timerInputBuffer = "";
+  char lastTimerDisplayText[12] = "";
+  TimerMode lastTimerDrawMode = TIMER_MODE_COUNT_DOWN;
+  bool lastTimerDrawRunning = false;
+  bool lastTimerAlarmActive = false;
+  bool lastTimerAlarmVisible = true;
+  bool mainSwipeActive = false;
+  bool mainSwipeConsumedTouch = false;
+  int mainSwipeStartX = 0;
+  int mainSwipeStartY = 0;
+  int mainSwipeLastX = 0;
+  int mainSwipeLastY = 0;
+  unsigned long mainSwipeStartTime = 0;
+  #define MAIN_SWIPE_MIN_DX 70
+  #define MAIN_SWIPE_MAX_DY 70
+  #define MAIN_SWIPE_MAX_MS 900UL
+  #define TIMER_REFRESH_MS 200UL
+  #define TIMER_ALARM_BLINK_MS 500UL
+  #define TIMER_KEY_MAX_DIGITS 4
+  #define TIMER_MAX_SECONDS (99UL * 60UL + 59UL)
+  #define TIMER_DISPLAY_X 14
+  #define TIMER_DISPLAY_Y 62
+  #define TIMER_DISPLAY_W 212
+  #define TIMER_DISPLAY_H 82
+  #define TIMER_MODE_Y 154
+  #define TIMER_MODE_W 98
+  #define TIMER_MODE_H 28
+  #define TIMER_COUNT_DOWN_X 14
+  #define TIMER_COUNT_UP_X 128
+  #define TIMER_ACTION_Y 194
+  #define TIMER_ACTION_W 98
+  #define TIMER_ACTION_H 28
+  #define TIMER_START_X 14
+  #define TIMER_RESET_X 128
+
+  bool powerButtonPressed = false;
+  bool powerButtonShutdownPending = false;
+  bool powerButtonSuppressShortPressUntilRelease = false;
+  bool powerLedOn = false;
+  bool powerLedBreathing = false;
+  uint8_t powerLedDuty = 0;
+  unsigned long powerLedBreatheStartTime = 0;
+  unsigned long powerButtonPressedAt = 0;
+
+  enum StatusRgbDiagCode : uint8_t {
+    STATUS_RGB_OK = 0,
+    STATUS_RGB_NO_BATTERY,
+    STATUS_RGB_NO_ADS,
+    STATUS_RGB_NO_ELRS,
+    STATUS_RGB_NO_PCF8575,
+    STATUS_RGB_DPAD_SELECT,
+    STATUS_RGB_DPAD_LEFT,
+    STATUS_RGB_DPAD_UP,
+    STATUS_RGB_DPAD_DOWN,
+    STATUS_RGB_DPAD_RIGHT
+  };
+  StatusRgbDiagCode currentStatusRgbDiagCode = STATUS_RGB_OK;
+  StatusRgbDiagCode lastStatusRgbDiagCode = STATUS_RGB_OK;
+  uint8_t lastStatusRgbStep = 255;
+  uint8_t lastStatusRgbHalfStep = 255;
+  uint16_t lastStatusRgbActiveMask = 0;
+  unsigned long statusRgbCycleStartTime = 0;
+  bool lastStatusRgbPauseActive = false;
 
   unsigned long lastActivityTime = 0;
   unsigned long splashStartTime = 0;
+  bool startupThrottleSafetyCleared = false;
+  bool startupThrottleSafetyScreenDrawn = false;
+  bool startupThrottleBypassTouchActive = false;
+  uint8_t startupThrottleBypassTapCount = 0;
+  unsigned long lastStartupThrottleSafetyDrawTime = 0;
+  bool autoDeepSleepWarningVisible = false;
+  bool autoDeepSleepWarningScreenDrawn = false;
+  int autoDeepSleepLastWarningSeconds = -1;
   unsigned long fpsLastTime = 0;
   int frameCount = 0;
   bool splashDone = false;
   int8_t modelFailsafeValues[MAX_MODELS][CHANNEL_COUNT] = {};
   uint8_t modelRateValues[MAX_MODELS][CHANNEL_COUNT] = {};
-  uint8_t modelExpoValues[MAX_MODELS][CHANNEL_COUNT] = {};
+  int8_t modelExpoValues[MAX_MODELS][CHANNEL_COUNT] = {};
   uint8_t modelEndpointLowValues[MAX_MODELS][CHANNEL_COUNT] = {};
   uint8_t modelEndpointHighValues[MAX_MODELS][CHANNEL_COUNT] = {};
+  uint8_t modelTankLeftEscChannel[MAX_MODELS] = {1, 1, 1, 1};   // default left track -> CH2
+  uint8_t modelTankRightEscChannel[MAX_MODELS] = {0, 0, 0, 0};  // default right track -> CH1
+  uint8_t escSetupStep = 0;                // 0 = choose left ESC, 1 = choose right ESC
+  uint8_t escSetupPendingLeftChannel = 1;  // channel index 0..3
 
   #define DISPLAY_BL_PIN 45
   #define DISPLAY_BL_PWM_FREQ 1000
   #define DISPLAY_BL_PWM_BITS 8
   #define BRIGHTNESS_ON 255
   #define BRIGHTNESS_OFF 0
-  #define DISPLAY_BACKLIGHT_SERIAL_DEBUG true
+  #define DISPLAY_BACKLIGHT_SERIAL_DEBUG false
+  #define STICK_CAL_USE_HARDCODED_DEFAULTS true
+  #define STARTUP_THROTTLE_SAFETY_ENABLED true
+  #define STARTUP_THROTTLE_SAFETY_CHANNEL 2
+  #define STARTUP_THROTTLE_SAFE_THRESHOLD -0.85f
+  #define STARTUP_THROTTLE_SCREEN_REFRESH_MS 150UL
+  #define STARTUP_THROTTLE_BYPASS_TAPS 8
+  #define STARTUP_THROTTLE_BYPASS_Y_MIN 232
+  #define ELRS_AUTO_RETRY_NO_MODULE_MS 5000UL
+  #define POWER_BUTTON_ENABLED true
+  #define POWER_BUTTON_SENSE_PIN 2
+  #define POWER_BUTTON_REF_PIN 3
+  #define POWER_BUTTON_HOLD_MS 3000UL
+  #define POWER_LED_ENABLED true
+  #define POWER_LED_POS_PIN 14
+  #define POWER_LED_NEG_PIN 21
+  #define POWER_LED_SHUTDOWN_BLINK_MS 250UL
+  #define POWER_LED_PWM_FREQ 500
+  #define POWER_LED_PWM_BITS 8
+  #define POWER_LED_SLEEP_BREATHE_PERIOD_MS 3000UL
+  #define POWER_LED_SLEEP_MIN_DUTY 8
+  #define POWER_LED_SLEEP_MAX_DUTY 150
+  #define STATUS_RGB_LED_ENABLED true
+  #define STATUS_RGB_LED_PIN 42
+  #define STATUS_RGB_LED_BRIGHTNESS 32
+  #define STATUS_RGB_LED_STEP_MS 1000UL
+  #define STATUS_RGB_LED_REPEAT_GAP_MS 500UL
+  #define STATUS_RGB_LED_CODE_PAUSE_MS 2000UL
+  #define STATUS_RGB_DPAD_DIAGNOSTICS true
+  #define SOFT_POWER_PREF_NAMESPACE "power"
+  #define SOFT_POWER_PREF_KEY "softOff"
+  #define AUDIO_ENABLED true
+  #define AUDIO_CODEC_I2C_ADDR 0x18
+  #define AUDIO_SAMPLE_RATE 44100
+  #define AUDIO_CODEC_RATE RATE_44K
+  #define AUDIO_VOLUME_PERCENT 100
+  #define AUDIO_CLICK_AMPLITUDE 30000
+  #define AUDIO_TONE_AMPLITUDE 32000
+  #define AUDIO_PA_ENABLE_PIN 1
+  #define AUDIO_PA_ENABLE_LEVEL LOW
+  #define AUDIO_I2S_MCLK_PIN 4
+  #define AUDIO_I2S_BCLK_PIN 5
+  #define AUDIO_I2S_DOUT_PIN 6
+  #define AUDIO_I2S_WS_PIN 7
+  #define AUDIO_CLICK_MIN_INTERVAL_MS 35UL
+  #define AUDIO_STARTUP_TEST_TONE false
+  #define AUDIO_USE_SQUARE_TEST_TONE false
+  #define AUDIO_AMP_SETTLE_MS 25
+  #define AUDIO_ZERO_FLUSH_FRAMES 96
+  #define AUDIO_DRAIN_SILENCE_MS 30
+  #define AUDIO_RETEST_DELAY_MS 3000UL
+  #define STARTUP_AUDIO_ENABLED true
+  #define STARTUP_AUDIO_SAMPLE_REPEAT 2
+  #define STARTUP_AUDIO_CHUNK_FRAMES 512
+  #define STARTUP_SPLASH_DURATION_MS CAVE_JOHNSON_STARTUP_DURATION_MS
 
   const uint8_t displayBrightnessOptions[] = {48, 80, 112, 144, 176, 208, 232, 255};
   const uint8_t displaySleepBrightnessOptions[] = {0, 12, 24, 40, 56, 72, 96, 128};
@@ -492,9 +822,9 @@ enum NumpadTarget {
   const uint8_t displayTimeoutOptionCount = (uint8_t)(sizeof(displayTimeoutOptionsSec) / sizeof(displayTimeoutOptionsSec[0]));
   const uint8_t displayOffTimeoutOptionCount = (uint8_t)(sizeof(displayOffTimeoutOptionsSec) / sizeof(displayOffTimeoutOptionsSec[0]));
   const uint8_t DEFAULT_DISPLAY_BRIGHTNESS = BRIGHTNESS_ON;
-  const uint8_t DEFAULT_DISPLAY_SLEEP_BRIGHTNESS = BRIGHTNESS_OFF;
-  const uint8_t DEFAULT_DISPLAY_TIMEOUT_INDEX = 2;
-  const uint8_t DEFAULT_DISPLAY_OFF_TIMEOUT_INDEX = 2;
+  const uint8_t DEFAULT_DISPLAY_SLEEP_BRIGHTNESS = 128; // ~50% of 255
+  const uint8_t DEFAULT_DISPLAY_TIMEOUT_INDEX = 3;      // 1 minute
+  const uint8_t DEFAULT_DISPLAY_OFF_TIMEOUT_INDEX = 5;  // 2 minutes
   const uint8_t THEME_DARK = 0;
   const uint8_t THEME_LIGHT = 1;
   uint8_t displayBrightness = DEFAULT_DISPLAY_BRIGHTNESS;
@@ -505,16 +835,48 @@ enum NumpadTarget {
   uint8_t lastAppliedBacklightBrightness = 255;
   bool panelDisplayEnabled = true;
   bool stickBaseSpriteNeedsRebuild = true;
+#if AUDIO_ENABLED
+  DriverPins hosyondAudioPins;
+  AudioBoard hosyondAudioBoard(AudioDriverES8311, hosyondAudioPins);
+  I2SClass hosyondAudioI2S;
+  bool audioReady = false;
+  bool audioCodecReady = false;
+  bool audioI2sReady = false;
+  bool audioStartupRetestPending = false;
+  unsigned long audioStartupRetestTime = 0;
+  bool startupAudioPlaying = false;
+  bool startupAudioStarted = false;
+  uint32_t startupAudioSampleIndex = 0;
+  uint8_t startupAudioRepeatIndex = 0;
+  unsigned long lastAudioClickMs = 0;
+#endif
 
   #define TARGET_FPS 24
   #define MAIN_FRAME_INTERVAL_MS (1000UL / TARGET_FPS)
   #define TOUCH_POLL_INTERVAL_MS 16
-  #define TOPBAR_UPDATE_INTERVAL_MS 250
+  #define MIX_PAGE_TOGGLE_DEBOUNCE_MS 450UL
   #define MODEL_NAME_HOLD_MS 700
   #define BATTERY_ADC_PIN 9
+  #define I2C_SDA_PIN 16
+  #define I2C_SCL_PIN 15
+  #define PERIPHERAL_POWER_SWITCHES_ENABLED false
+  #define UART_5V_ENABLE_PIN -1
+  #define I2C_3V3_ENABLE_PIN -1
+  #define PERIPHERAL_POWER_ENABLE_ACTIVE_HIGH true
   #define ADS1115_I2C_ADDR 0x48
   #define MCP23017_I2C_ADDR_MIN 0x20
   #define MCP23017_I2C_ADDR_MAX 0x27
+  #define PCF8575_I2C_ADDR_MIN 0x20
+  #define PCF8575_I2C_ADDR_MAX 0x27
+  #define PCF8575_RECONNECT_INTERVAL_MS 1000UL
+  #define I2C_STARTUP_SCAN_ENABLED false
+  #define PCF8575_DPAD_SELECT_BIT 0
+  #define PCF8575_DPAD_LEFT_BIT 1
+  #define PCF8575_DPAD_UP_BIT 2
+  #define PCF8575_DPAD_DOWN_BIT 3
+  #define PCF8575_DPAD_RIGHT_BIT 4
+  #define PCF8575_SWITCH_LOW_BIT 5
+  #define PCF8575_SWITCH_HIGH_BIT 6
   #define MCP23017_IODIRB_REG 0x01
   #define MCP23017_GPPUB_REG 0x0D
   #define MCP23017_GPIOB_REG 0x13
@@ -533,16 +895,35 @@ enum NumpadTarget {
   #define STICK_SAMPLE_INTERVAL_MS 20
   #define ADS1115_RECONNECT_INTERVAL_MS 1000
   #define ADS1115_MAX_CONSECUTIVE_READ_FAILS 4
+  #define ADS1115_DEFAULT_MIN_COUNT 0
+  #define ADS1115_DEFAULT_MAX_COUNT ADS1115_JOYSTICK_MAX_COUNT
+  const int16_t STICK_CAL_HARDCODED_MIN[STICK_AXIS_COUNT] = {
+    4494, 3062, 3103, 3499
+  };
+  // A1/CH3 is a throttle-style axis; use the measured endpoints with a
+  // synthetic midpoint so it can still reach true 0% and 100%.
+  const int16_t STICK_CAL_HARDCODED_CENTER[STICK_AXIS_COUNT] = {14925, 12816, 12786, 12935};
+  const int16_t STICK_CAL_HARDCODED_MAX[STICK_AXIS_COUNT] = {
+    24224, 22571, 22063, 22541
+  };
   #define STICK_DEADZONE 0.07f
   #define STICK_FILTER_ALPHA 0.35f
+  #define STICK_DISPLAY_WAKE_DELTA 0.12f
   #define BATTERY_DIVIDER_RATIO 2.0f
   #define BATTERY_PRESENT_MIN_V 2.50f
   #define BATTERY_EMPTY_V 3.30f
   #define BATTERY_FULL_V 4.20f
   #define BATTERY_SAMPLE_INTERVAL_MS 500
-  #define BATTERY_CHARGE_WINDOW_MS 8000
-  #define BATTERY_CHARGING_DELTA_V 0.018f
-  #define BATTERY_CHARGING_HOLD_MS 15000
+  #define BATTERY_CHARGE_WINDOW_MS 5000
+  #define BATTERY_CHARGING_DELTA_V 0.006f
+  #define BATTERY_CHARGING_HOLD_MS 30000
+  #define BATTERY_LOW_WARN_V 3.50f
+  #define BATTERY_CRITICAL_SLEEP_V 3.30f
+  #define BATTERY_CRITICAL_GRACE_MS 10000UL
+  #define BATTERY_LOW_WARNING_REPEAT_MS 60000UL
+  #define AUTO_DEEP_SLEEP_ENABLED true
+  #define AUTO_DEEP_SLEEP_TIMEOUT_MS 300000UL
+  #define AUTO_DEEP_SLEEP_WARNING_MS 30000UL
 
   // ==== BOTTOM NAV BAR ====
   #define FOOTER_H 36
@@ -605,9 +986,9 @@ enum NumpadTarget {
   #define DISPLAY_SETTINGS_SLEEP_NOW_Y 258
   #define DISPLAY_SETTINGS_SLEEP_NOW_W 92
   #define DISPLAY_SETTINGS_SLEEP_NOW_H 26
-  #define DISPLAY_SETTINGS_THEME_X 10
+  #define DISPLAY_SETTINGS_THEME_X 20
   #define DISPLAY_SETTINGS_THEME_Y 258
-  #define DISPLAY_SETTINGS_THEME_W 120
+  #define DISPLAY_SETTINGS_THEME_W 200
   #define DISPLAY_SETTINGS_THEME_H 26
 
   #define SPACE_STATUS_H 28
@@ -671,6 +1052,10 @@ enum NumpadTarget {
   #define MIX_FIELD_X      120
   #define MIX_FIELD_W      92
   #define MIX_FIELD_H      28
+  #define MIX_PAGE_BTN_X   130
+  #define MIX_PAGE_BTN_Y   (FOOTER_Y + NAV_BTN_Y_OFFSET)
+  #define MIX_PAGE_BTN_W   100
+  #define MIX_PAGE_BTN_H   NAV_BTN_HEIGHT
   #define MIX_MINUS_X      120
   #define MIX_PLUS_X       186
   #define MIX_ADJUST_W     26
@@ -725,6 +1110,43 @@ enum NumpadTarget {
   #define ELRS_BIND_BTN_Y 132
   #define ELRS_BIND_BTN_W 200
   #define ELRS_BIND_BTN_H 72
+  #define ELRS_RX_CONFIG_BTN_X 20
+  #define ELRS_RX_CONFIG_BTN_Y 104
+  #define ELRS_RX_CONFIG_BTN_W 200
+  #define ELRS_RX_CONFIG_BTN_H 24
+  #define ELRS_RX_FIELD_X 118
+  #define ELRS_RX_FIELD_W 90
+  #define ELRS_RX_FIELD_H 24
+  #define ELRS_RX_MODEL_ID_Y 146
+  #define ELRS_RX_PWM_ROW1_Y 190
+  #define ELRS_RX_PWM_ROW2_Y 222
+  #define ELRS_RX_PWM_LABEL_W 28
+  #define ELRS_RX_PWM_FIELD_W 64
+  #define ELRS_RX_PWM_LEFT_LABEL_X 14
+  #define ELRS_RX_PWM_LEFT_FIELD_X 50
+  #define ELRS_RX_PWM_RIGHT_LABEL_X 124
+  #define ELRS_RX_PWM_RIGHT_FIELD_X 160
+  #define ELRS_RX_SAVE_X 72
+  #define ELRS_RX_SAVE_Y 252
+  #define ELRS_RX_SAVE_W 96
+  #define ELRS_RX_SAVE_H 28
+  #define ELRS_RX_PWM_FAILSAFE_MIN_US 1000
+  #define ELRS_RX_PWM_FAILSAFE_MAX_US 2000
+  #define ELRS_RX_PWM_FAILSAFE_OFFSET_US 476
+  #define ELRS_RX_PWM_FAILSAFE_MASK 0x7FFUL
+  #define ELRS_RX_PWM_INPUT_CHANNEL_SHIFT 11
+  #define ELRS_RX_PWM_INPUT_CHANNEL_MASK 0x0FUL
+  #define ELRS_TX_POWER_MIN_MW 0
+  #define ELRS_TX_POWER_MAX_MW 150
+  #define ELRS_POWER_SLIDER_X 24
+  #define ELRS_POWER_SLIDER_Y 222
+  #define ELRS_POWER_SLIDER_W 192
+  #define ELRS_POWER_SLIDER_H 14
+  #define ELRS_POWER_SLIDER_KNOB_RADIUS 9
+  #define ELRS_POWER_VALUE_BOX_X 74
+  #define ELRS_POWER_VALUE_BOX_Y 242
+  #define ELRS_POWER_VALUE_BOX_W 92
+  #define ELRS_POWER_VALUE_BOX_H 28
   #define OTA_HOSTNAME "anubis-tx"
   #define OTA_STA_SSID ""
   #define OTA_STA_PASSWORD ""
@@ -733,23 +1155,24 @@ enum NumpadTarget {
   #define RATE_LOW_VALUE 40
   #define RATE_NORMAL_VALUE 65
   #define RATE_HIGH_VALUE 80
-  #define EXPO_LOW_VALUE 20
-  #define EXPO_NORMAL_VALUE 40
-  #define EXPO_HIGH_VALUE 60
+  #define EXPO_LOW_VALUE -40
+  #define EXPO_NORMAL_VALUE 0
+  #define EXPO_HIGH_VALUE 40
   #define RATE_TAB_Y 58
-  #define RATE_TAB_W 46
+  #define RATE_TAB_W 34
   #define RATE_TAB_H 28
-  #define RATE_TAB_GAP 8
+  #define RATE_TAB_GAP 4
   #define RATE_TAB_X(i) (16 + ((i) * (RATE_TAB_W + RATE_TAB_GAP)))
   #define RATE_TOGGLE_Y 112
   #define RATE_TOGGLE_W 60
   #define RATE_TOGGLE_H 28
   #define RATE_TOGGLE_GAP 10
   #define RATE_TOGGLE_X(i) (15 + ((i) * (RATE_TOGGLE_W + RATE_TOGGLE_GAP)))
-  #define RATE_SLIDER_X 24
-  #define RATE_SLIDER_Y 172
-  #define RATE_SLIDER_W 192
-  #define RATE_SLIDER_H 22
+#define RATE_SLIDER_X 24
+#define RATE_SLIDER_Y 172
+#define RATE_SLIDER_W 192
+#define RATE_SLIDER_H 22
+#define RATE_SLIDER_KNOB_RADIUS 11
   #define RATE_VALUE_BOX_X 82
   #define RATE_VALUE_BOX_Y 218
   #define RATE_VALUE_BOX_W 76
@@ -771,6 +1194,7 @@ enum NumpadTarget {
   int modelPanelY = 0;
   int modelPanelW = 0;
   int modelPanelH = 0;
+  bool mainOutputPanelNeedsRedraw = true;
 
   uint16_t COLOR_BG = 0;
   uint16_t COLOR_PANEL = 0;
@@ -789,20 +1213,29 @@ enum NumpadTarget {
   static int lastBattery = -1;
 
   bool reverseNeedsRedraw = true;
-  bool reverseChannelDirty[CHANNEL_COUNT] = { true, true, true, true };
+  bool reverseChannelDirty[CHANNEL_COUNT] = { true, true, true, true, true, true };
 
   bool failsafeNeedsRedraw = true;
-  bool failsafeDirty[CHANNEL_COUNT] = { true, true, true, true };
+  bool failsafeDirty[CHANNEL_COUNT] = { true, true, true, true, true, true };
   bool mixingNeedsRedraw = true;
   bool batteryPresent = false;
   bool batteryCharging = false;
+  bool lowBatteryWarningVisible = false;
+  bool lowBatteryWarningScreenDrawn = false;
   bool ads1115Ready = false;
+  bool ads1115StatusLogged = false;
+  bool ads1115LastLoggedReady = false;
   bool mcp23017Ready = false;
+  bool pcf8575Ready = false;
+  bool adsStickCalibrationValid = false;
   bool stickFilterInitialized = false;
   uint8_t mcp23017Address = MCP23017_I2C_ADDR_MIN;
+  uint8_t pcf8575Address = PCF8575_I2C_ADDR_MIN;
+  uint16_t pcf8575LastValue = 0xFFFF;
   uint8_t adsConsecutiveReadFails = 0;
   unsigned long lastAdsReconnectAttemptMs = 0;
   unsigned long lastMcpReconnectAttemptMs = 0;
+  unsigned long lastPcfReconnectAttemptMs = 0;
   unsigned long lastBatterySampleTime = 0;
   unsigned long lastStickSampleTime = 0;
   float batteryFilteredVoltage = 0.0f;
@@ -810,8 +1243,30 @@ enum NumpadTarget {
   unsigned long batteryChargeWindowStart = 0;
   float batteryChargeWindowVoltage = 0.0f;
   unsigned long batteryChargingHoldUntil = 0;
-  int16_t adsStickCenter[4] = { 0, 0, 0, 0 };
-  float filteredStickAxis[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+  unsigned long batteryCriticalSince = 0;
+  unsigned long lowBatteryWarningDismissedUntil = 0;
+  int16_t adsStickMin[STICK_AXIS_COUNT] = {
+    ADS1115_DEFAULT_MIN_COUNT,
+    ADS1115_DEFAULT_MIN_COUNT,
+    ADS1115_DEFAULT_MIN_COUNT,
+    ADS1115_DEFAULT_MIN_COUNT
+  };
+  int16_t adsStickCenter[STICK_AXIS_COUNT] = { 0, 0, 0, 0 };
+  int16_t adsStickMax[STICK_AXIS_COUNT] = {
+    ADS1115_JOYSTICK_MAX_COUNT,
+    ADS1115_JOYSTICK_MAX_COUNT,
+    ADS1115_JOYSTICK_MAX_COUNT,
+    ADS1115_JOYSTICK_MAX_COUNT
+  };
+  int16_t adsLastRawValues[STICK_AXIS_COUNT] = { 0, 0, 0, 0 };
+  float filteredStickAxis[STICK_AXIS_COUNT] = { 0.0f, 0.0f, 0.0f, 0.0f };
+  float accessoryInputChannels[CHANNEL_COUNT - STICK_AXIS_COUNT] = { 0.0f, 0.0f };
+  float lastDisplayWakeStickChannels[STICK_AXIS_COUNT] = { 0.0f, 0.0f, 0.0f, 0.0f };
+  bool displayWakeStickBaselineValid = false;
+  StickCalibrationState stickCalibrationState = STICK_CAL_STATE_CAPTURE_CENTER;
+  bool stickCalibrationNeedsRedraw = true;
+  int16_t stickCalibrationSweepMin[STICK_AXIS_COUNT] = { 0, 0, 0, 0 };
+  int16_t stickCalibrationSweepMax[STICK_AXIS_COUNT] = { 0, 0, 0, 0 };
   BattleEnemy spaceEnemies[BZ_MAX_ENEMIES];
   BattleObstacle spaceObstacles[BZ_MAX_OBSTACLES];
   float spacePlayerX = 0.0f;
@@ -845,6 +1300,8 @@ enum NumpadTarget {
   bool spaceWaveCleared = false;
   bool spaceGameStarted = false;
   int selectedMixIndex = 0;
+  int selectedMixPage = MIX_PAGE_PRESET;
+  unsigned long mixPageToggleLockedUntil = 0;
   int selectedRateChannel = 0;
   int selectedExpoChannel = 0;
   int endpointNumpadChannel = -1;
@@ -854,9 +1311,11 @@ enum NumpadTarget {
   bool ratesNeedsRedraw = true;
   bool expoNeedsRedraw = true;
   bool endpointNeedsRedraw = true;
+  bool displaySettingsNeedsRedraw = true;
   bool ratesValueDirty = false;
   bool expoValueDirty = false;
-  uint8_t endpointSideLatch[CHANNEL_COUNT] = { 1, 1, 1, 1 };
+  uint8_t endpointSideLatch[CHANNEL_COUNT] = { 1, 1, 1, 1, 1, 1 };
+  bool endpointAutoFocusActive = false;
   bool mixNumpadEditingRate = true;
   NumpadTarget mixNumpadTarget = NUMPAD_TARGET_MIX_RATE;
   String mixNumpadBuffer = "";
@@ -869,6 +1328,8 @@ enum NumpadTarget {
   // placeholder values for now (you’ll replace with real captured values later)
   bool isInside(int x, int y, int bx, int by, int bw, int bh);
   int mapTouch(int val, int in_min, int in_max, int out_min, int out_max);
+  int cycleFocusIndex(int current, int count, bool forward);
+  ButtonID cycleButtonOrder(ButtonID current, const ButtonID *order, int count, bool forward);
   void setScreen(Screen screen);
   void queueScreenButton(ButtonID button, Screen screen);
   void saveKeyboardBufferToModelSlot();
@@ -878,6 +1339,41 @@ enum NumpadTarget {
   void saveDisplaySettings();
   void applyThemePalette();
   void applyDisplayBacklight();
+  void initStatusRgbLed();
+  void setStatusRgbLed(uint8_t red, uint8_t green, uint8_t blue);
+  bool isI2cDevicePresent(uint8_t address);
+  void initAudio();
+  void setAudioAmpEnabled(bool enabled);
+  void silenceAudioOutput(bool stopI2s);
+  void updateAudioDiagnostics(unsigned long now);
+  void writeAudioStereoSample(int16_t sample);
+  void startStartupAudioClip();
+  void updateStartupAudioClip();
+  void playAudioTone(uint16_t frequency, uint16_t durationMs, uint16_t amplitude, bool gated);
+  void playAudioClick(uint16_t frequency = 1800, uint16_t durationMs = 32);
+  void getStatusRgbLedPatternColor(StatusRgbDiagCode code, uint8_t step, uint8_t &red, uint8_t &green, uint8_t &blue);
+  void setStatusRgbLedPattern(StatusRgbDiagCode code, uint8_t step, unsigned long stepElapsed);
+  bool isElrsModuleMissingForStatus(unsigned long now);
+  void updateStatusRgbLed(unsigned long now);
+  uint8_t collectStatusRgbDiagCodes(StatusRgbDiagCode *codes, uint8_t maxCodes);
+  void initPowerLed();
+  void setPowerLed(bool on);
+  void setPowerLedDuty(uint8_t duty);
+  void updatePowerLed(unsigned long now);
+  void initPowerButton();
+  bool isPowerButtonPressed();
+  void updatePowerButton(unsigned long now);
+  void handlePowerButtonShortPress();
+  void drawPowerButtonShutdownPrompt();
+  bool isPowerButtonWake();
+  bool isSoftPowerOffStored();
+  void setSoftPowerOffStored(bool off);
+  void handleSoftPowerBootState();
+  void startPowerButtonDeepSleep();
+  void enterDeepSleepPowerOff();
+  void initPeripheralPowerSwitches();
+  void setPeripheralPowerRails(bool on);
+  void prepareExternalBusesForDeepSleep();
   unsigned long getDisplayDimTimeoutMs();
   unsigned long getDisplayOffTimeoutMs();
   int findDisplayOptionIndex(const uint8_t *options, int optionCount, uint8_t value);
@@ -892,7 +1388,8 @@ enum NumpadTarget {
   void beginOtaFieldEdit(KeyboardTarget target);
   void drawOtaSettingsStatic();
   void drawOtaSettingsDynamic();
-  void drawDisplaySettingsScreen();
+  void drawDisplaySettingsStatic();
+  void drawDisplaySettingsDynamic();
   void drawDisplaySettingsRow(int y, const char* label, const char* valueText,
                               bool minusPressed, bool minusSelected,
                               bool plusPressed, bool plusSelected,
@@ -929,10 +1426,15 @@ enum NumpadTarget {
   void saveExpoValues();
   void loadEndpointValues();
   void saveEndpointValues();
+  bool loadTankEscChannelMap();
+  void saveTankEscChannelMap();
   void initDefaultMixSlot(int modelIndex, int mixIndex);
+  void applyDrivePresetMixes(int modelIndex);
+  bool drivePresetUsesVisibleMixes(int modelIndex);
   bool sanitizeModelMixes(int modelIndex);
   bool sanitizeModelDriveType(int modelIndex);
   bool sanitizeModelProtocol(int modelIndex);
+  bool sanitizeModelTankEscChannels(int modelIndex);
   uint8_t getMixSource(const MixData &mix);
   void setMixSource(MixData &mix, uint8_t source);
   uint8_t getMixDestination(const MixData &mix);
@@ -940,15 +1442,22 @@ enum NumpadTarget {
   bool isMixReverseLinked(const MixData &mix);
   void setMixReverseLinked(MixData &mix, bool linked);
   void openMixNumpad(NumpadTarget target);
+  void openElrsReceiverPwmNumpad(int pwmIndex);
   void closeMixNumpad(bool commitValue);
   bool handleMixNumpadTouch(int x, int y);
   void drawMixNumpad();
   void drawDriveTypeScreen();
   void drawTankModeScreen();
+  void drawEscChannelSetupScreen();
   void drawSpaceGameStatic();
   void drawSpaceGameDynamic();
+  void drawTankBars(int x, int y, int w, int h, float left, float right);
+  void drawTankAuxBars(int x, int y, int w, int h, float turret, float weapon);
   void drawCarBars(int x, int y, int w, int h, float steering, float throttle);
   void drawOmniBars(int x, int y, int w, int h, float ch4, float ch1, float ch2);
+  void drawDroneCommandBars(int x, int y, int w, int h, float yaw, float m1, float m2, float m3, float m4);
+  void restoreQuadXIconClip(int iconX, int iconY, int iconW, int iconH, int clipX, int clipY, int clipW, int clipH);
+  void drawThickArc(int cx, int cy, int innerR, int outerR, int startDeg, int endDeg, uint16_t color);
   void drawDriveTypeOption(int x, int y, int w, int h, const char* label, DriveType drive, ButtonID button);
   void drawDriveTypeOptionIcon(int x, int y, int w, int h, DriveType drive, uint16_t iconColor);
   void drawLegacyTankIcon(int x, int y, int w, int h, uint16_t iconColor);
@@ -969,17 +1478,54 @@ enum NumpadTarget {
   void drawTrimButtons();
   void drawMixingStatic();
   void drawMixingDynamic();
+  int getMixPageBase(int page);
+  int getMixLocalIndex();
+  void setSelectedMixPage(int page);
+  bool toggleSelectedMixPageDebounced(unsigned long now);
+  const char* getMixPageLabel(int page);
+  void drawStickCalibrationScreen();
   void updateBatteryState();
   void drawSplash();
+  bool isStartupThrottleSafe();
+  bool handleStartupThrottleSafetyBypass(uint8_t touchCount, int rawX, int rawY, unsigned long now);
+  void updateStartupThrottleSafetyScreen(unsigned long now);
+  bool updateAutoDeepSleep(unsigned long now, bool inputDetected, bool powerButtonInput);
+  void drawAutoDeepSleepWarningScreen(unsigned long now);
+  bool updateBatterySafety(unsigned long now, bool userDismiss);
+  void drawBatterySafetyScreen(bool critical, unsigned long now);
   void drawGameMenuButton();
+  int getThreePosSwitchPosition();
+  void drawThreePosSwitchIndicator(int cx, int y, int position);
+  void runMainToTimerSwipeTransition();
+  bool handleMainSwipeGesture(bool isTouching, int x, int y, unsigned long now);
+  uint32_t getTimerInputSeconds();
+  unsigned long getTimerElapsedMs(unsigned long now);
+  bool isTimerElapsed(unsigned long now);
+  unsigned long getTimerDisplayMs(unsigned long now);
+  void formatTimerDisplay(unsigned long displayMs, char *out, size_t outSize);
+  void formatTimerTargetBuffer(char *out, size_t outSize);
+  void resetTimerRuntime();
+  void drawTimerScreen();
+  void drawTimerDynamic();
+  void handleTimerTouch(int x, int y);
   bool initAds1115();
   bool readAds1115SingleEnded(uint8_t channel, int16_t &value);
+  void loadStickCalibration();
+  void saveStickCalibration();
+  void resetStickCalibrationDefaults();
+  bool captureStickCalibrationCenter();
+  void updateStickCalibrationSweep();
+  bool finalizeStickCalibration();
+  ButtonID getControllerSettingsDefaultButtonForPage(int page);
   bool initMcp23017();
   uint8_t readMcp23017PortB();
-  void scanI2cBus(const char *label);
-  void probeI2cAddress(uint8_t addr);
+  void printI2cStartupScan();
+  bool initPcf8575();
+  bool readPcf8575(uint16_t &value);
   void updateStickInputs(unsigned long now);
-  float normalizeStickAxis(int16_t raw, int16_t center);
+  void updateAccessoryInputs(unsigned long now);
+  bool updateStickDisplayWake(unsigned long now);
+  float normalizeStickAxis(int16_t raw, int channel);
   void updateChannelOutputs();
   void buildProtocolOutputChannels(float channels[CHANNEL_COUNT]);
   float applyExpoCurve(float value, int expoPercent);
@@ -994,6 +1540,9 @@ enum NumpadTarget {
   void setModelDriveType(int modelIndex, DriveType driveType);
   TankControlMode getModelTankMode(int modelIndex);
   void setModelTankMode(int modelIndex, TankControlMode tankMode);
+  uint8_t getModelTankLeftEscChannel(int modelIndex);
+  uint8_t getModelTankRightEscChannel(int modelIndex);
+  void setModelTankEscChannels(int modelIndex, uint8_t leftChannel, uint8_t rightChannel);
   ProtocolType getModelProtocol(int modelIndex);
   void setModelProtocol(int modelIndex, ProtocolType protocolType);
   void drawExpoStatic();
@@ -1018,6 +1567,31 @@ enum NumpadTarget {
   void startOtaMode();
   void stopOtaMode();
   void updateOtaService();
+  void beginElrsReceiverConfig();
+  void stopElrsReceiverConfig();
+  void updateElrsReceiverConfig();
+  bool fetchElrsReceiverConfig();
+  bool requestElrsReceiverMethod(const char *method, const char *path, const char *body, const char *contentType, String &response);
+  bool requestElrsReceiverPath(const char *path, String &response);
+  bool saveElrsReceiverConfig();
+  bool extractJsonObjectValue(const String &json, const char *key, String &out);
+  bool replaceJsonIntValue(String &json, const char *key, int value);
+  bool parseElrsReceiverPwmConfig(const String &json);
+  int decodeElrsPwmFailsafeUs(uint32_t raw);
+  uint32_t encodeElrsPwmFailsafeUs(uint32_t raw, int failsafeUs);
+  int displayElrsPwmFailsafeUs(int failsafeUs);
+  bool isElrsReceiverPwmConfigEdited(int index);
+  bool replaceElrsPwmConfigValues(String &json);
+  bool isElrsReceiverConfigEdited();
+  ButtonID getElrsReceiverPwmButton(int index);
+  int getElrsReceiverPwmIndexForButton(ButtonID button);
+  void logElrsReceiverWriteEndpoints();
+  bool parseElrsReceiverConfigJson(const String &response);
+  bool extractJsonStringValue(const String &json, const char *key, char *out, size_t outSize);
+  int extractJsonIntValue(const String &json, const char *key, int fallback);
+  bool extractJsonUidValue(const String &json, char *out, size_t outSize);
+  void drawElrsReceiverConfigScreen();
+  void drawElrsReceiverConfigDynamic();
   void drawControllerPlaceholderScreen(const char* title, const char* line1, const char* line2);
   bool initEspNowLink();
   bool setEspNowWifiChannel(uint8_t channel);
@@ -1025,10 +1599,12 @@ enum NumpadTarget {
   void resetEspNowTelemetry();
   void updateEspNowLink(unsigned long now);
   void initElrsUart();
+  void stopElrsUart();
   void updateElrsLink(unsigned long now);
   void initElrsPassiveSniffer();
   void updateElrsPassiveSniffer(unsigned long now);
   void readElrsSniffSerial(HardwareSerial &port, ElrsSniffStats &stats);
+  void logElrsSniffImmediateFrame(const char *label, const uint8_t *frame, uint8_t frameLen);
   void logElrsSniffSummary(const char *label, ElrsSniffStats &stats);
   void logElrsSniffFrame(const char *label, ElrsSniffStats &stats);
   void sendElrsChannelFrame();
@@ -1037,15 +1613,23 @@ enum NumpadTarget {
   void sendElrsBindCommandTo(uint8_t destination);
   void sendElrsLuaBindWrite(uint8_t fieldIndex);
   void sendElrsLuaBindExecWrite(uint8_t fieldIndex);
+  void sendElrsTxPowerWrite(uint16_t powerMw, bool persistToModel = true);
   void sendElrsBindCommand();
   void sendElrsParameterRead(uint8_t fieldIndex, uint8_t chunkIndex);
   void updateElrsParameterDiscovery(unsigned long now);
   void parseElrsDeviceInfoFrame(const uint8_t *frame, uint8_t expected);
   void parseElrsParameterEntryFrame(const uint8_t *frame, uint8_t expected);
+  void parseElrsParameterValueFrame(const uint8_t *frame, uint8_t expected);
+  void drawElrsPowerControl(bool selectedSlider, bool selectedValue, bool forceRedraw);
   void readElrsSerial(unsigned long now);
   void restartElrsUart(uint32_t baud);
   void advanceElrsSerialMode();
   void applyElrsUartPinPair(int pinPairIndex);
+  const char* elrsModuleProfileName(uint8_t profile);
+  void applyElrsModuleProfile(uint8_t profile, bool resetDiscovery);
+  void updateElrsProfileAutoDetect(unsigned long now);
+  uint8_t getElrsBindFallbackFieldIndex();
+  uint32_t getElrsModuleResponseCount();
   bool hasElrsModuleFrames();
   bool hasElrsTxOnlyActivity(unsigned long now);
   void IRAM_ATTR onElrsRxEdge();
@@ -1056,6 +1640,7 @@ enum NumpadTarget {
   int elrsLqToBars(uint8_t linkQuality);
   bool hasEspNowSignal(unsigned long now);
   bool hasEspNowHeaderSignal(unsigned long now);
+  void updateTopBarDirtyState(unsigned long now);
   uint16_t getLatencyIndicatorColor(int latencyMs);
   void sendEspNowControlPacket(unsigned long now);
   void sendEspNowPing(unsigned long now);
@@ -1065,8 +1650,10 @@ enum NumpadTarget {
   void cancelEspNowBinding(bool clearPendingMac);
   void handleEspNowBindPacket(const esp_now_recv_info_t *info, const uint8_t *data, int len);
   void formatReceiverMacShort(const uint8_t *macAddress, char *buffer, size_t bufferSize);
-  void handleEspNowTelemetryPacket(const uint8_t *data, int len);
-  void handleEspNowPingAckPacket(const uint8_t *data, int len);
+  bool isEspNowPacketFromActiveBoundReceiver(const esp_now_recv_info_t *info);
+  void clearActiveEspNowSessionTelemetry();
+  void handleEspNowTelemetryPacket(const esp_now_recv_info_t *info, const uint8_t *data, int len);
+  void handleEspNowPingAckPacket(const esp_now_recv_info_t *info, const uint8_t *data, int len);
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
   void onEspNowSend(const esp_now_send_info_t *tx_info, esp_now_send_status_t status);
 #else
@@ -1134,6 +1721,105 @@ enum NumpadTarget {
     return boundReceiverMacs[modelIndex];
   }
 
+  void writeEepromInt16(int addr, int16_t value) {
+    EEPROM.write(addr, (uint8_t)(value & 0xFF));
+    EEPROM.write(addr + 1, (uint8_t)((value >> 8) & 0xFF));
+  }
+
+  int16_t readEepromInt16(int addr) {
+    uint16_t lo = EEPROM.read(addr);
+    uint16_t hi = EEPROM.read(addr + 1);
+    return (int16_t)((hi << 8) | lo);
+  }
+
+  void resetStickCalibrationDefaults() {
+    adsStickCalibrationValid = false;
+    for (int channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+      adsStickMin[channel] = ADS1115_DEFAULT_MIN_COUNT;
+      adsStickCenter[channel] = 0;
+      adsStickMax[channel] = ADS1115_JOYSTICK_MAX_COUNT;
+      adsLastRawValues[channel] = 0;
+      stickCalibrationSweepMin[channel] = 0;
+      stickCalibrationSweepMax[channel] = 0;
+    }
+  }
+
+  void loadStickCalibration() {
+    if (STICK_CAL_USE_HARDCODED_DEFAULTS) {
+      for (int channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+        adsStickMin[channel] = STICK_CAL_HARDCODED_MIN[channel];
+        adsStickCenter[channel] = STICK_CAL_HARDCODED_CENTER[channel];
+        adsStickMax[channel] = STICK_CAL_HARDCODED_MAX[channel];
+      }
+      adsStickCalibrationValid = true;
+      return;
+    }
+
+    if (EEPROM.read(EEPROM_STICK_CAL_VERSION_ADDR) != STICK_CAL_STORAGE_VERSION) {
+      resetStickCalibrationDefaults();
+      return;
+    }
+
+    bool valid = true;
+    int minAddr = EEPROM_STICK_CAL_MIN_DATA_ADDR;
+    int centerAddr = EEPROM_STICK_CAL_CENTER_DATA_ADDR;
+    int maxAddr = EEPROM_STICK_CAL_MAX_DATA_ADDR;
+
+    for (int channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+      int16_t minValue = readEepromInt16(minAddr);
+      int16_t centerValue = readEepromInt16(centerAddr);
+      int16_t maxValue = readEepromInt16(maxAddr);
+      minAddr += 2;
+      centerAddr += 2;
+      maxAddr += 2;
+
+      if (!(minValue < centerValue && centerValue < maxValue)) {
+        valid = false;
+        break;
+      }
+
+      adsStickMin[channel] = minValue;
+      adsStickCenter[channel] = centerValue;
+      adsStickMax[channel] = maxValue;
+    }
+
+    adsStickCalibrationValid = valid;
+    if (!valid) {
+      resetStickCalibrationDefaults();
+    }
+  }
+
+  void saveStickCalibration() {
+    int minAddr = EEPROM_STICK_CAL_MIN_DATA_ADDR;
+    int centerAddr = EEPROM_STICK_CAL_CENTER_DATA_ADDR;
+    int maxAddr = EEPROM_STICK_CAL_MAX_DATA_ADDR;
+
+    for (int channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+      writeEepromInt16(minAddr, adsStickMin[channel]);
+      writeEepromInt16(centerAddr, adsStickCenter[channel]);
+      writeEepromInt16(maxAddr, adsStickMax[channel]);
+      minAddr += 2;
+      centerAddr += 2;
+      maxAddr += 2;
+    }
+
+    EEPROM.write(EEPROM_STICK_CAL_VERSION_ADDR, STICK_CAL_STORAGE_VERSION);
+    EEPROM.commit();
+    adsStickCalibrationValid = true;
+    Serial.printf(
+      "STICK_CAL_HARDCODED min={%d,%d,%d,%d} center={%d,%d,%d,%d} max={%d,%d,%d,%d}\n",
+      adsStickMin[0], adsStickMin[1], adsStickMin[2], adsStickMin[3],
+      adsStickCenter[0], adsStickCenter[1], adsStickCenter[2], adsStickCenter[3],
+      adsStickMax[0], adsStickMax[1], adsStickMax[2], adsStickMax[3]
+    );
+  }
+
+  ButtonID getControllerSettingsDefaultButtonForPage(int page) {
+    if (page <= 0) return BTN_TRIM;
+    if (page == 1) return BTN_EXPO;
+    return STICK_CAL_SCREEN_ENABLED ? BTN_STICK_CAL : BTN_TRIM;
+  }
+
   int getModelFailsafeValue(int modelIndex, int channel) {
     if (modelIndex < 0 || modelIndex >= MAX_MODELS) return 0;
     if (channel < 0 || channel >= CHANNEL_COUNT) return 0;
@@ -1181,7 +1867,7 @@ enum NumpadTarget {
   void setModelExpoValue(int modelIndex, int channel, int value) {
     if (modelIndex < 0 || modelIndex >= MAX_MODELS) return;
     if (channel < 0 || channel >= CHANNEL_COUNT) return;
-    modelExpoValues[modelIndex][channel] = (uint8_t)constrain(value, 0, 100);
+    modelExpoValues[modelIndex][channel] = (int8_t)constrain(value, -100, 100);
   }
 
   void clearModelExpoValues(int modelIndex) {
@@ -1319,8 +2005,8 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     int addr = EEPROM_EXPO_DATA_ADDR;
     for (int i = 0; i < MAX_MODELS; i++) {
       for (int channel = 0; channel < CHANNEL_COUNT; channel++) {
-        uint8_t storedValue = EEPROM.read(addr++);
-        modelExpoValues[i][channel] = constrain(storedValue, 0, 100);
+        int8_t storedValue = (int8_t)EEPROM.read(addr++);
+        modelExpoValues[i][channel] = (int8_t)constrain((int)storedValue, -100, 100);
       }
     }
   }
@@ -1329,7 +2015,7 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     int addr = EEPROM_EXPO_DATA_ADDR;
     for (int i = 0; i < MAX_MODELS; i++) {
       for (int channel = 0; channel < CHANNEL_COUNT; channel++) {
-        EEPROM.write(addr++, modelExpoValues[i][channel]);
+        EEPROM.write(addr++, (uint8_t)modelExpoValues[i][channel]);
       }
     }
 
@@ -1371,8 +2057,74 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     EEPROM.commit();
   }
 
+  bool loadTankEscChannelMap() {
+    if (EEPROM.read(EEPROM_ESC_MAP_VERSION_ADDR) != ESC_MAP_STORAGE_VERSION) {
+      for (int i = 0; i < MAX_MODELS; i++) {
+        setModelTankEscChannels(i, 1, 0);
+      }
+      return false;
+    }
+
+    uint8_t packed0 = EEPROM.read(EEPROM_ESC_MAP_DATA_ADDR);
+    uint8_t packed1 = EEPROM.read(EEPROM_ESC_MAP_DATA_ADDR + 1);
+
+    for (int i = 0; i < MAX_MODELS; i++) {
+      uint8_t nibble = (i < 2)
+        ? ((packed0 >> (i * 4)) & 0x0F)
+        : ((packed1 >> ((i - 2) * 4)) & 0x0F);
+      uint8_t left = nibble & 0x03;
+      uint8_t right = (nibble >> 2) & 0x03;
+      setModelTankEscChannels(i, left, right);
+    }
+
+    return true;
+  }
+
+  void saveTankEscChannelMap() {
+    uint8_t packed0 = 0;
+    uint8_t packed1 = 0;
+
+    for (int i = 0; i < MAX_MODELS; i++) {
+      sanitizeModelTankEscChannels(i);
+      uint8_t nibble =
+        (modelTankLeftEscChannel[i] & 0x03) |
+        ((modelTankRightEscChannel[i] & 0x03) << 2);
+      if (i < 2) {
+        packed0 |= (nibble << (i * 4));
+      } else {
+        packed1 |= (nibble << ((i - 2) * 4));
+      }
+    }
+
+    EEPROM.write(EEPROM_ESC_MAP_DATA_ADDR, packed0);
+    EEPROM.write(EEPROM_ESC_MAP_DATA_ADDR + 1, packed1);
+    EEPROM.write(EEPROM_ESC_MAP_VERSION_ADDR, ESC_MAP_STORAGE_VERSION);
+    EEPROM.commit();
+  }
+
   void sanitizeDisplaySettings() {
-    displayBrightness = constrain(displayBrightness, (uint8_t)1, (uint8_t)255);
+    bool brightnessPresetValid = false;
+    for (int i = 0; i < displayBrightnessOptionCount; i++) {
+      if (displayBrightness == displayBrightnessOptions[i]) {
+        brightnessPresetValid = true;
+        break;
+      }
+    }
+    if (!brightnessPresetValid) {
+      displayBrightness = DEFAULT_DISPLAY_BRIGHTNESS;
+    }
+
+    bool sleepPresetValid = false;
+    for (int i = 0; i < displaySleepBrightnessOptionCount; i++) {
+      if (displaySleepBrightness == displaySleepBrightnessOptions[i]) {
+        sleepPresetValid = true;
+        break;
+      }
+    }
+    if (!sleepPresetValid) {
+      displaySleepBrightness = DEFAULT_DISPLAY_SLEEP_BRIGHTNESS;
+    }
+
     displaySleepBrightness = constrain(displaySleepBrightness, (uint8_t)0, displayBrightness);
     if (displayTimeoutIndex >= displayTimeoutOptionCount) {
       displayTimeoutIndex = DEFAULT_DISPLAY_TIMEOUT_INDEX;
@@ -1382,6 +2134,34 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     }
     if (themeMode > THEME_LIGHT) {
       themeMode = THEME_DARK;
+    }
+
+    // Keep dim timeout <= off timeout whenever off timeout is finite.
+    uint16_t dimSec = displayTimeoutOptionsSec[displayTimeoutIndex];
+    uint16_t offSec = displayOffTimeoutOptionsSec[displayOffTimeoutIndex];
+    if (offSec != 0 && (dimSec == 0 || dimSec > offSec)) {
+      int bestDimIndex = -1;
+      for (int i = 0; i < displayTimeoutOptionCount; i++) {
+        uint16_t sec = displayTimeoutOptionsSec[i];
+        if (sec == 0) continue; // Never is not valid when off timeout is finite.
+        if (sec <= offSec) bestDimIndex = i;
+      }
+
+      if (bestDimIndex >= 0) {
+        displayTimeoutIndex = (uint8_t)bestDimIndex;
+      } else {
+        // Off timeout is lower than the minimum dim option.
+        // Raise off timeout to the smallest finite value that can accommodate dim.
+        displayTimeoutIndex = 0;
+        uint16_t minDimSec = displayTimeoutOptionsSec[displayTimeoutIndex];
+        for (int j = 0; j < displayOffTimeoutOptionCount; j++) {
+          uint16_t offCandidate = displayOffTimeoutOptionsSec[j];
+          if (offCandidate != 0 && offCandidate >= minDimSec) {
+            displayOffTimeoutIndex = (uint8_t)j;
+            break;
+          }
+        }
+      }
     }
   }
 
@@ -1549,6 +2329,807 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     }
   }
 
+  void initStatusRgbLed() {
+    if (!STATUS_RGB_LED_ENABLED) return;
+    pinMode(STATUS_RGB_LED_PIN, OUTPUT);
+    setStatusRgbLed(0, 0, 0);
+  }
+
+  void setStatusRgbLed(uint8_t red, uint8_t green, uint8_t blue) {
+    if (!STATUS_RGB_LED_ENABLED) return;
+
+    uint16_t brightness = STATUS_RGB_LED_BRIGHTNESS;
+    uint8_t scaledRed = (uint8_t)(((uint16_t)red * brightness) / 255U);
+    uint8_t scaledGreen = (uint8_t)(((uint16_t)green * brightness) / 255U);
+    uint8_t scaledBlue = (uint8_t)(((uint16_t)blue * brightness) / 255U);
+    neopixelWrite(STATUS_RGB_LED_PIN, scaledRed, scaledGreen, scaledBlue);
+  }
+
+  bool isI2cDevicePresent(uint8_t address) {
+    Wire.beginTransmission(address);
+    return Wire.endTransmission() == 0;
+  }
+
+  void setAudioAmpEnabled(bool enabled) {
+#if AUDIO_ENABLED
+    pinMode(AUDIO_PA_ENABLE_PIN, OUTPUT);
+    digitalWrite(AUDIO_PA_ENABLE_PIN, enabled ? AUDIO_PA_ENABLE_LEVEL : !AUDIO_PA_ENABLE_LEVEL);
+#else
+    (void)enabled;
+#endif
+  }
+
+  void silenceAudioOutput(bool stopI2s) {
+#if AUDIO_ENABLED
+    audioStartupRetestPending = false;
+    setAudioAmpEnabled(false);
+    if (audioCodecReady) {
+      hosyondAudioBoard.setMute(true);
+    }
+    if (audioI2sReady) {
+      int silentFrames = (int)(((uint32_t)AUDIO_SAMPLE_RATE * AUDIO_DRAIN_SILENCE_MS) / 1000U);
+      if (silentFrames < AUDIO_ZERO_FLUSH_FRAMES) silentFrames = AUDIO_ZERO_FLUSH_FRAMES;
+      int16_t zeroFrame[2] = {0, 0};
+      for (int i = 0; i < silentFrames; i++) {
+        hosyondAudioI2S.write((const uint8_t*)zeroFrame, sizeof(zeroFrame));
+      }
+      if (stopI2s) {
+        hosyondAudioI2S.end();
+        audioI2sReady = false;
+        audioReady = false;
+      }
+    }
+#else
+    (void)stopI2s;
+#endif
+  }
+
+  void initAudio() {
+#if AUDIO_ENABLED
+    audioReady = false;
+    audioCodecReady = false;
+    audioI2sReady = false;
+    audioStartupRetestPending = false;
+    audioStartupRetestTime = 0;
+    Serial.printf("AUDIO: init begin addr=0x%02X paPin=%d activeLevel=%d\n",
+                  AUDIO_CODEC_I2C_ADDR,
+                  AUDIO_PA_ENABLE_PIN,
+                  AUDIO_PA_ENABLE_LEVEL);
+    setAudioAmpEnabled(false);
+
+    if (!isI2cDevicePresent(AUDIO_CODEC_I2C_ADDR)) {
+      Serial.printf("AUDIO: ES8311 not detected at 0x%02X; UI clicks disabled\n", AUDIO_CODEC_I2C_ADDR);
+      return;
+    }
+    Serial.printf("AUDIO: ES8311 ACK at 0x%02X\n", AUDIO_CODEC_I2C_ADDR);
+
+    hosyondAudioPins.addI2C(PinFunction::CODEC, Wire, false);
+    hosyondAudioPins.addI2S(PinFunction::CODEC,
+                            AUDIO_I2S_MCLK_PIN,
+                            AUDIO_I2S_BCLK_PIN,
+                            AUDIO_I2S_WS_PIN,
+                            AUDIO_I2S_DOUT_PIN,
+                            -1);
+
+    CodecConfig audioConfig;
+    audioConfig.input_device = ADC_INPUT_NONE;
+    audioConfig.output_device = DAC_OUTPUT_ALL;
+    audioConfig.i2s.mode = MODE_SLAVE;
+    audioConfig.i2s.fmt = I2S_NORMAL;
+    audioConfig.i2s.rate = AUDIO_CODEC_RATE;
+    audioConfig.i2s.bits = BIT_LENGTH_16BITS;
+    audioConfig.i2s.channels = CHANNELS2;
+
+    audioCodecReady = hosyondAudioBoard.begin(audioConfig);
+    Serial.printf("AUDIO: codec begin result=%u\n", audioCodecReady ? 1 : 0);
+    if (audioCodecReady) {
+      hosyondAudioBoard.setVolume(AUDIO_VOLUME_PERCENT);
+      hosyondAudioBoard.setMute(false);
+    }
+
+    hosyondAudioI2S.setPins(AUDIO_I2S_BCLK_PIN,
+                            AUDIO_I2S_WS_PIN,
+                            AUDIO_I2S_DOUT_PIN,
+                            -1,
+                            AUDIO_I2S_MCLK_PIN);
+    audioI2sReady = hosyondAudioI2S.begin(I2S_MODE_STD,
+                                          AUDIO_SAMPLE_RATE,
+                                          I2S_DATA_BIT_WIDTH_16BIT,
+                                          I2S_SLOT_MODE_STEREO);
+    Serial.printf("AUDIO: i2s begin result=%u sampleRate=%u square=%u\n",
+                  audioI2sReady ? 1 : 0,
+                  AUDIO_SAMPLE_RATE,
+                  AUDIO_USE_SQUARE_TEST_TONE ? 1 : 0);
+
+    audioReady = audioCodecReady && audioI2sReady;
+    setAudioAmpEnabled(audioReady);
+    if (audioReady) {
+      delay(AUDIO_AMP_SETTLE_MS);
+    }
+    Serial.printf("AUDIO: ES8311=%u i2s=%u amp=%s ampPin=%d active=%d level=%d volume=%u%% pins mclk=%d bclk=%d dout=%d ws=%d\n",
+                  audioCodecReady ? 1 : 0,
+                  audioI2sReady ? 1 : 0,
+                  audioReady ? "on" : "off",
+                  AUDIO_PA_ENABLE_PIN,
+                  AUDIO_PA_ENABLE_LEVEL,
+                  digitalRead(AUDIO_PA_ENABLE_PIN),
+                  AUDIO_VOLUME_PERCENT,
+                  AUDIO_I2S_MCLK_PIN,
+                  AUDIO_I2S_BCLK_PIN,
+                  AUDIO_I2S_DOUT_PIN,
+                  AUDIO_I2S_WS_PIN);
+
+    if (audioReady && AUDIO_STARTUP_TEST_TONE) {
+      playAudioTone(660, 180, AUDIO_TONE_AMPLITUDE, false);
+      delay(35);
+      playAudioTone(990, 180, AUDIO_TONE_AMPLITUDE, false);
+      audioStartupRetestPending = true;
+      audioStartupRetestTime = millis() + AUDIO_RETEST_DELAY_MS;
+    }
+#endif
+  }
+
+  void updateAudioDiagnostics(unsigned long now) {
+#if AUDIO_ENABLED
+    if (!audioStartupRetestPending || !audioReady) return;
+    if ((long)(now - audioStartupRetestTime) < 0) return;
+    audioStartupRetestPending = false;
+    setAudioAmpEnabled(true);
+    delay(AUDIO_AMP_SETTLE_MS);
+    Serial.printf("AUDIO: delayed test tone ampLevel=%d ready=%u/%u\n",
+                  digitalRead(AUDIO_PA_ENABLE_PIN),
+                  audioCodecReady ? 1 : 0,
+                  audioI2sReady ? 1 : 0);
+    playAudioTone(440, 350, AUDIO_TONE_AMPLITUDE, false);
+#else
+    (void)now;
+#endif
+  }
+
+  void writeAudioStereoSample(int16_t sample) {
+#if AUDIO_ENABLED
+    uint8_t lo = (uint8_t)(sample & 0xFF);
+    uint8_t hi = (uint8_t)((sample >> 8) & 0xFF);
+    hosyondAudioI2S.write(lo);
+    hosyondAudioI2S.write(hi);
+    hosyondAudioI2S.write(lo);
+    hosyondAudioI2S.write(hi);
+#else
+    (void)sample;
+#endif
+  }
+
+  void startStartupAudioClip() {
+#if AUDIO_ENABLED
+    if (!STARTUP_AUDIO_ENABLED || startupAudioStarted || !audioReady) return;
+    startupAudioStarted = true;
+    startupAudioPlaying = true;
+    startupAudioSampleIndex = 0;
+    startupAudioRepeatIndex = 0;
+    if (audioCodecReady) {
+      hosyondAudioBoard.setVolume(AUDIO_VOLUME_PERCENT);
+      hosyondAudioBoard.setMute(false);
+    }
+    setAudioAmpEnabled(true);
+    Serial.printf("AUDIO: startup clip start samples=%lu sourceRate=%lu repeat=%u duration=%lums\n",
+                  (unsigned long)CAVE_JOHNSON_STARTUP_SAMPLE_COUNT,
+                  (unsigned long)CAVE_JOHNSON_STARTUP_SAMPLE_RATE,
+                  STARTUP_AUDIO_SAMPLE_REPEAT,
+                  (unsigned long)CAVE_JOHNSON_STARTUP_DURATION_MS);
+#endif
+  }
+
+  void updateStartupAudioClip() {
+#if AUDIO_ENABLED
+    if (!startupAudioPlaying || !audioReady) return;
+
+    uint16_t framesWritten = 0;
+    while (framesWritten < STARTUP_AUDIO_CHUNK_FRAMES &&
+           startupAudioSampleIndex < CAVE_JOHNSON_STARTUP_SAMPLE_COUNT) {
+      int16_t sample = (int16_t)pgm_read_word(&CAVE_JOHNSON_STARTUP_PCM[startupAudioSampleIndex]);
+      writeAudioStereoSample(sample);
+      framesWritten++;
+      startupAudioRepeatIndex++;
+      if (startupAudioRepeatIndex >= STARTUP_AUDIO_SAMPLE_REPEAT) {
+        startupAudioRepeatIndex = 0;
+        startupAudioSampleIndex++;
+      }
+    }
+
+    if (startupAudioSampleIndex >= CAVE_JOHNSON_STARTUP_SAMPLE_COUNT) {
+      startupAudioPlaying = false;
+      silenceAudioOutput(false);
+      Serial.println("AUDIO: startup clip complete");
+    }
+#endif
+  }
+
+  void playAudioTone(uint16_t frequency, uint16_t durationMs, uint16_t amplitude, bool gated) {
+#if AUDIO_ENABLED
+    if (!audioReady) return;
+    if (audioCodecReady) {
+      hosyondAudioBoard.setVolume(AUDIO_VOLUME_PERCENT);
+      hosyondAudioBoard.setMute(false);
+    }
+    setAudioAmpEnabled(true);
+    unsigned long now = millis();
+    if (gated) {
+      if (now - lastAudioClickMs < AUDIO_CLICK_MIN_INTERVAL_MS) return;
+      lastAudioClickMs = now;
+    }
+
+    int sampleCount = (int)(((uint32_t)AUDIO_SAMPLE_RATE * durationMs) / 1000U);
+    if (sampleCount < 1) sampleCount = 1;
+    int fadeSamples = (int)((AUDIO_SAMPLE_RATE * 6UL) / 1000UL);
+    if (fadeSamples < 1) fadeSamples = 1;
+    if (fadeSamples > (sampleCount / 2)) fadeSamples = sampleCount / 2;
+
+    int16_t stereoFrame[2] = {0, 0};
+    for (int i = 0; i < sampleCount; i++) {
+      float envelope = 1.0f;
+      if (i < fadeSamples) {
+        envelope = (float)i / (float)fadeSamples;
+      } else if (i > (sampleCount - fadeSamples)) {
+        envelope = (float)(sampleCount - i) / (float)fadeSamples;
+      }
+      if (envelope < 0.0f) envelope = 0.0f;
+      int16_t sample = 0;
+      if (AUDIO_USE_SQUARE_TEST_TONE) {
+        uint32_t cyclePos = ((uint32_t)i * (uint32_t)frequency * 2UL) / (uint32_t)AUDIO_SAMPLE_RATE;
+        sample = (cyclePos & 1U) ? -(int16_t)amplitude : (int16_t)amplitude;
+        sample = (int16_t)((float)sample * envelope);
+      } else {
+        float phase = (2.0f * 3.14159265f * (float)frequency * (float)i) / (float)AUDIO_SAMPLE_RATE;
+        sample = (int16_t)(sinf(phase) * (float)amplitude * envelope);
+      }
+      if (AUDIO_USE_SQUARE_TEST_TONE) {
+        writeAudioStereoSample(sample);
+      } else {
+        stereoFrame[0] = sample;
+        stereoFrame[1] = sample;
+        hosyondAudioI2S.write((const uint8_t*)stereoFrame, sizeof(stereoFrame));
+      }
+    }
+
+    stereoFrame[0] = 0;
+    stereoFrame[1] = 0;
+    for (uint8_t i = 0; i < AUDIO_ZERO_FLUSH_FRAMES; i++) {
+      if (AUDIO_USE_SQUARE_TEST_TONE) {
+        writeAudioStereoSample(0);
+      } else {
+        hosyondAudioI2S.write((const uint8_t*)stereoFrame, sizeof(stereoFrame));
+      }
+    }
+#else
+    (void)frequency;
+    (void)durationMs;
+    (void)amplitude;
+    (void)gated;
+#endif
+  }
+
+  void playAudioClick(uint16_t frequency, uint16_t durationMs) {
+#if AUDIO_ENABLED
+    playAudioTone(frequency, durationMs, AUDIO_CLICK_AMPLITUDE, true);
+#else
+    (void)frequency;
+    (void)durationMs;
+#endif
+  }
+
+  void getStatusRgbLedPatternColor(StatusRgbDiagCode code, uint8_t step, uint8_t &red, uint8_t &green, uint8_t &blue) {
+    red = 0;
+    green = 0;
+    blue = 0;
+
+    switch (code) {
+      case STATUS_RGB_NO_BATTERY:
+        // No battery detected: red, off, red. Highest-priority power fault.
+        if (step != 1) red = 255;
+        break;
+
+      case STATUS_RGB_NO_ADS:
+        // No stick ADC: red, blue, green.
+        if (step == 0) red = 255;
+        else if (step == 1) blue = 255;
+        else green = 255;
+        break;
+
+      case STATUS_RGB_NO_ELRS:
+        // No ELRS module response: red, blue, blue.
+        if (step == 0) red = 255;
+        else blue = 255;
+        break;
+
+      case STATUS_RGB_NO_PCF8575:
+        // No accessory expander: red, green, red.
+        if (step == 1) green = 255;
+        else red = 255;
+        break;
+
+      case STATUS_RGB_DPAD_SELECT:
+        // Select button: white, white, off.
+        if (step < 2) {
+          red = 255;
+          green = 255;
+          blue = 255;
+        }
+        break;
+
+      case STATUS_RGB_DPAD_LEFT:
+        // Left: blue, off, off.
+        if (step == 0) blue = 255;
+        break;
+
+      case STATUS_RGB_DPAD_UP:
+        // Up: green, off, off.
+        if (step == 0) green = 255;
+        break;
+
+      case STATUS_RGB_DPAD_DOWN:
+        // Down: red, off, off.
+        if (step == 0) red = 255;
+        break;
+
+      case STATUS_RGB_DPAD_RIGHT:
+        // Right: yellow, off, off.
+        if (step == 0) {
+          red = 255;
+          green = 180;
+        }
+        break;
+
+      case STATUS_RGB_OK:
+      default:
+        break;
+    }
+  }
+
+  void setStatusRgbLedPattern(StatusRgbDiagCode code, uint8_t step, unsigned long stepElapsed) {
+    uint8_t red = 0;
+    uint8_t green = 0;
+    uint8_t blue = 0;
+    getStatusRgbLedPatternColor(code, step, red, green, blue);
+
+    bool currentOn = red != 0 || green != 0 || blue != 0;
+
+    uint8_t prevRed = 0;
+    uint8_t prevGreen = 0;
+    uint8_t prevBlue = 0;
+    uint8_t prevStep = (step == 0) ? 2 : (uint8_t)(step - 1);
+    getStatusRgbLedPatternColor(code, prevStep, prevRed, prevGreen, prevBlue);
+
+    bool repeatedPrevious = currentOn && red == prevRed && green == prevGreen && blue == prevBlue;
+    if (repeatedPrevious && stepElapsed < STATUS_RGB_LED_REPEAT_GAP_MS) {
+      setStatusRgbLed(0, 0, 0);
+    } else {
+      setStatusRgbLed(red, green, blue);
+    }
+  }
+
+  uint8_t collectStatusRgbDiagCodes(StatusRgbDiagCode *codes, uint8_t maxCodes) {
+    uint8_t count = 0;
+    auto addCode = [&](StatusRgbDiagCode code) {
+      if (count < maxCodes) {
+        codes[count++] = code;
+      }
+    };
+
+    // Ordered by severity. Each active code gets its own full blink window.
+    if (!batteryPresent) addCode(STATUS_RGB_NO_BATTERY);
+    if (!ads1115Ready) addCode(STATUS_RGB_NO_ADS);
+    if (isElrsModuleMissingForStatus(millis())) addCode(STATUS_RGB_NO_ELRS);
+    if (!pcf8575Ready) {
+      addCode(STATUS_RGB_NO_PCF8575);
+      return count;
+    }
+
+#if STATUS_RGB_DPAD_DIAGNOSTICS
+    bool selectPressed = ((pcf8575LastValue & (1U << PCF8575_DPAD_SELECT_BIT)) == 0);
+    bool leftPressed = ((pcf8575LastValue & (1U << PCF8575_DPAD_LEFT_BIT)) == 0);
+    bool upPressed = ((pcf8575LastValue & (1U << PCF8575_DPAD_UP_BIT)) == 0);
+    bool downPressed = ((pcf8575LastValue & (1U << PCF8575_DPAD_DOWN_BIT)) == 0);
+    bool rightPressed = ((pcf8575LastValue & (1U << PCF8575_DPAD_RIGHT_BIT)) == 0);
+
+    if (selectPressed) addCode(STATUS_RGB_DPAD_SELECT);
+    else if (leftPressed) addCode(STATUS_RGB_DPAD_LEFT);
+    else if (upPressed) addCode(STATUS_RGB_DPAD_UP);
+    else if (downPressed) addCode(STATUS_RGB_DPAD_DOWN);
+    else if (rightPressed) addCode(STATUS_RGB_DPAD_RIGHT);
+#endif
+    return count;
+  }
+
+  bool isElrsModuleMissingForStatus(unsigned long now) {
+    if (getModelProtocol(activeModel) != PROTOCOL_ELRS) return false;
+    if (elrsNoModuleDetected) return true;
+    if (!elrsInitialized) return false;
+    if (elrsModulePresent || lastElrsSerialRxTime > 0 || hasElrsModuleFrames()) return false;
+
+    unsigned long graceMs = ELRS_PROFILE_DETECT_ACTIVE_MS;
+    if (graceMs < ELRS_MODULE_TIMEOUT_MS) graceMs = ELRS_MODULE_TIMEOUT_MS;
+    return (now - elrsProfileDetectStartTime) >= graceMs;
+  }
+
+  void updateStatusRgbLed(unsigned long now) {
+    if (!STATUS_RGB_LED_ENABLED) return;
+
+    StatusRgbDiagCode activeCodes[10] = {};
+    uint8_t activeCodeCount = collectStatusRgbDiagCodes(activeCodes, (uint8_t)(sizeof(activeCodes) / sizeof(activeCodes[0])));
+    uint16_t activeMask = 0;
+    for (uint8_t i = 0; i < activeCodeCount; i++) {
+      activeMask |= (uint16_t)(1U << activeCodes[i]);
+    }
+    if (activeMask != lastStatusRgbActiveMask) {
+      lastStatusRgbActiveMask = activeMask;
+      statusRgbCycleStartTime = now;
+      lastStatusRgbStep = 255;
+      lastStatusRgbHalfStep = 255;
+      lastStatusRgbPauseActive = false;
+    }
+
+    bool pauseActive = false;
+    unsigned long patternElapsed = 0;
+    if (activeCodeCount == 0) {
+      currentStatusRgbDiagCode = STATUS_RGB_OK;
+    } else {
+      const unsigned long patternMs = STATUS_RGB_LED_STEP_MS * 3UL;
+      const unsigned long codeWindowMs = patternMs + STATUS_RGB_LED_CODE_PAUSE_MS;
+      unsigned long cycleElapsed = now - statusRgbCycleStartTime;
+      unsigned long windowElapsed = cycleElapsed % codeWindowMs;
+      if (windowElapsed >= patternMs) {
+        currentStatusRgbDiagCode = STATUS_RGB_OK;
+        pauseActive = true;
+      } else {
+        uint8_t codeIndex = (uint8_t)((cycleElapsed / codeWindowMs) % activeCodeCount);
+        currentStatusRgbDiagCode = activeCodes[codeIndex];
+        patternElapsed = windowElapsed;
+      }
+    }
+
+    uint8_t step = (uint8_t)((patternElapsed / STATUS_RGB_LED_STEP_MS) % 3UL);
+    unsigned long stepElapsed = patternElapsed % STATUS_RGB_LED_STEP_MS;
+    uint8_t halfStep = (stepElapsed >= STATUS_RGB_LED_STEP_MS - STATUS_RGB_LED_REPEAT_GAP_MS) ? 1 : 0;
+    if (currentStatusRgbDiagCode == lastStatusRgbDiagCode &&
+        step == lastStatusRgbStep &&
+        halfStep == lastStatusRgbHalfStep &&
+        pauseActive == lastStatusRgbPauseActive) return;
+
+    lastStatusRgbDiagCode = currentStatusRgbDiagCode;
+    lastStatusRgbStep = step;
+    lastStatusRgbHalfStep = halfStep;
+    lastStatusRgbPauseActive = pauseActive;
+    setStatusRgbLedPattern(currentStatusRgbDiagCode, step, stepElapsed);
+  }
+
+  void initPowerLed() {
+    if (!POWER_LED_ENABLED) return;
+
+    gpio_num_t ledPosPin = (gpio_num_t)POWER_LED_POS_PIN;
+    gpio_num_t ledNegPin = (gpio_num_t)POWER_LED_NEG_PIN;
+    if (rtc_gpio_is_valid_gpio(ledPosPin)) {
+      rtc_gpio_hold_dis(ledPosPin);
+    }
+    if (rtc_gpio_is_valid_gpio(ledNegPin)) {
+      rtc_gpio_hold_dis(ledNegPin);
+    }
+
+    pinMode(POWER_LED_NEG_PIN, OUTPUT);
+    digitalWrite(POWER_LED_NEG_PIN, LOW);
+    pinMode(POWER_LED_POS_PIN, OUTPUT);
+    analogWriteResolution(POWER_LED_POS_PIN, POWER_LED_PWM_BITS);
+    analogWriteFrequency(POWER_LED_POS_PIN, POWER_LED_PWM_FREQ);
+    setPowerLed(true);
+  }
+
+  void setPowerLed(bool on) {
+    if (!POWER_LED_ENABLED) return;
+
+    powerLedBreathing = false;
+    setPowerLedDuty(on ? 255 : 0);
+  }
+
+  void setPowerLedDuty(uint8_t duty) {
+    if (!POWER_LED_ENABLED) return;
+
+    digitalWrite(POWER_LED_NEG_PIN, LOW);
+    analogWrite(POWER_LED_POS_PIN, duty);
+    powerLedDuty = duty;
+    powerLedOn = duty > 0;
+  }
+
+  void updatePowerLed(unsigned long now) {
+    if (!POWER_LED_ENABLED || powerButtonShutdownPending) return;
+
+    if (screenAwake) {
+      if (powerLedBreathing || powerLedDuty != 255) {
+        setPowerLed(true);
+      }
+      return;
+    }
+
+    if (!powerLedBreathing) {
+      powerLedBreathing = true;
+      powerLedBreatheStartTime = now;
+    }
+
+    unsigned long elapsed = (now - powerLedBreatheStartTime) % POWER_LED_SLEEP_BREATHE_PERIOD_MS;
+    float phase = (float)elapsed / (float)POWER_LED_SLEEP_BREATHE_PERIOD_MS;
+    float wave = 0.5f - (0.5f * cosf(phase * 6.2831853f));
+    uint8_t duty = (uint8_t)roundf(POWER_LED_SLEEP_MIN_DUTY +
+      (wave * (POWER_LED_SLEEP_MAX_DUTY - POWER_LED_SLEEP_MIN_DUTY)));
+    if (duty != powerLedDuty) {
+      setPowerLedDuty(duty);
+    }
+  }
+
+  void setPeripheralPowerRails(bool on) {
+    if (!PERIPHERAL_POWER_SWITCHES_ENABLED) return;
+
+    int level = PERIPHERAL_POWER_ENABLE_ACTIVE_HIGH
+      ? (on ? HIGH : LOW)
+      : (on ? LOW : HIGH);
+
+    if (UART_5V_ENABLE_PIN >= 0) {
+      digitalWrite(UART_5V_ENABLE_PIN, level);
+    }
+    if (I2C_3V3_ENABLE_PIN >= 0) {
+      digitalWrite(I2C_3V3_ENABLE_PIN, level);
+    }
+  }
+
+  void initPeripheralPowerSwitches() {
+    if (!PERIPHERAL_POWER_SWITCHES_ENABLED) return;
+
+    if (UART_5V_ENABLE_PIN >= 0) {
+      pinMode(UART_5V_ENABLE_PIN, OUTPUT);
+    }
+    if (I2C_3V3_ENABLE_PIN >= 0) {
+      pinMode(I2C_3V3_ENABLE_PIN, OUTPUT);
+    }
+    setPeripheralPowerRails(true);
+  }
+
+  void prepareExternalBusesForDeepSleep() {
+#if AUDIO_ENABLED
+    silenceAudioOutput(true);
+#endif
+
+    elrsSerial.flush();
+    elrsSerial.end();
+    elrsHostSniffSerial.end();
+
+    Wire.end();
+    pinMode(I2C_SDA_PIN, INPUT);
+    pinMode(I2C_SCL_PIN, INPUT);
+    pinMode(ELRS_UART_TX_PIN_DEFAULT, INPUT);
+    pinMode(ELRS_UART_RX_PIN_DEFAULT, INPUT);
+    if (elrsActiveTxPin != ELRS_UART_TX_PIN_DEFAULT) {
+      pinMode(elrsActiveTxPin, INPUT);
+    }
+    if (elrsActiveRxPin != ELRS_UART_RX_PIN_DEFAULT) {
+      pinMode(elrsActiveRxPin, INPUT);
+    }
+
+    setPeripheralPowerRails(false);
+  }
+
+  void initPowerButton() {
+    if (!POWER_BUTTON_ENABLED) return;
+
+    initPowerLed();
+
+    gpio_num_t refPin = (gpio_num_t)POWER_BUTTON_REF_PIN;
+    if (rtc_gpio_is_valid_gpio(refPin)) {
+      rtc_gpio_hold_dis(refPin);
+    }
+
+    pinMode(POWER_BUTTON_REF_PIN, OUTPUT);
+    digitalWrite(POWER_BUTTON_REF_PIN, LOW);
+    pinMode(POWER_BUTTON_SENSE_PIN, INPUT_PULLUP);
+
+    powerButtonPressed = isPowerButtonPressed();
+    powerButtonPressedAt = powerButtonPressed ? millis() : 0;
+    powerButtonSuppressShortPressUntilRelease = powerButtonPressed || isPowerButtonWake();
+    powerButtonShutdownPending = false;
+  }
+
+  bool isPowerButtonPressed() {
+    if (!POWER_BUTTON_ENABLED) return false;
+    return digitalRead(POWER_BUTTON_SENSE_PIN) == LOW;
+  }
+
+  void drawPowerButtonShutdownPrompt() {
+    screenAwake = true;
+    displayDimmed = false;
+    applyDisplayBacklight();
+
+    tft.fillScreen(COLOR_BG);
+    drawGradientControl(14, 78, 212, 150, 14, COLOR_PANEL, COLOR_ACCENT);
+    tft.setTextFont(2);
+    tft.setTextColor(COLOR_ACCENT_HI, COLOR_PANEL);
+    tft.drawCentreString("POWER BUTTON", 120, 96, 2);
+    tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+    tft.drawCentreString("Release button to", 120, 128, 2);
+    tft.drawCentreString("enter deep sleep.", 120, 148, 2);
+    tft.setTextColor(TFT_ORANGE, COLOR_PANEL);
+    tft.drawCentreString("Press again to wake.", 120, 188, 2);
+  }
+
+  void updatePowerButton(unsigned long now) {
+    if (!POWER_BUTTON_ENABLED) return;
+
+    bool pressed = isPowerButtonPressed();
+    if (powerButtonShutdownPending) {
+      bool blinkOn = ((now / POWER_LED_SHUTDOWN_BLINK_MS) % 2) == 0;
+      if (blinkOn != powerLedOn) {
+        setPowerLed(blinkOn);
+      }
+      powerButtonPressed = pressed;
+      if (!pressed) {
+        enterDeepSleepPowerOff();
+      }
+      return;
+    }
+
+    if (pressed) {
+      if (!powerButtonPressed) {
+        powerButtonPressedAt = now;
+      }
+      else if (powerButtonPressedAt != 0 &&
+               now - powerButtonPressedAt >= POWER_BUTTON_HOLD_MS) {
+        powerButtonShutdownPending = true;
+        drawPowerButtonShutdownPrompt();
+      }
+    }
+    else {
+      if (powerButtonPressed && powerButtonPressedAt != 0 &&
+          !powerButtonSuppressShortPressUntilRelease &&
+          now - powerButtonPressedAt < POWER_BUTTON_HOLD_MS) {
+        handlePowerButtonShortPress();
+      }
+
+      powerButtonPressedAt = 0;
+      powerButtonSuppressShortPressUntilRelease = false;
+      if (screenAwake && !powerLedOn) {
+        setPowerLed(true);
+      }
+    }
+
+    powerButtonPressed = pressed;
+  }
+
+  void handlePowerButtonShortPress() {
+    screenAwake = !screenAwake;
+    displayDimmed = false;
+    screenOffManual = !screenAwake;
+    suppressWakeUntilRelease = !screenAwake;
+    if (screenAwake) {
+      lastActivityTime = millis();
+    }
+    applyDisplayBacklight();
+
+    if (screenAwake) {
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      topBarNeedsRedraw = true;
+    }
+  }
+
+  bool isPowerButtonWake() {
+    return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
+  }
+
+  bool isSoftPowerOffStored() {
+    Preferences preferences;
+    if (!preferences.begin(SOFT_POWER_PREF_NAMESPACE, true)) {
+      return false;
+    }
+    bool stored = preferences.getBool(SOFT_POWER_PREF_KEY, false);
+    preferences.end();
+    return stored;
+  }
+
+  void setSoftPowerOffStored(bool off) {
+    Preferences preferences;
+    if (!preferences.begin(SOFT_POWER_PREF_NAMESPACE, false)) {
+      return;
+    }
+    if (preferences.getBool(SOFT_POWER_PREF_KEY, false) != off) {
+      preferences.putBool(SOFT_POWER_PREF_KEY, off);
+    }
+    preferences.end();
+  }
+
+  void handleSoftPowerBootState() {
+    if (!POWER_BUTTON_ENABLED) return;
+
+    if (isPowerButtonWake()) {
+      if (isSoftPowerOffStored()) {
+        Serial.println("Soft power: power-button wake, clearing stored off state");
+        setSoftPowerOffStored(false);
+      }
+      return;
+    }
+
+    if (isSoftPowerOffStored()) {
+      Serial.println("Soft power: stored off state active, returning to deep sleep");
+      setPowerLed(false);
+      startPowerButtonDeepSleep();
+    }
+  }
+
+  void startPowerButtonDeepSleep() {
+    gpio_num_t sensePin = (gpio_num_t)POWER_BUTTON_SENSE_PIN;
+    gpio_num_t refPin = (gpio_num_t)POWER_BUTTON_REF_PIN;
+    silenceAudioOutput(true);
+    setStatusRgbLed(0, 0, 0);
+    powerLedBreathing = false;
+    powerLedDuty = 0;
+    powerLedOn = false;
+    pinMode(POWER_BUTTON_REF_PIN, OUTPUT);
+    digitalWrite(POWER_BUTTON_REF_PIN, LOW);
+    pinMode(POWER_BUTTON_SENSE_PIN, INPUT_PULLUP);
+    pinMode(POWER_LED_POS_PIN, OUTPUT);
+    digitalWrite(POWER_LED_POS_PIN, LOW);
+    pinMode(POWER_LED_NEG_PIN, OUTPUT);
+    digitalWrite(POWER_LED_NEG_PIN, LOW);
+
+    if (rtc_gpio_is_valid_gpio(refPin)) {
+      rtc_gpio_init(refPin);
+      rtc_gpio_set_direction(refPin, RTC_GPIO_MODE_OUTPUT_ONLY);
+      rtc_gpio_set_level(refPin, 0);
+      rtc_gpio_hold_en(refPin);
+    }
+
+    gpio_num_t ledPosPin = (gpio_num_t)POWER_LED_POS_PIN;
+    gpio_num_t ledNegPin = (gpio_num_t)POWER_LED_NEG_PIN;
+    if (rtc_gpio_is_valid_gpio(ledPosPin)) {
+      rtc_gpio_init(ledPosPin);
+      rtc_gpio_set_direction(ledPosPin, RTC_GPIO_MODE_OUTPUT_ONLY);
+      rtc_gpio_set_level(ledPosPin, 0);
+      rtc_gpio_hold_en(ledPosPin);
+    }
+    if (rtc_gpio_is_valid_gpio(ledNegPin)) {
+      rtc_gpio_init(ledNegPin);
+      rtc_gpio_set_direction(ledNegPin, RTC_GPIO_MODE_OUTPUT_ONLY);
+      rtc_gpio_set_level(ledNegPin, 0);
+      rtc_gpio_hold_en(ledNegPin);
+    }
+
+    if (rtc_gpio_is_valid_gpio(sensePin)) {
+      rtc_gpio_init(sensePin);
+      rtc_gpio_set_direction(sensePin, RTC_GPIO_MODE_INPUT_ONLY);
+      rtc_gpio_pullup_en(sensePin);
+      rtc_gpio_pulldown_dis(sensePin);
+    }
+
+    esp_sleep_enable_ext0_wakeup(sensePin, 0);
+    esp_deep_sleep_start();
+  }
+
+  void enterDeepSleepPowerOff() {
+    if (!POWER_BUTTON_ENABLED) return;
+
+    Serial.println("Power button: entering deep sleep");
+    setSoftPowerOffStored(true);
+    prepareExternalBusesForDeepSleep();
+#if !ELRS_PASSIVE_SNIFF_MODE
+    esp_now_deinit();
+#endif
+    WiFi.disconnect(true, true);
+    WiFi.mode(WIFI_OFF);
+
+    screenAwake = false;
+    displayDimmed = false;
+    applyDisplayBacklight();
+    setPowerLed(false);
+    setStatusRgbLed(0, 0, 0);
+    delay(50);
+
+    startPowerButtonDeepSleep();
+  }
+
   void sanitizeWifiText(char *value, size_t maxLen, bool allowEmpty) {
     if (value == nullptr || maxLen == 0) return;
 
@@ -1636,6 +3217,40 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     EEPROM.commit();
   }
 
+  int getMixPageBase(int page) {
+    page = constrain(page, 0, MIX_PAGE_COUNT - 1);
+    return page * MIXES_PER_PAGE;
+  }
+
+  int getMixLocalIndex() {
+    int base = getMixPageBase(selectedMixPage);
+    int local = selectedMixIndex - base;
+    return constrain(local, 0, MIXES_PER_PAGE - 1);
+  }
+
+  void setSelectedMixPage(int page) {
+    int local = getMixLocalIndex();
+    selectedMixPage = constrain(page, 0, MIX_PAGE_COUNT - 1);
+    selectedMixIndex = getMixPageBase(selectedMixPage) + local;
+    selectedMixIndex = constrain(selectedMixIndex, 0, MIX_COUNT - 1);
+  }
+
+  bool toggleSelectedMixPageDebounced(unsigned long now) {
+    if (now < mixPageToggleLockedUntil) {
+      return false;
+    }
+
+    setSelectedMixPage(selectedMixPage == MIX_PAGE_PRESET ? MIX_PAGE_USER : MIX_PAGE_PRESET);
+    mixPageToggleLockedUntil = now + MIX_PAGE_TOGGLE_DEBOUNCE_MS;
+    mixingNeedsRedraw = true;
+    uiNeedsRedraw = true;
+    return true;
+  }
+
+  const char* getMixPageLabel(int page) {
+    return (page == MIX_PAGE_USER) ? "User" : "Preset";
+  }
+
   void initDefaultMixSlot(int modelIndex, int mixIndex) {
     models[modelIndex].mixes[mixIndex].enabled = false;
     models[modelIndex].mixes[mixIndex].source = 0;
@@ -1645,6 +3260,142 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     setMixReverseLinked(models[modelIndex].mixes[mixIndex], true);
     models[modelIndex].mixes[mixIndex].rate = 0;
     models[modelIndex].mixes[mixIndex].offset = 0;
+  }
+
+  void setPresetMixSlot(int modelIndex, int mixIndex, uint8_t source, uint8_t destination, int8_t rate) {
+    if (modelIndex < 0 || modelIndex >= MAX_MODELS) return;
+    if (mixIndex < 0 || mixIndex >= MIX_COUNT) return;
+
+    MixData &mix = models[modelIndex].mixes[mixIndex];
+    mix.enabled = true;
+    setMixSource(mix, source);
+    setMixDestination(mix, destination);
+    // Preset mixes are implementation details for remapping drive behavior.
+    // Keep reverse independent so users can tune each real ESC/servo output.
+    setMixReverseLinked(mix, false);
+    mix.rate = constrain(rate, -100, 100);
+    mix.offset = 0;
+  }
+
+  bool appendPresetMix(int modelIndex, int &mixIndex, uint8_t source, uint8_t destination, int8_t rate) {
+    if (rate == 0) return true;
+    if (mixIndex >= PRESET_MIX_COUNT) return false;
+
+    setPresetMixSlot(modelIndex, mixIndex++, source, destination, rate);
+    return true;
+  }
+
+  bool appendPresetRemap(int modelIndex, int &mixIndex, uint8_t source, uint8_t destination) {
+    if (source == destination) return true;
+    if (mixIndex + 1 >= PRESET_MIX_COUNT) return false;
+
+    // Zero the destination's own stick axis, then add the requested source.
+    setPresetMixSlot(modelIndex, mixIndex++, destination, destination, -100);
+    setPresetMixSlot(modelIndex, mixIndex++, source, destination, 100);
+    return true;
+  }
+
+  int oneStickTankMixCost(uint8_t destination, int8_t turnRate) {
+    // Target formula is RY + (RX * turnRate). CH1 already starts as RX,
+    // CH2 already starts as RY, so some destinations need fewer mix slots.
+    if (destination == 0) {
+      return (turnRate == 100) ? 1 : 3;
+    }
+    if (destination == 1) {
+      return 1;
+    }
+    return 3;
+  }
+
+  bool appendOneStickTankPresetOutput(int modelIndex, int &mixIndex, uint8_t destination, int8_t turnRate) {
+    if (destination >= CHANNEL_COUNT) return false;
+    turnRate = constrain(turnRate, -100, 100);
+
+    if (destination == 0 && turnRate == 100) {
+      // CH1 already carries RX, so adding RY makes RX + RY.
+      return appendPresetMix(modelIndex, mixIndex, 1, destination, 100);
+    }
+
+    if (destination == 1) {
+      // CH2 already carries RY, so adding RX makes RY +/- RX.
+      return appendPresetMix(modelIndex, mixIndex, 0, destination, turnRate);
+    }
+
+    if (mixIndex + 2 >= PRESET_MIX_COUNT) return false;
+
+    // Other destinations, or CH1 with a negative turn term, need a full formula:
+    // clear destination, add RY, then add signed RX.
+    setPresetMixSlot(modelIndex, mixIndex++, destination, destination, -100);
+    setPresetMixSlot(modelIndex, mixIndex++, 1, destination, 100);
+    setPresetMixSlot(modelIndex, mixIndex++, 0, destination, turnRate);
+    return true;
+  }
+
+  bool drivePresetUsesVisibleMixes(int modelIndex) {
+    if (modelIndex < 0 || modelIndex >= MAX_MODELS) return false;
+    if (getModelDriveType(modelIndex) != DRIVE_TANK) return false;
+
+    uint8_t leftChannel = getModelTankLeftEscChannel(modelIndex);
+    uint8_t rightChannel = getModelTankRightEscChannel(modelIndex);
+    if (leftChannel >= CHANNEL_COUNT || rightChannel >= CHANNEL_COUNT || leftChannel == rightChannel) {
+      return false;
+    }
+
+    if (getModelTankMode(modelIndex) == TANK_MODE_RIGHT_STICK) {
+      int neededMixes = oneStickTankMixCost(leftChannel, 100) +
+                        oneStickTankMixCost(rightChannel, -100);
+      return neededMixes <= PRESET_MIX_COUNT;
+    }
+
+    int neededMixes = 0;
+    if (leftChannel != 2) neededMixes += 2;   // left track source is LY
+    if (rightChannel != 1) neededMixes += 2;  // right track source is RY
+    return neededMixes <= PRESET_MIX_COUNT;
+  }
+
+  void applyDrivePresetMixes(int modelIndex) {
+    if (modelIndex < 0 || modelIndex >= MAX_MODELS) return;
+
+    for (int mix = 0; mix < PRESET_MIX_COUNT; mix++) {
+      initDefaultMixSlot(modelIndex, mix);
+    }
+
+    for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
+      models[modelIndex].reverse[ch] = false;
+      reverseChannelDirty[ch] = true;
+    }
+
+    if (getModelDriveType(modelIndex) != DRIVE_TANK) {
+      mixingNeedsRedraw = true;
+      reverseNeedsRedraw = true;
+      return;
+    }
+
+    uint8_t leftChannel = getModelTankLeftEscChannel(modelIndex);
+    uint8_t rightChannel = getModelTankRightEscChannel(modelIndex);
+    if (leftChannel >= CHANNEL_COUNT || rightChannel >= CHANNEL_COUNT || leftChannel == rightChannel) {
+      leftChannel = 1;
+      rightChannel = 0;
+    }
+
+    int mixIndex = 0;
+    if (getModelTankMode(modelIndex) == TANK_MODE_RIGHT_STICK) {
+      if (drivePresetUsesVisibleMixes(modelIndex)) {
+        // 1-stick tank: right stick Y is throttle, right stick X is turn.
+        // Left track = RY + RX, right track = RY - RX.
+        appendOneStickTankPresetOutput(modelIndex, mixIndex, leftChannel, 100);
+        appendOneStickTankPresetOutput(modelIndex, mixIndex, rightChannel, -100);
+      }
+    } else {
+      // 2-stick tank: left track follows LY, right track follows RY.
+      appendPresetRemap(modelIndex, mixIndex, 2, leftChannel);
+      appendPresetRemap(modelIndex, mixIndex, 1, rightChannel);
+    }
+
+    selectedMixIndex = 0;
+    selectedMixPage = MIX_PAGE_PRESET;
+    mixingNeedsRedraw = true;
+    reverseNeedsRedraw = true;
   }
 
   DriveType getModelDriveType(int modelIndex) {
@@ -1672,6 +3423,51 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     }
   }
 
+  bool sanitizeModelTankEscChannels(int modelIndex) {
+    if (modelIndex < 0 || modelIndex >= MAX_MODELS) return false;
+    bool changed = false;
+
+    uint8_t left = modelTankLeftEscChannel[modelIndex];
+    uint8_t right = modelTankRightEscChannel[modelIndex];
+
+    if (left >= CHANNEL_COUNT) {
+      left = 1;  // CH2 default left track
+      changed = true;
+    }
+    if (right >= CHANNEL_COUNT) {
+      right = 0;  // CH1 default right track
+      changed = true;
+    }
+    if (left == right) {
+      left = 1;
+      right = 0;
+      changed = true;
+    }
+
+    modelTankLeftEscChannel[modelIndex] = left;
+    modelTankRightEscChannel[modelIndex] = right;
+    return changed;
+  }
+
+  uint8_t getModelTankLeftEscChannel(int modelIndex) {
+    if (modelIndex < 0 || modelIndex >= MAX_MODELS) return 1;
+    sanitizeModelTankEscChannels(modelIndex);
+    return modelTankLeftEscChannel[modelIndex];
+  }
+
+  uint8_t getModelTankRightEscChannel(int modelIndex) {
+    if (modelIndex < 0 || modelIndex >= MAX_MODELS) return 0;
+    sanitizeModelTankEscChannels(modelIndex);
+    return modelTankRightEscChannel[modelIndex];
+  }
+
+  void setModelTankEscChannels(int modelIndex, uint8_t leftChannel, uint8_t rightChannel) {
+    if (modelIndex < 0 || modelIndex >= MAX_MODELS) return;
+    modelTankLeftEscChannel[modelIndex] = leftChannel;
+    modelTankRightEscChannel[modelIndex] = rightChannel;
+    sanitizeModelTankEscChannels(modelIndex);
+  }
+
   ProtocolType getModelProtocol(int modelIndex) {
     uint8_t protocol = (models[modelIndex].driveType & PROTOCOL_MASK) >> PROTOCOL_SHIFT;
     if (protocol > PROTOCOL_ESPNOW) protocol = PROTOCOL_ELRS;
@@ -1689,19 +3485,29 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     if (getModelDriveType(modelIndex) != DRIVE_TANK) return false;
     if (getModelTankMode(modelIndex) != TANK_MODE_RIGHT_STICK) return false;
 
-    // In 1-stick tank mode, CH1 and CH2 are tied by default.
-    // But if the user created a direct mix between them and explicitly
-    // separated reverse linking on that mix, that explicit choice wins.
+    uint8_t leftChannel = getModelTankLeftEscChannel(modelIndex);
+    uint8_t rightChannel = getModelTankRightEscChannel(modelIndex);
+    if (leftChannel >= CHANNEL_COUNT || rightChannel >= CHANNEL_COUNT || leftChannel == rightChannel) {
+      leftChannel = 1;
+      rightChannel = 0;
+    }
+
+    // In 1-stick tank mode, the real ESC outputs can be tied by default.
+    // If any visible preset/user mix touching those outputs has reverse
+    // linking separated, that explicit per-side tuning choice wins.
     for (int mixIndex = 0; mixIndex < MIX_COUNT; mixIndex++) {
       MixData &mix = models[modelIndex].mixes[mixIndex];
       if (!mix.enabled) continue;
 
       uint8_t source = getMixSource(mix);
       uint8_t destination = getMixDestination(mix);
-      bool isTankPairMix =
-        ((source == 0 && destination == 1) || (source == 1 && destination == 0));
+      bool touchesTankOutput =
+        (source == leftChannel) ||
+        (source == rightChannel) ||
+        (destination == leftChannel) ||
+        (destination == rightChannel);
 
-      if (!isTankPairMix) continue;
+      if (!touchesTankOutput) continue;
       if (!isMixReverseLinked(mix)) return false;
     }
 
@@ -1713,6 +3519,13 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     if (channel < 0 || channel >= CHANNEL_COUNT) return;
 
     linked[channel] = true;
+
+    // Tank presets use mixes to synthesize motor outputs, but reverse is a
+    // receiver-output/motor-direction setting. Keep each tank output isolated
+    // so one backwards motor can be corrected without flipping the mix inputs.
+    if (modelIndex >= 0 && modelIndex < MAX_MODELS && getModelDriveType(modelIndex) == DRIVE_TANK) {
+      return;
+    }
 
     bool changed = true;
     while (changed) {
@@ -1739,9 +3552,17 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
       }
     }
 
-    if (shouldForceTankSingleReversePair(modelIndex) && (channel == 0 || channel == 1)) {
-      linked[0] = true;
-      linked[1] = true;
+    if (shouldForceTankSingleReversePair(modelIndex)) {
+      uint8_t leftChannel = getModelTankLeftEscChannel(modelIndex);
+      uint8_t rightChannel = getModelTankRightEscChannel(modelIndex);
+      if (leftChannel >= CHANNEL_COUNT || rightChannel >= CHANNEL_COUNT || leftChannel == rightChannel) {
+        leftChannel = 1;
+        rightChannel = 0;
+      }
+      if (channel == leftChannel || channel == rightChannel) {
+        linked[leftChannel] = true;
+        linked[rightChannel] = true;
+      }
     }
   }
 
@@ -1784,10 +3605,8 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
         changed = true;
       }
 
-      if (destination == source) {
-        setMixDestination(mix, (destination + 1) % CHANNEL_COUNT);
-        changed = true;
-      }
+      // Presets can intentionally use source == destination with a -100% rate
+      // to clear that channel before adding a remapped source.
     }
 
     return changed;
@@ -1815,7 +3634,7 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
   }
 
   void initModelDefaults(int i) {
-    for (int ch = 0; ch < 5; ch++) {
+    for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
       models[i].reverse[ch] = false;
       models[i].failsafe[ch] = false;
     }
@@ -1837,6 +3656,9 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     models[i].driveType = 0;
     setModelDriveType(i, DRIVE_TANK);
     setModelTankMode(i, TANK_MODE_DUAL_STICK);
+    setModelTankEscChannels(i, 1, 0);
+    applyDrivePresetMixes(i);
+    modelElrsTxPowerMw[i] = 100;
 
     strcpy(models[i].name, "");
   }
@@ -1846,6 +3668,7 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
   float leftY  = 0.0;
   float rightY = 0.0;
   float inputChannels[CHANNEL_COUNT] = { 0.0f, 0.0f, 0.0f, 0.0f };
+  float driveSourceChannels[CHANNEL_COUNT] = { 0.0f, 0.0f, 0.0f, 0.0f };
   float outputChannels[CHANNEL_COUNT] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
   float m1 = 0.0;
@@ -1876,10 +3699,23 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
   int kbX = 0;
   int kbW = 240;
   int kbH = 160;
-  int kbY = FOOTER_Y - kbH - 5;   // bottom half of screen
-  int keyW = 22;
-  int keyH = 30;
-  int keySpacing = 2;
+int kbY = FOOTER_Y - kbH - 5;   // bottom half of screen
+int keyW = 22;
+int keyH = 30;
+int keySpacing = 2;
+const int KB_TOUCH_X_MIN = 8;
+const int KB_TOUCH_X_MAX = 232;
+#define MODEL_NAME_INPUT_X 10
+#define MODEL_NAME_INPUT_Y 60
+#define MODEL_NAME_INPUT_W 220
+#define MODEL_NAME_INPUT_H 42
+#define MODEL_NAME_LIST_Y 140
+#define MODEL_NAME_ROW_H 34
+#define MODEL_NAME_NAME_X 42
+#define MODEL_NAME_BOX_X 34
+#define MODEL_NAME_BOX_W 150
+#define MODEL_NAME_DELETE_X 196
+#define MODEL_NAME_DELETE_W 30
 
   // track pressed key for visual feedback
   int kbPressedRow = -1;
@@ -1920,6 +3756,29 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
 const char* getKeyboardKey(int row, int col) {
   if (row < 0 || row >= KB_ROWS || col < 0 || col >= KB_COLS) return "";
   return keyboardLowercase ? keyboardLayoutLower[row][col] : keyboardLayoutUpper[row][col];
+}
+
+int getKeyboardGridStartX() {
+  return kbX + 5;
+}
+
+int adjustKeyboardTouchX(int x) {
+  return constrain(mapTouch(x, KB_TOUCH_X_MIN, KB_TOUCH_X_MAX, 0, 239), 0, 239);
+}
+
+void getKeyboardKeyRect(int row, int col, int &x, int &y, int &w, int &h) {
+  x = getKeyboardGridStartX() + col * (keyW + keySpacing);
+  y = kbY + row * (keyH + keySpacing) + 5;
+  w = keyW;
+  h = keyH;
+
+  if (strcmp(getKeyboardKey(row, col), " ") == 0) {
+    x = kbX + 10;
+    w = kbW - 20;
+  }
+  else if (strcmp(getKeyboardKey(row, col), "OK") == 0) {
+    w = keyW * 2;
+  }
 }
 
 int getKeyboardMaxLength() {
@@ -1966,15 +3825,7 @@ void applyKeyboardBufferToTarget() {
 
 void beginOtaFieldEdit(KeyboardTarget target) {
   keyboardTarget = target;
-  if (target == KEYBOARD_TARGET_OTA_STA_SSID) {
-    keyboardBuffer = String(otaStaSsid);
-  } else if (target == KEYBOARD_TARGET_OTA_STA_PASSWORD) {
-    keyboardBuffer = String(otaStaPassword);
-  } else if (target == KEYBOARD_TARGET_OTA_AP_SSID) {
-    keyboardBuffer = String(otaApSsid);
-  } else {
-    keyboardBuffer = "";
-  }
+  keyboardBuffer = "";
 
   keyboardActive = true;
   keyboardLowercase = false;
@@ -2023,8 +3874,17 @@ void processKeyboardKey(const char* key) {
 void selectModelSlot(int modelIndex) {
   activeModel = modelIndex;
   selectedModelIndex = modelIndex;
+  clearActiveEspNowSessionTelemetry();
+  sanitizeModelTankEscChannels(modelIndex);
   currentModelName = String(models[modelIndex].name);
   currentDrive = getModelDriveType(modelIndex);
+  elrsTxPowerMw = clampElrsTxPowerMw(modelElrsTxPowerMw[modelIndex]);
+  if (getModelProtocol(modelIndex) == PROTOCOL_ELRS) {
+    initElrsUart();
+    sendElrsTxPowerWrite(elrsTxPowerMw);
+  } else {
+    stopElrsUart();
+  }
 
   trimRenderX = models[modelIndex].trimX[currentTrimPage];
   trimRenderY = models[modelIndex].trimY[currentTrimPage];
@@ -2048,7 +3908,7 @@ void selectModelSlot(int modelIndex) {
 
 void beginModelNameEdit(int modelIndex) {
   selectedModelIndex = modelIndex;
-  keyboardBuffer = modelNames[modelIndex];
+  keyboardBuffer = "";
   keyboardTarget = KEYBOARD_TARGET_MODEL_NAME;
   keyboardActive = true;
   keyboardLowercase = false;
@@ -2222,6 +4082,13 @@ void startOtaMode() {
     esp_now_deinit();
     espNowReady = false;
   }
+  mixNumpadActive = false;
+  mixNumpadNeedsRedraw = false;
+  mixNumpadBuffer = "";
+  mixNumpadTarget = NUMPAD_TARGET_MIX_RATE;
+  elrsReceiverPwmNumpadArmed = false;
+  elrsReceiverPwmNumpadArmedIndex = -1;
+  elrsReceiverPwmNumpadOriginalUs = 0;
   resetEspNowTelemetry();
   espNowProtocolActive = false;
   espNowProtocolStartTime = 0;
@@ -2509,6 +4376,772 @@ void updateOtaService() {
   }
 }
 
+void beginElrsReceiverConfig() {
+  if (otaUpdateInProgress) return;
+  if (otaModeActive) {
+    stopOtaMode();
+  }
+  if (espNowBindingMode) {
+    cancelEspNowBinding(true);
+  }
+  if (espNowReady) {
+    esp_now_deinit();
+    espNowReady = false;
+  }
+  resetEspNowTelemetry();
+  espNowProtocolActive = false;
+
+  elrsReceiverConfigActive = true;
+  elrsReceiverConfigState = RX_CONFIG_CONNECTING;
+  elrsReceiverConfigStartTime = millis();
+  elrsReceiverConfigLastUiTime = 0;
+  elrsBindBurstUntil = 0;
+  elrsBindAwaitingResult = false;
+  snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Waiting for ER4 WiFi...");
+  snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "SSID: %s", ELRS_RX_WIFI_SSID);
+  elrsReceiverConfigLastEndpoint[0] = '\0';
+  strncpy(elrsReceiverProductName, "-", sizeof(elrsReceiverProductName) - 1);
+  elrsReceiverProductName[sizeof(elrsReceiverProductName) - 1] = '\0';
+  strncpy(elrsReceiverLuaName, "-", sizeof(elrsReceiverLuaName) - 1);
+  elrsReceiverLuaName[sizeof(elrsReceiverLuaName) - 1] = '\0';
+  strncpy(elrsReceiverUidText, "-", sizeof(elrsReceiverUidText) - 1);
+  elrsReceiverUidText[sizeof(elrsReceiverUidText) - 1] = '\0';
+  elrsReceiverWifiInterval = -1;
+  elrsReceiverUartBaud = -1;
+  elrsReceiverFailsafe = -1;
+  elrsReceiverModelId = -1;
+  elrsReceiverEditFailsafe = 0;
+  elrsReceiverEditModelId = 255;
+  elrsReceiverPwmCount = 0;
+  for (int i = 0; i < 16; i++) {
+    elrsReceiverPwmRaw[i] = 0;
+    elrsReceiverPwmEditRaw[i] = 0;
+    elrsReceiverPwmFailsafeUs[i] = 1500;
+    elrsReceiverPwmEditFailsafeUs[i] = 1500;
+    elrsReceiverPwmPins[i] = -1;
+    elrsReceiverPwmEditTouched[i] = false;
+    elrsReceiverPwmEditGeneration[i] = 0;
+  }
+  elrsReceiverEditPwmIndex = 0;
+  elrsReceiverSaveArmed = false;
+  elrsReceiverConfigTouchLocked = true;
+  elrsReceiverConfigTouchUnlockAt = millis() + 1200UL;
+  elrsReceiverConfigNoTouchSince = 0;
+  elrsReceiverConfigDirty = false;
+  elrsReceiverConfigGeneration++;
+  elrsReceiverConfigLoadedAt = 0;
+  elrsReceiverConfigBody = "";
+
+  Serial.printf("ELRS RX config: connecting to '%s' with default password\n", ELRS_RX_WIFI_SSID);
+  WiFi.softAPdisconnect(true);
+  WiFi.disconnect(true, false);
+  delay(80);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setHostname(OTA_HOSTNAME);
+  WiFi.begin(ELRS_RX_WIFI_SSID, ELRS_RX_WIFI_PASSWORD);
+
+  setScreen(SCREEN_ELRS_RX_CONFIG);
+  fullRedraw = true;
+  uiNeedsRedraw = true;
+}
+
+void stopElrsReceiverConfig() {
+  if (!elrsReceiverConfigActive && elrsReceiverConfigState == RX_CONFIG_IDLE) return;
+
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+
+  elrsReceiverConfigActive = false;
+  elrsReceiverConfigState = RX_CONFIG_IDLE;
+
+  if (getModelProtocol(activeModel) == PROTOCOL_ESPNOW) {
+    initEspNowLink();
+  }
+
+  fullRedraw = true;
+  uiNeedsRedraw = true;
+}
+
+bool requestElrsReceiverMethod(const char *method, const char *path, const char *body, const char *contentType, String &response) {
+  response = "";
+  IPAddress host(10, 0, 0, 1);
+  WiFiClient client;
+  if (!client.connect(host, 80)) {
+    return false;
+  }
+
+  int bodyLen = (body != nullptr) ? strlen(body) : 0;
+  client.print(method);
+  client.print(" ");
+  client.print(path);
+  client.print(" HTTP/1.1\r\n"
+               "Host: 10.0.0.1\r\n"
+               "Accept: application/json,text/plain,text/html,*/*\r\n"
+               "Accept-Encoding: identity\r\n"
+               "Connection: close\r\n"
+               "User-Agent: AnubisTx\r\n");
+  if (bodyLen > 0) {
+    client.print("Content-Type: ");
+    client.print((contentType != nullptr) ? contentType : "application/json");
+    client.print("\r\nContent-Length: ");
+    client.print(bodyLen);
+    client.print("\r\n");
+  }
+  client.print("\r\n");
+  if (bodyLen > 0) {
+    client.print(body);
+  }
+
+  unsigned long start = millis();
+  while (millis() - start < ELRS_RX_HTTP_TIMEOUT_MS) {
+    while (client.available()) {
+      char c = (char)client.read();
+      if (response.length() < 4096) {
+        response += c;
+      }
+      start = millis();
+    }
+    if (!client.connected()) break;
+    delay(1);
+  }
+
+  client.stop();
+  return response.length() > 0;
+}
+
+bool requestElrsReceiverPath(const char *path, String &response) {
+  return requestElrsReceiverMethod("GET", path, nullptr, nullptr, response);
+}
+
+bool extractJsonObjectValue(const String &json, const char *key, String &out) {
+  out = "";
+  String needle = "\"";
+  needle += key;
+  needle += "\":";
+  int keyIndex = json.indexOf(needle);
+  if (keyIndex < 0) return false;
+
+  int objectStart = json.indexOf('{', keyIndex + needle.length());
+  if (objectStart < 0) return false;
+
+  int depth = 0;
+  bool inString = false;
+  bool escaping = false;
+  for (int i = objectStart; i < json.length(); i++) {
+    char c = json.charAt(i);
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (c == '\\') {
+      escaping = true;
+      continue;
+    }
+    if (c == '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (c == '{') {
+      depth++;
+    } else if (c == '}') {
+      depth--;
+      if (depth == 0) {
+        out = json.substring(objectStart, i + 1);
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+bool replaceJsonIntValue(String &json, const char *key, int value) {
+  String needle = "\"";
+  needle += key;
+  needle += "\":";
+  int keyIndex = json.indexOf(needle);
+  if (keyIndex < 0) return false;
+
+  int valueStart = keyIndex + needle.length();
+  while (valueStart < json.length() && isspace((unsigned char)json.charAt(valueStart))) {
+    valueStart++;
+  }
+
+  int valueEnd = valueStart;
+  if (valueEnd < json.length() && json.charAt(valueEnd) == '-') valueEnd++;
+  while (valueEnd < json.length() && isdigit((unsigned char)json.charAt(valueEnd))) {
+    valueEnd++;
+  }
+  if (valueEnd <= valueStart) return false;
+
+  json = json.substring(0, valueStart) + String(value) + json.substring(valueEnd);
+  return true;
+}
+
+int decodeElrsPwmFailsafeUs(uint32_t raw) {
+  int failsafeOffset = (int)(raw & ELRS_RX_PWM_FAILSAFE_MASK);
+  return constrain(failsafeOffset + ELRS_RX_PWM_FAILSAFE_OFFSET_US,
+                   ELRS_RX_PWM_FAILSAFE_OFFSET_US,
+                   ELRS_RX_PWM_FAILSAFE_OFFSET_US + (int)ELRS_RX_PWM_FAILSAFE_MASK);
+}
+
+uint32_t encodeElrsPwmFailsafeUs(uint32_t raw, int failsafeUs) {
+  int clampedUs = constrain(failsafeUs,
+                            ELRS_RX_PWM_FAILSAFE_OFFSET_US,
+                            ELRS_RX_PWM_FAILSAFE_OFFSET_US + (int)ELRS_RX_PWM_FAILSAFE_MASK);
+  uint32_t encodedFailsafe = (uint32_t)(clampedUs - ELRS_RX_PWM_FAILSAFE_OFFSET_US) & ELRS_RX_PWM_FAILSAFE_MASK;
+  return (raw & ~ELRS_RX_PWM_FAILSAFE_MASK) | encodedFailsafe;
+}
+
+uint8_t decodeElrsPwmInputChannel(uint32_t raw) {
+  return (uint8_t)((raw >> ELRS_RX_PWM_INPUT_CHANNEL_SHIFT) & ELRS_RX_PWM_INPUT_CHANNEL_MASK);
+}
+
+uint32_t encodeElrsPwmInputChannel(uint32_t raw, uint8_t inputChannel) {
+  uint32_t inputBits = ((uint32_t)(inputChannel & ELRS_RX_PWM_INPUT_CHANNEL_MASK))
+                       << ELRS_RX_PWM_INPUT_CHANNEL_SHIFT;
+  return (raw & ~(ELRS_RX_PWM_INPUT_CHANNEL_MASK << ELRS_RX_PWM_INPUT_CHANNEL_SHIFT)) | inputBits;
+}
+
+int displayElrsPwmFailsafeUs(int failsafeUs) {
+  return constrain(failsafeUs, ELRS_RX_PWM_FAILSAFE_MIN_US, ELRS_RX_PWM_FAILSAFE_MAX_US);
+}
+
+bool isElrsReceiverPwmConfigEdited(int index) {
+  if (index < 0 || index >= elrsReceiverPwmCount) return false;
+  if (!elrsReceiverPwmEditTouched[index]) return false;
+  if (elrsReceiverPwmEditGeneration[index] != elrsReceiverConfigGeneration) return false;
+  return elrsReceiverPwmEditRaw[index] != elrsReceiverPwmRaw[index];
+}
+
+bool parseElrsReceiverPwmConfig(const String &json) {
+  int pwmIndex = json.indexOf("\"pwm\":[");
+  if (pwmIndex < 0) return false;
+  int cursor = pwmIndex;
+  uint8_t count = 0;
+
+  while (count < 16) {
+    int configIndex = json.indexOf("\"config\":", cursor);
+    if (configIndex < 0) break;
+    int pinIndex = json.indexOf("\"pin\":", configIndex);
+    if (pinIndex < 0) break;
+    int nextObject = json.indexOf("}", pinIndex);
+    if (nextObject < 0) break;
+
+    int configStart = configIndex + strlen("\"config\":");
+    while (configStart < json.length() && isspace((unsigned char)json.charAt(configStart))) configStart++;
+    int configEnd = configStart;
+    while (configEnd < json.length() && isdigit((unsigned char)json.charAt(configEnd))) configEnd++;
+
+    int pinStart = pinIndex + strlen("\"pin\":");
+    while (pinStart < json.length() && isspace((unsigned char)json.charAt(pinStart))) pinStart++;
+    int pinEnd = pinStart;
+    if (pinEnd < json.length() && json.charAt(pinEnd) == '-') pinEnd++;
+    while (pinEnd < json.length() && isdigit((unsigned char)json.charAt(pinEnd))) pinEnd++;
+
+    if (configEnd <= configStart || pinEnd <= pinStart) break;
+
+    uint32_t raw = (uint32_t)json.substring(configStart, configEnd).toInt();
+    int failsafeUs = decodeElrsPwmFailsafeUs(raw);
+
+    elrsReceiverPwmRaw[count] = raw;
+    elrsReceiverPwmEditRaw[count] = raw;
+    elrsReceiverPwmFailsafeUs[count] = failsafeUs;
+    elrsReceiverPwmEditFailsafeUs[count] = displayElrsPwmFailsafeUs(failsafeUs);
+    elrsReceiverPwmPins[count] = json.substring(pinStart, pinEnd).toInt();
+    elrsReceiverPwmEditTouched[count] = false;
+    elrsReceiverPwmEditGeneration[count] = 0;
+    count++;
+    cursor = nextObject + 1;
+  }
+
+  elrsReceiverPwmCount = count;
+  if (count > 0) {
+    Serial.print("ELRS RX PWM decoded:");
+    for (int i = 0; i < count; i++) {
+      Serial.printf(" out%u pin=%d input=CH%u raw=%lu fs=%dus display=%dus",
+                    (unsigned int)(i + 1),
+                    elrsReceiverPwmPins[i],
+                    (unsigned int)(decodeElrsPwmInputChannel(elrsReceiverPwmRaw[i]) + 1),
+                    (unsigned long)elrsReceiverPwmRaw[i],
+                    elrsReceiverPwmFailsafeUs[i],
+                    displayElrsPwmFailsafeUs(elrsReceiverPwmFailsafeUs[i]));
+    }
+    Serial.println();
+
+  }
+  return count > 0;
+}
+
+bool replaceElrsPwmConfigValues(String &json) {
+  int pwmIndex = json.indexOf("\"pwm\":[");
+  if (pwmIndex < 0) return false;
+  int arrayStart = json.indexOf('[', pwmIndex);
+  if (arrayStart < 0) return false;
+
+  int depth = 0;
+  bool inString = false;
+  bool escaping = false;
+  int arrayEnd = -1;
+  for (int i = arrayStart; i < json.length(); i++) {
+    char c = json.charAt(i);
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (c == '\\') {
+      escaping = true;
+      continue;
+    }
+    if (c == '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (c == '[') {
+      depth++;
+    } else if (c == ']') {
+      depth--;
+      if (depth == 0) {
+        arrayEnd = i;
+        break;
+      }
+    }
+  }
+  if (arrayEnd < 0) return false;
+
+  String numericPwm = "\"pwm\":[";
+  for (int i = 0; i < elrsReceiverPwmCount; i++) {
+    uint32_t nextRaw = elrsReceiverPwmRaw[i];
+    bool touchedThisLoad = elrsReceiverPwmEditTouched[i] &&
+                           elrsReceiverPwmEditGeneration[i] == elrsReceiverConfigGeneration;
+    if (touchedThisLoad) {
+      nextRaw = elrsReceiverPwmEditRaw[i];
+    }
+    Serial.printf("ELRS RX PWM save out%d touched=%d gen=%lu/%lu raw=%lu next=%lu input=CH%u display=%d\n",
+                  i + 1,
+                  touchedThisLoad ? 1 : 0,
+                  (unsigned long)elrsReceiverPwmEditGeneration[i],
+                  (unsigned long)elrsReceiverConfigGeneration,
+                  (unsigned long)elrsReceiverPwmRaw[i],
+                  (unsigned long)nextRaw,
+                  (unsigned int)(decodeElrsPwmInputChannel(nextRaw) + 1),
+                  elrsReceiverPwmEditFailsafeUs[i]);
+    elrsReceiverPwmEditRaw[i] = nextRaw;
+    if (i > 0) numericPwm += ",";
+    numericPwm += String((unsigned long)nextRaw);
+  }
+  numericPwm += "]";
+
+  json = json.substring(0, pwmIndex) + numericPwm + json.substring(arrayEnd + 1);
+  return true;
+}
+
+bool isElrsReceiverConfigEdited() {
+  if (!elrsReceiverSaveArmed) return false;
+  if (elrsReceiverEditModelId != elrsReceiverModelId) return true;
+  if (elrsReceiverEditFailsafe != elrsReceiverFailsafe) return true;
+  for (int i = 0; i < elrsReceiverPwmCount; i++) {
+    if (isElrsReceiverPwmConfigEdited(i)) return true;
+  }
+  return false;
+}
+
+bool hasElrsReceiverPwmEdits() {
+  for (int i = 0; i < elrsReceiverPwmCount; i++) {
+    if (isElrsReceiverPwmConfigEdited(i)) return true;
+  }
+  return false;
+}
+
+ButtonID getElrsReceiverPwmButton(int index) {
+  switch (index) {
+    case 0: return BTN_ELRS_RX_PWM1;
+    case 1: return BTN_ELRS_RX_PWM2;
+    case 2: return BTN_ELRS_RX_PWM3;
+    case 3: return BTN_ELRS_RX_PWM4;
+    default: return BTN_NONE;
+  }
+}
+
+int getElrsReceiverPwmIndexForButton(ButtonID button) {
+  if (button == BTN_ELRS_RX_PWM1) return 0;
+  if (button == BTN_ELRS_RX_PWM2) return 1;
+  if (button == BTN_ELRS_RX_PWM3) return 2;
+  if (button == BTN_ELRS_RX_PWM4) return 3;
+  return -1;
+}
+
+bool saveElrsReceiverConfig() {
+  if (!elrsReceiverConfigActive || WiFi.status() != WL_CONNECTED) {
+    snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "RX WiFi not connected");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Reconnect before saving");
+    fullRedraw = true;
+    uiNeedsRedraw = true;
+    return false;
+  }
+
+  if (elrsReceiverConfigBody.length() == 0) {
+    snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "No config body cached");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Reopen Receiver Config");
+    fullRedraw = true;
+    uiNeedsRedraw = true;
+    return false;
+  }
+
+  elrsReceiverConfigDirty = isElrsReceiverConfigEdited();
+  if (!elrsReceiverConfigDirty) {
+    snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "No RX config changes");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Nothing written to receiver");
+    Serial.println("ELRS RX config: save skipped, no edited fields");
+    uiNeedsRedraw = true;
+    return false;
+  }
+
+  if (!elrsReceiverSaveArmed) {
+    snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "No confirmed RX edits");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Nothing written to receiver");
+    Serial.println("ELRS RX config: save skipped, no user-armed edits");
+    uiNeedsRedraw = true;
+    return false;
+  }
+
+  if (elrsReceiverConfigLoadedAt != 0 &&
+      millis() - elrsReceiverConfigLoadedAt < 1500UL) {
+    snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "RX config just loaded");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Wait before saving edits");
+    Serial.println("ELRS RX config: save skipped, config was just loaded");
+    elrsReceiverConfigDirty = isElrsReceiverConfigEdited();
+    uiNeedsRedraw = true;
+    return false;
+  }
+
+  String postBody = elrsReceiverConfigBody;
+  bool replacedModel = replaceJsonIntValue(postBody, "modelid", constrain(elrsReceiverEditModelId, 0, 255));
+  bool replacedFailsafe = replaceJsonIntValue(postBody, "sbus-failsafe", constrain(elrsReceiverEditFailsafe, 0, 255));
+  bool pwmEdited = hasElrsReceiverPwmEdits();
+  bool replacedPwm = true;
+  if (pwmEdited) {
+    replacedPwm = replaceElrsPwmConfigValues(postBody);
+  }
+  if (!replacedModel || !replacedFailsafe || !replacedPwm) {
+    snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Config edit failed");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Missing model/failsafe key");
+    fullRedraw = true;
+    uiNeedsRedraw = true;
+    return false;
+  }
+
+  String response;
+  snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Saving ER4 config...");
+  snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "POST /config");
+  fullRedraw = true;
+  uiNeedsRedraw = true;
+
+  Serial.println("ELRS RX config: POST http://10.0.0.1/config");
+  Serial.println(postBody);
+  bool gotResponse = requestElrsReceiverMethod("POST", "/config", postBody.c_str(), "application/json", response);
+  if (gotResponse) {
+    Serial.printf("ELRS RX config save response (%u bytes captured):\n", (unsigned int)response.length());
+    Serial.println(response);
+  } else {
+    Serial.println("ELRS RX config save: no HTTP response");
+  }
+
+  bool httpOk = gotResponse && (response.indexOf("HTTP/1.1 200") >= 0 || response.indexOf("HTTP/1.0 200") >= 0);
+  if (httpOk) {
+    elrsReceiverModelId = constrain(elrsReceiverEditModelId, 0, 255);
+    elrsReceiverFailsafe = constrain(elrsReceiverEditFailsafe, 0, 255);
+    for (int i = 0; i < elrsReceiverPwmCount; i++) {
+      elrsReceiverPwmRaw[i] = elrsReceiverPwmEditRaw[i];
+      elrsReceiverPwmFailsafeUs[i] = decodeElrsPwmFailsafeUs(elrsReceiverPwmRaw[i]);
+      elrsReceiverPwmEditFailsafeUs[i] = displayElrsPwmFailsafeUs(elrsReceiverPwmFailsafeUs[i]);
+      elrsReceiverPwmEditTouched[i] = false;
+      elrsReceiverPwmEditGeneration[i] = 0;
+    }
+    elrsReceiverSaveArmed = false;
+    elrsReceiverConfigBody = postBody;
+    elrsReceiverConfigDirty = isElrsReceiverConfigEdited();
+    snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Receiver config saved");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "%s updated", elrsReceiverLuaName);
+  } else {
+    snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Save may have failed");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Check Serial response");
+  }
+
+  fullRedraw = true;
+  uiNeedsRedraw = true;
+  return httpOk;
+}
+
+void logElrsReceiverWriteEndpoints() {
+  Serial.println("ELRS RX config write endpoint: POST /config Content-Type: application/json");
+  Serial.println("ELRS RX options endpoint: POST /options.json Content-Type: application/json");
+  Serial.println("ELRS RX action endpoints exist but are not probed automatically: /sethome /forget /reset /reboot");
+}
+
+bool extractJsonStringValue(const String &json, const char *key, char *out, size_t outSize) {
+  if (out == nullptr || outSize == 0) return false;
+  out[0] = '\0';
+
+  String needle = "\"";
+  needle += key;
+  needle += "\":";
+  int keyIndex = json.indexOf(needle);
+  if (keyIndex < 0) return false;
+
+  int valueStart = json.indexOf('"', keyIndex + needle.length());
+  if (valueStart < 0) return false;
+  valueStart++;
+
+  size_t outIndex = 0;
+  bool escaping = false;
+  for (int i = valueStart; i < json.length(); i++) {
+    char c = json.charAt(i);
+    if (escaping) {
+      if (outIndex < outSize - 1) out[outIndex++] = c;
+      escaping = false;
+      continue;
+    }
+    if (c == '\\') {
+      escaping = true;
+      continue;
+    }
+    if (c == '"') break;
+    if (outIndex < outSize - 1) out[outIndex++] = c;
+  }
+  out[outIndex] = '\0';
+  return outIndex > 0;
+}
+
+int extractJsonIntValue(const String &json, const char *key, int fallback) {
+  String needle = "\"";
+  needle += key;
+  needle += "\":";
+  int keyIndex = json.indexOf(needle);
+  if (keyIndex < 0) return fallback;
+
+  int valueStart = keyIndex + needle.length();
+  while (valueStart < json.length() && isspace((unsigned char)json.charAt(valueStart))) {
+    valueStart++;
+  }
+  int valueEnd = valueStart;
+  if (valueEnd < json.length() && json.charAt(valueEnd) == '-') valueEnd++;
+  while (valueEnd < json.length() && isdigit((unsigned char)json.charAt(valueEnd))) {
+    valueEnd++;
+  }
+  if (valueEnd <= valueStart) return fallback;
+  return json.substring(valueStart, valueEnd).toInt();
+}
+
+bool extractJsonUidValue(const String &json, char *out, size_t outSize) {
+  if (out == nullptr || outSize == 0) return false;
+  out[0] = '\0';
+
+  int uidIndex = json.indexOf("\"uid\":[");
+  if (uidIndex < 0) return false;
+  int valueStart = uidIndex + strlen("\"uid\":[");
+  int valueEnd = json.indexOf(']', valueStart);
+  if (valueEnd < 0) return false;
+
+  String uid = json.substring(valueStart, valueEnd);
+  uid.replace(",", ".");
+  uid.trim();
+  uid.toCharArray(out, outSize);
+  return out[0] != '\0';
+}
+
+bool parseElrsReceiverConfigJson(const String &response) {
+  int bodyStart = response.indexOf("\r\n\r\n");
+  String json = (bodyStart >= 0) ? response.substring(bodyStart + 4) : response;
+  json.trim();
+  if (json.length() == 0 || json.charAt(0) != '{') return false;
+
+  elrsReceiverConfigGeneration++;
+  for (int i = 0; i < 16; i++) {
+    elrsReceiverPwmEditTouched[i] = false;
+    elrsReceiverPwmEditGeneration[i] = 0;
+  }
+  elrsReceiverPwmNumpadArmed = false;
+  elrsReceiverPwmNumpadArmedIndex = -1;
+  elrsReceiverPwmNumpadOriginalUs = 0;
+  elrsReceiverSaveArmed = false;
+  elrsReceiverConfigTouchLocked = true;
+  elrsReceiverConfigTouchUnlockAt = millis() + 1200UL;
+  elrsReceiverConfigNoTouchSince = 0;
+
+  extractJsonObjectValue(json, "config", elrsReceiverConfigBody);
+  parseElrsReceiverPwmConfig(json);
+
+  bool parsedAny = false;
+  parsedAny |= extractJsonStringValue(json, "product_name", elrsReceiverProductName, sizeof(elrsReceiverProductName));
+  parsedAny |= extractJsonStringValue(json, "lua_name", elrsReceiverLuaName, sizeof(elrsReceiverLuaName));
+  parsedAny |= extractJsonUidValue(json, elrsReceiverUidText, sizeof(elrsReceiverUidText));
+
+  elrsReceiverWifiInterval = extractJsonIntValue(json, "wifi-on-interval", -1);
+  elrsReceiverUartBaud = extractJsonIntValue(json, "rcvr-uart-baud", -1);
+  elrsReceiverFailsafe = extractJsonIntValue(json, "sbus-failsafe", -1);
+  elrsReceiverModelId = extractJsonIntValue(json, "modelid", -1);
+  elrsReceiverEditFailsafe = (elrsReceiverFailsafe >= 0) ? elrsReceiverFailsafe : 0;
+  elrsReceiverEditModelId = (elrsReceiverModelId >= 0) ? elrsReceiverModelId : 255;
+  elrsReceiverConfigDirty = isElrsReceiverConfigEdited();
+  elrsReceiverConfigLoadedAt = millis();
+
+  parsedAny |= (elrsReceiverWifiInterval >= 0);
+  parsedAny |= (elrsReceiverUartBaud >= 0);
+  parsedAny |= (elrsReceiverFailsafe >= 0);
+  parsedAny |= (elrsReceiverModelId >= 0);
+
+  if (parsedAny) {
+    Serial.printf("ELRS RX config parsed: product='%s' lua='%s' uid=%s wifi=%d uart=%d failsafe=%d model=%d\n",
+                  elrsReceiverProductName,
+                  elrsReceiverLuaName,
+                  elrsReceiverUidText,
+                  elrsReceiverWifiInterval,
+                  elrsReceiverUartBaud,
+                  elrsReceiverFailsafe,
+                  elrsReceiverModelId);
+  }
+  return parsedAny;
+}
+
+bool fetchElrsReceiverConfig() {
+  const char *paths[] = {
+    "/config",
+    "/config.json",
+    "/options.json",
+    "/api/config",
+    "/api/options",
+    "/api/settings",
+    "/hardware.html",
+    "/"
+  };
+  const int pathCount = (int)(sizeof(paths) / sizeof(paths[0]));
+  bool anyResponse = false;
+  bool sawCompressedPage = false;
+
+  for (int i = 0; i < pathCount; i++) {
+    String response;
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Trying %s", paths[i]);
+    fullRedraw = true;
+    uiNeedsRedraw = true;
+
+    Serial.printf("ELRS RX config: GET http://10.0.0.1%s\n", paths[i]);
+    if (!requestElrsReceiverPath(paths[i], response)) {
+      Serial.printf("ELRS RX config: no response from %s\n", paths[i]);
+      continue;
+    }
+
+    anyResponse = true;
+    strncpy(elrsReceiverConfigLastEndpoint, paths[i], sizeof(elrsReceiverConfigLastEndpoint) - 1);
+    elrsReceiverConfigLastEndpoint[sizeof(elrsReceiverConfigLastEndpoint) - 1] = '\0';
+
+    Serial.printf("ELRS RX config response from %s (%u bytes captured):\n",
+                  paths[i],
+                  (unsigned int)response.length());
+    Serial.println(response);
+
+    bool httpOk = response.indexOf("HTTP/1.1 200") >= 0 || response.indexOf("HTTP/1.0 200") >= 0;
+    bool gzipEncoded = response.indexOf("Content-Encoding: gzip") >= 0 ||
+                       response.indexOf("content-encoding: gzip") >= 0;
+    bool looksJson = response.indexOf("application/json") >= 0 ||
+                     response.indexOf("{") >= 0 ||
+                     response.indexOf("[") >= 0;
+    bool looksElrs = response.indexOf("ExpressLRS") >= 0 ||
+                     response.indexOf("ELRS") >= 0 ||
+                     response.indexOf("uid") >= 0 ||
+                     response.indexOf("binding") >= 0 ||
+                     response.indexOf("model") >= 0;
+
+    if (httpOk && gzipEncoded) {
+      sawCompressedPage = true;
+      snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail),
+               "Compressed page at %s", paths[i]);
+      continue;
+    }
+
+    if (httpOk && strcmp(paths[i], "/config") == 0 && parseElrsReceiverConfigJson(response)) {
+      snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail),
+               "%s config loaded", elrsReceiverLuaName);
+      logElrsReceiverWriteEndpoints();
+      return true;
+    }
+
+    if (httpOk && (looksJson || looksElrs)) {
+      parseElrsReceiverConfigJson(response);
+      snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail),
+               "Config response at %s", paths[i]);
+      return true;
+    }
+  }
+
+  if (sawCompressedPage) {
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail),
+             "ER4 web UI found, gzip only");
+    return true;
+  } else if (anyResponse) {
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "ER4 answered, no config endpoint yet");
+  } else {
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "No HTTP response from 10.0.0.1");
+  }
+  return false;
+}
+
+void updateElrsReceiverConfig() {
+  if (!elrsReceiverConfigActive) return;
+
+  unsigned long now = millis();
+  bool receiverConfigNeedsPollRedraw =
+    (elrsReceiverConfigState == RX_CONFIG_CONNECTING ||
+     elrsReceiverConfigState == RX_CONFIG_FETCHING);
+
+  if (receiverConfigNeedsPollRedraw && now - elrsReceiverConfigLastUiTime >= 500UL) {
+    elrsReceiverConfigLastUiTime = now;
+    uiNeedsRedraw = true;
+  }
+
+  if (elrsReceiverConfigState == RX_CONFIG_CONNECTING) {
+    wl_status_t status = WiFi.status();
+    if (status == WL_CONNECTED) {
+      IPAddress ip = WiFi.localIP();
+      snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus),
+               "Connected %u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+      snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Fetching ER4 config...");
+      Serial.printf("ELRS RX config: WiFi connected, IP %u.%u.%u.%u\n",
+                    ip[0], ip[1], ip[2], ip[3]);
+      elrsReceiverConfigState = RX_CONFIG_FETCHING;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+    } else if (now - elrsReceiverConfigStartTime >= ELRS_RX_WIFI_CONNECT_TIMEOUT_MS) {
+      snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "ER4 WiFi not found");
+      snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Put RX in WiFi mode and retry");
+      Serial.printf("ELRS RX config: connect timed out, WiFi status=%d\n", (int)status);
+      elrsReceiverConfigState = RX_CONFIG_FAILED;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+    } else {
+      unsigned long remaining = (ELRS_RX_WIFI_CONNECT_TIMEOUT_MS - (now - elrsReceiverConfigStartTime) + 999UL) / 1000UL;
+      snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail),
+               "Pausing ELRS; wait up to %lus", remaining);
+    }
+  } else if (elrsReceiverConfigState == RX_CONFIG_FETCHING) {
+    if (fetchElrsReceiverConfig()) {
+      snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Receiver config found");
+      elrsReceiverConfigState = RX_CONFIG_DONE;
+    } else {
+      snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Config probe incomplete");
+      elrsReceiverConfigState = RX_CONFIG_FAILED;
+    }
+    fullRedraw = true;
+    uiNeedsRedraw = true;
+  }
+}
+
 void resetEspNowTelemetry() {
   espNowLatency = 0;
   telemetryVoltage = 0.0f;
@@ -2516,6 +5149,22 @@ void resetEspNowTelemetry() {
   lastEspNowAliveTime = 0;
   lastEspNowPingTime = 0;
   espNowPingSequence = 0;
+}
+
+void clearActiveEspNowSessionTelemetry() {
+  resetEspNowTelemetry();
+  espNowProtocolActive = false;
+  espNowProtocolStartTime = 0;
+  lastEspNowSendStatus = ESP_NOW_SEND_FAIL;
+}
+
+bool isEspNowPacketFromActiveBoundReceiver(const esp_now_recv_info_t *info) {
+  if (info == nullptr) return false;
+
+  const uint8_t *boundReceiver = getBoundReceiverMac(activeModel);
+  if (boundReceiver == nullptr) return false;
+
+  return memcmp(info->src_addr, boundReceiver, ESP_NOW_ETH_ALEN) == 0;
 }
 
 void sendEspNowControlPacket(unsigned long now) {
@@ -2534,6 +5183,9 @@ void sendEspNowControlPacket(unsigned long now) {
   packet.modelIndex = (uint8_t)activeModel;
   packet.driveType = (uint8_t)getModelDriveType(activeModel);
   packet.tankMode = (uint8_t)getModelTankMode(activeModel);
+  packet.linkLatencyMs = (uint16_t)constrain(espNowLatency, 0, 65535);
+  strncpy(packet.modelName, currentModelName.c_str(), sizeof(packet.modelName) - 1);
+  packet.modelName[sizeof(packet.modelName) - 1] = '\0';
 
   if (batteryPresent) packet.flags |= ESPNOW_FLAG_BATTERY_PRESENT;
   if (batteryCharging) packet.flags |= ESPNOW_FLAG_BATTERY_CHARGING;
@@ -2550,14 +5202,14 @@ void sendEspNowControlPacket(unsigned long now) {
 
   const uint8_t *destination = getBoundReceiverMac(activeModel);
   if (destination == nullptr) {
-    destination = espNowBroadcastAddress;
+    return;
   }
 
   if (!ensureEspNowPeer(destination)) return;
 
   esp_err_t sendResult = esp_now_send(destination, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
-    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    if (ESPNOW_SEND_SERIAL_DEBUG) {
       Serial.printf("ESP-NOW send failed: %d\n", (int)sendResult);
     }
   }
@@ -2580,7 +5232,7 @@ void sendEspNowPing(unsigned long now) {
 
   esp_err_t sendResult = esp_now_send(destination, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
-    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    if (ESPNOW_SEND_SERIAL_DEBUG) {
       Serial.printf("ESP-NOW ping send failed: %d\n", (int)sendResult);
     }
   }
@@ -2619,6 +5271,7 @@ bool hasEspNowPendingBindMac() {
 
 void beginEspNowBinding() {
   setModelProtocol(activeModel, PROTOCOL_ESPNOW);
+  stopElrsUart();
   saveModels();
   initEspNowLink();
 
@@ -2683,8 +5336,9 @@ void formatReceiverMacShort(const uint8_t *macAddress, char *buffer, size_t buff
            macAddress[3], macAddress[4], macAddress[5]);
 }
 
-void handleEspNowTelemetryPacket(const uint8_t *data, int len) {
+void handleEspNowTelemetryPacket(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len != (int)sizeof(EspNowTelemetryPacket)) return;
+  if (!isEspNowPacketFromActiveBoundReceiver(info)) return;
 
   EspNowTelemetryPacket packet = {};
   memcpy(&packet, data, sizeof(packet));
@@ -2706,8 +5360,9 @@ void handleEspNowTelemetryPacket(const uint8_t *data, int len) {
   }
 }
 
-void handleEspNowPingAckPacket(const uint8_t *data, int len) {
+void handleEspNowPingAckPacket(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len != (int)sizeof(EspNowPingAckPacket)) return;
+  if (!isEspNowPacketFromActiveBoundReceiver(info)) return;
 
   EspNowPingAckPacket packet = {};
   memcpy(&packet, data, sizeof(packet));
@@ -2750,6 +5405,17 @@ void updateEspNowLink(unsigned long now) {
     }
     if (espNowBindingMode) {
       cancelEspNowBinding(true);
+    }
+    return;
+  }
+
+  if (!espNowBindingMode && !modelHasBoundReceiver(activeModel)) {
+    if (espNowProtocolActive || lastEspNowAliveTime > 0 ||
+        lastEspNowTelemetryTime > 0 || espNowLatency != 0 ||
+        telemetryVoltage > 0.05f) {
+      clearActiveEspNowSessionTelemetry();
+      topBarNeedsRedraw = true;
+      uiNeedsRedraw = true;
     }
     return;
   }
@@ -2827,7 +5493,31 @@ bool hasElrsModuleFrames() {
     (elrsDeviceInfoCount > 0) ||
     (elrsType14Count > 0) ||
     (elrsType1DCount > 0) ||
-    (elrsType29Count > 0);
+    (elrsType29Count > 0) ||
+    (elrsType2BCount > 0) ||
+    (elrsType2ECount > 0) ||
+    (elrsType3ACount > 0);
+}
+
+uint32_t getElrsModuleResponseCount() {
+  return elrsDeviceInfoCount +
+    elrsType14Count +
+    elrsType1CCount +
+    elrsType1DCount +
+    elrsType29Count +
+    elrsType2BCount +
+    elrsType2ECount +
+    elrsType3ACount;
+}
+
+const char* elrsModuleProfileName(uint8_t profile) {
+  if (profile == ELRS_MODULE_PROFILE_RANGER_NANO) return "Ranger Nano";
+  if (profile == ELRS_MODULE_PROFILE_AUTO) return "Auto";
+  return "Internal";
+}
+
+uint8_t getElrsBindFallbackFieldIndex() {
+  return (elrsActiveModuleProfile == ELRS_MODULE_PROFILE_RANGER_NANO) ? 29 : ELRS_BIND_FALLBACK_FIELD_INDEX;
 }
 
 bool containsIgnoreCase(const char *haystack, const char *needle) {
@@ -2858,15 +5548,20 @@ void IRAM_ATTR onElrsRxEdge() {
 
 void elrsSendFrame(const uint8_t *frame, size_t len) {
   if (frame == nullptr || len == 0) return;
+  if (!elrsInitialized) return;
 #if ELRS_HALF_DUPLEX_MODE
-  pinMode(elrsActiveTxPin, OUTPUT);
+  if (elrsRuntimeHalfDuplex) {
+    pinMode(elrsActiveTxPin, OUTPUT);
+  }
 #endif
   elrsSerial.write(frame, len);
 #if ELRS_HALF_DUPLEX_MODE
   // Ensure the outgoing frame has fully shifted out, then release the line
   // so the module can reply in the remaining slot.
-  elrsSerial.flush();
-  pinMode(elrsActiveTxPin, INPUT_PULLUP);
+  if (elrsRuntimeHalfDuplex) {
+    elrsSerial.flush();
+    pinMode(elrsActiveTxPin, INPUT_PULLUP);
+  }
 #endif
 }
 
@@ -2874,13 +5569,61 @@ void sendElrsChannelFrame() {
   float protocolChannels[CHANNEL_COUNT];
   buildProtocolOutputChannels(protocolChannels);
 
+#if DRIVE_OUTPUT_SERIAL_DEBUG
+  static unsigned long lastDriveOutputPrintTime = 0;
+  static float lastPrintedProtocolChannels[CHANNEL_COUNT] = {99.0f, 99.0f, 99.0f, 99.0f, 99.0f, 99.0f};
+  unsigned long now = millis();
+  bool outputChanged = false;
+  for (int i = 0; i < CHANNEL_COUNT; i++) {
+    if (fabs(protocolChannels[i] - lastPrintedProtocolChannels[i]) > 0.08f) {
+      outputChanged = true;
+      break;
+    }
+  }
+  if (outputChanged && now - lastDriveOutputPrintTime >= 250UL) {
+    uint8_t leftChannel = getModelTankLeftEscChannel(activeModel);
+    uint8_t rightChannel = getModelTankRightEscChannel(activeModel);
+    if (leftChannel >= CHANNEL_COUNT || rightChannel >= CHANNEL_COUNT || leftChannel == rightChannel) {
+      leftChannel = 1;
+      rightChannel = 0;
+    }
+    Serial.printf("DRIVE TX drive=%u tank=%u left=CH%u right=CH%u rev=%u%u%u%u%u%u "
+                  "src(CH1..6)=%.2f,%.2f,%.2f,%.2f,%.2f,%.2f out(CH1..6)=%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
+                  (unsigned int)getModelDriveType(activeModel),
+                  (unsigned int)getModelTankMode(activeModel),
+                  (unsigned int)(leftChannel + 1),
+                  (unsigned int)(rightChannel + 1),
+                  models[activeModel].reverse[0] ? 1 : 0,
+                  models[activeModel].reverse[1] ? 1 : 0,
+                  models[activeModel].reverse[2] ? 1 : 0,
+                  models[activeModel].reverse[3] ? 1 : 0,
+                  models[activeModel].reverse[4] ? 1 : 0,
+                  models[activeModel].reverse[5] ? 1 : 0,
+                  driveSourceChannels[0],
+                  driveSourceChannels[1],
+                  driveSourceChannels[2],
+                  driveSourceChannels[3],
+                  driveSourceChannels[4],
+                  driveSourceChannels[5],
+                  protocolChannels[0],
+                  protocolChannels[1],
+                  protocolChannels[2],
+                  protocolChannels[3],
+                  protocolChannels[4],
+                  protocolChannels[5]);
+    for (int i = 0; i < CHANNEL_COUNT; i++) {
+      lastPrintedProtocolChannels[i] = protocolChannels[i];
+    }
+    lastDriveOutputPrintTime = now;
+  }
+#endif
+
   uint16_t channels[16];
   for (int i = 0; i < 16; i++) channels[i] = 992;
 
-  channels[0] = channelToCrsf(protocolChannels[0]);  // CH1 preset output
-  channels[1] = channelToCrsf(protocolChannels[1]);  // CH2 preset output
-  channels[2] = channelToCrsf(protocolChannels[2]);  // CH3 preset output
-  channels[3] = channelToCrsf(protocolChannels[3]);  // CH4 preset output
+  for (int i = 0; i < CHANNEL_COUNT && i < 16; i++) {
+    channels[i] = channelToCrsf(protocolChannels[i]);
+  }
 
   uint8_t payload[22] = {0};
   uint16_t bitPos = 0;
@@ -2930,7 +5673,7 @@ void sendElrsDevicePing() {
 }
 
 void sendElrsBindCommand() {
-  uint8_t bindFieldIndex = elrsBindFieldKnown ? elrsBindFieldIndex : 0x11;
+  uint8_t bindFieldIndex = elrsBindFieldKnown ? elrsBindFieldIndex : getElrsBindFallbackFieldIndex();
   if (!elrsBindFieldKnown && strcmp(elrsDeviceName, "RM Pocket") == 0 && elrsParameterCount >= 28) {
     bindFieldIndex = 28;
   }
@@ -2944,13 +5687,14 @@ void sendElrsBindCommand() {
   // Mirror the real Pocket bind sequence:
   // 1) housekeeping write to field 0, value 0
   // 2) bind click on the discovered bind field
-  sendElrsLuaCommandWrite(0x00, 0x00);
-  sendElrsLuaBindWrite(bindFieldIndex);
+  // 3) keep nudging the same command while the receiver is in bind mode.
   elrsBindCommandSentTime = millis();
   elrsBindAwaitingResult = true;
-  elrsBindAwaitUntil = elrsBindCommandSentTime + 10000UL;
-  elrsBindBurstUntil = elrsBindCommandSentTime + 1200UL;
+  elrsBindAwaitUntil = elrsBindCommandSentTime + ELRS_BIND_COMMAND_WINDOW_MS;
+  elrsBindBurstUntil = elrsBindAwaitUntil;
   lastElrsBindBurstSendTime = elrsBindCommandSentTime;
+  sendElrsLuaCommandWrite(0x00, 0x00);
+  sendElrsLuaBindWrite(bindFieldIndex);
 }
 
 void sendElrsBindCommandTo(uint8_t destination) {
@@ -3006,7 +5750,10 @@ void sendElrsLuaCommandWrite(uint8_t fieldIndex, uint8_t step) {
   frame[5] = fieldIndex;
   frame[6] = step;
   frame[7] = crsfCrc8(&frame[2], 5);
-  if (ELRS_VERBOSE_SERIAL_DEBUG) {
+  if (ELRS_VERBOSE_SERIAL_DEBUG ||
+      (ELRS_BIND_SERIAL_DEBUG &&
+       elrsBindAwaitingResult &&
+       (fieldIndex == 0 || fieldIndex == elrsBindFieldIndex || fieldIndex == getElrsBindFallbackFieldIndex()))) {
     Serial.printf("ELRS TX 2D field=%u step=%u frame=", (unsigned int)fieldIndex, (unsigned int)step);
     for (size_t i = 0; i < sizeof(frame); i++) {
       Serial.printf("%02X", frame[i]);
@@ -3028,6 +5775,111 @@ void sendElrsLuaBindExecWrite(uint8_t fieldIndex) {
   sendElrsLuaCommandWrite(fieldIndex, 0x06);
 }
 
+static uint16_t clampElrsTxPowerMw(uint16_t mw) {
+  if (mw > ELRS_TX_POWER_MAX_MW) return ELRS_TX_POWER_MAX_MW;
+  return mw;
+}
+
+static uint8_t parseElrsPowerOptions(const char *options, uint16_t *valuesOut, uint8_t maxValues) {
+  if (options == nullptr || valuesOut == nullptr || maxValues == 0) return 0;
+  uint8_t count = 0;
+  const char *p = options;
+  while (*p != '\0' && count < maxValues) {
+    while (*p == ';' || *p == ' ') p++;
+    if (*p == '\0') break;
+    if (*p < '0' || *p > '9') break;
+    int parsed = 0;
+    while (*p >= '0' && *p <= '9') {
+      parsed = (parsed * 10) + (*p - '0');
+      p++;
+    }
+    valuesOut[count++] = (uint16_t)max(0, parsed);
+    while (*p != '\0' && *p != ';') p++;
+  }
+  return count;
+}
+
+static void updateElrsTxPowerFromRaw(uint8_t rawValue) {
+  if (elrsTxPowerFieldIsSelection && elrsTxPowerOptionCount > 0) {
+    int idx = rawValue;
+    if (elrsTxPowerSelectionOneBased) idx -= 1;
+    if (idx < 0) idx = 0;
+    if (idx >= elrsTxPowerOptionCount) idx = elrsTxPowerOptionCount - 1;
+    elrsTxPowerMw = clampElrsTxPowerMw(elrsTxPowerOptionsMw[idx]);
+  } else {
+    elrsTxPowerMw = clampElrsTxPowerMw(rawValue);
+  }
+  if (!elrsLowPowerFallbackActive && activeModel >= 0 && activeModel < MAX_MODELS) {
+    modelElrsTxPowerMw[activeModel] = elrsTxPowerMw;
+  }
+}
+
+void sendElrsTxPowerWrite(uint16_t powerMw, bool persistToModel) {
+  uint16_t clampedMw = clampElrsTxPowerMw(powerMw);
+  if (persistToModel) {
+    elrsLowPowerFallbackActive = false;
+    elrsNoLinkPowerTimerStart = millis();
+  }
+  elrsTxPowerPendingMw = clampedMw;
+  elrsTxPowerWritePersistPending = persistToModel;
+  if (!elrsTxPowerFieldKnown) {
+    elrsTxPowerWritePending = true;
+    return;
+  }
+
+  uint8_t rawValue = (uint8_t)clampedMw;
+  if (elrsTxPowerFieldIsSelection && elrsTxPowerOptionCount > 0) {
+    int bestIndex = 0;
+    int bestDiff = 100000;
+    for (int i = 0; i < elrsTxPowerOptionCount; i++) {
+      int diff = abs((int)clampedMw - (int)elrsTxPowerOptionsMw[i]);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestIndex = i;
+      }
+    }
+    rawValue = (uint8_t)(elrsTxPowerSelectionOneBased ? (bestIndex + 1) : bestIndex);
+    clampedMw = clampElrsTxPowerMw(elrsTxPowerOptionsMw[bestIndex]);
+  }
+
+  sendElrsLuaCommandWrite(elrsTxPowerFieldIndex, rawValue);
+  elrsTxPowerMw = clampedMw;
+  elrsTxPowerWritePending = false;
+  if (persistToModel && activeModel >= 0 && activeModel < MAX_MODELS) {
+    modelElrsTxPowerMw[activeModel] = clampedMw;
+  }
+}
+
+void updateElrsLowPowerFallback(unsigned long now) {
+  if (getModelProtocol(activeModel) != PROTOCOL_ELRS) {
+    elrsNoLinkPowerTimerStart = 0;
+    elrsLowPowerFallbackActive = false;
+    return;
+  }
+
+  if (elrsLinkActive) {
+    elrsNoLinkPowerTimerStart = now;
+    if (elrsLowPowerFallbackActive) {
+      elrsLowPowerFallbackActive = false;
+      uint16_t modelPower = clampElrsTxPowerMw(modelElrsTxPowerMw[activeModel]);
+      if (elrsTxPowerMw != modelPower || elrsTxPowerWritePending) {
+        sendElrsTxPowerWrite(modelPower, false);
+      }
+    }
+    return;
+  }
+
+  if (elrsNoLinkPowerTimerStart == 0) {
+    elrsNoLinkPowerTimerStart = now;
+  }
+
+  if (!elrsLowPowerFallbackActive &&
+      now - elrsNoLinkPowerTimerStart >= ELRS_LOW_POWER_NO_LINK_TIMEOUT_MS) {
+    elrsLowPowerFallbackActive = true;
+    sendElrsTxPowerWrite(ELRS_LOW_POWER_FALLBACK_MW, false);
+  }
+}
+
 void sendElrsParameterRead(uint8_t fieldIndex, uint8_t chunkIndex) {
   uint8_t frame[8];
   frame[0] = ELRS_TX_MODULE_ADDR;
@@ -3042,7 +5894,7 @@ void sendElrsParameterRead(uint8_t fieldIndex, uint8_t chunkIndex) {
 }
 
 void updateElrsParameterDiscovery(unsigned long now) {
-  if (elrsBindFieldKnown) return;
+  if (elrsBindFieldKnown && elrsTxPowerFieldKnown) return;
   if (now - lastElrsParamReadTime < ELRS_PARAM_READ_INTERVAL_MS) return;
   lastElrsParamReadTime = now;
 
@@ -3094,9 +5946,10 @@ void parseElrsParameterEntryFrame(const uint8_t *frame, uint8_t expected) {
   if (frame[3] != 0xEA || frame[4] != 0xEE) return; // handset <- tx module
 
   uint8_t fieldIndex = frame[5];
+  uint8_t chunksRemaining = frame[6];
+  (void)chunksRemaining;
   uint8_t typeHidden = frame[8];
   uint8_t fieldType = (uint8_t)(typeHidden & 0x7F);
-  if (fieldType != 0x0D) return; // command-type parameters only
 
   int labelStart = 9;
   int payloadEnd = expected - 1; // before CRC
@@ -3113,13 +5966,77 @@ void parseElrsParameterEntryFrame(const uint8_t *frame, uint8_t expected) {
   label[out] = '\0';
   if (out == 0) return;
 
+  int valueStart = labelStart + out + 1;
+
+  bool isPowerField = containsIgnoreCase(label, "power");
+  if (isPowerField) {
+    elrsTxPowerFieldIndex = fieldIndex;
+    elrsTxPowerFieldKnown = true;
+
+    if (fieldType == 0x09) { // TEXT_SELECTION
+      int optionsStart = valueStart;
+      char options[64];
+      int optionsOut = 0;
+      int i = optionsStart;
+      for (; i < payloadEnd && optionsOut < (int)sizeof(options) - 1; i++) {
+        char c = (char)frame[i];
+        if (c == '\0') break;
+        if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) break;
+        options[optionsOut++] = c;
+      }
+      options[optionsOut] = '\0';
+
+      uint8_t parsedCount = parseElrsPowerOptions(options, elrsTxPowerOptionsMw, (uint8_t)(sizeof(elrsTxPowerOptionsMw) / sizeof(elrsTxPowerOptionsMw[0])));
+      if (parsedCount > 0) {
+        elrsTxPowerFieldIsSelection = true;
+        elrsTxPowerOptionCount = parsedCount;
+      } else {
+        elrsTxPowerFieldIsSelection = false;
+        elrsTxPowerOptionCount = 0;
+      }
+
+      // TEXT_SELECTION payload after options string:
+      // value, min, max, default, unit...
+      int metaStart = i + 1; // first byte after null terminator
+      if (metaStart + 3 < payloadEnd) {
+        uint8_t currentSelection = frame[metaStart];
+        uint8_t minSelection = frame[metaStart + 1];
+        uint8_t maxSelection = frame[metaStart + 2];
+        // Determine 0-based vs 1-based selection encoding from min/max.
+        elrsTxPowerSelectionOneBased = (minSelection == 1 && maxSelection >= 1);
+        updateElrsTxPowerFromRaw(currentSelection);
+      }
+    } else if (fieldType == 0x08) { // FLOAT
+      // FLOAT payload starts with int32 value (little-endian).
+      if (valueStart + 3 < payloadEnd) {
+        int32_t currentValue =
+          (int32_t)((uint32_t)frame[valueStart] |
+                    ((uint32_t)frame[valueStart + 1] << 8) |
+                    ((uint32_t)frame[valueStart + 2] << 16) |
+                    ((uint32_t)frame[valueStart + 3] << 24));
+        elrsTxPowerFieldIsSelection = false;
+        elrsTxPowerOptionCount = 0;
+        if (currentValue < 0) currentValue = 0;
+        elrsTxPowerMw = clampElrsTxPowerMw((uint16_t)currentValue);
+      }
+    } else {
+      elrsTxPowerFieldIsSelection = false;
+      elrsTxPowerOptionCount = 0;
+    }
+
+    if (elrsTxPowerWritePending) {
+      sendElrsTxPowerWrite(elrsTxPowerPendingMw, elrsTxPowerWritePersistPending);
+    }
+  }
+
+  if (fieldType != 0x0D) return; // command-type parameters only
+
   bool isBindField = containsIgnoreCase(label, "bind");
   if (isBindField) {
     elrsBindFieldIndex = fieldIndex;
     elrsBindFieldKnown = true;
   }
 
-  int valueStart = labelStart + out + 1;
   if (!isBindField || valueStart + 1 >= payloadEnd) return;
 
   elrsBindCommandStep = frame[valueStart];
@@ -3136,12 +6053,39 @@ void parseElrsParameterEntryFrame(const uint8_t *frame, uint8_t expected) {
   elrsBindCommandInfo[infoOut] = '\0';
 }
 
+void parseElrsParameterValueFrame(const uint8_t *frame, uint8_t expected) {
+  if (frame == nullptr || expected < 9) return;
+  if (frame[3] != 0xEA || frame[4] != 0xEE) return; // handset <- tx module
+
+  uint8_t fieldIndex = frame[5];
+  if (!elrsTxPowerFieldKnown || fieldIndex != elrsTxPowerFieldIndex) return;
+
+  // PARAM_VALUE payload is parameter_number + data payload.
+  // For TX power TEXT_SELECTION, data payload is 1 byte selection index.
+  if (elrsTxPowerFieldIsSelection) {
+    if (expected >= 8) {
+      uint8_t rawSelection = frame[6];
+      updateElrsTxPowerFromRaw(rawSelection);
+    }
+    return;
+  }
+
+  // For numeric value frames, accept at least one data byte and clamp.
+  if (expected >= 8) {
+    elrsTxPowerMw = clampElrsTxPowerMw((uint16_t)frame[6]);
+  }
+}
+
 void readElrsSniffSerial(HardwareSerial &port, ElrsSniffStats &stats) {
   static uint8_t frameBuffers[2][64];
   static uint8_t frameIndices[2] = {0, 0};
   static uint8_t frameExpected[2] = {0, 0};
+  static uint8_t lastRcFrames[2][32] = {};
+  static uint8_t lastRcFrameLens[2] = {0, 0};
+  static unsigned long lastRcFrameLogTimes[2] = {0, 0};
 
   int slot = (&port == &elrsSerial) ? 0 : 1;
+  const char *label = (slot == 0) ? "SNIFF M->H" : "SNIFF H->M";
   uint8_t *frame = frameBuffers[slot];
   uint8_t &index = frameIndices[slot];
   uint8_t &expected = frameExpected[slot];
@@ -3149,6 +6093,7 @@ void readElrsSniffSerial(HardwareSerial &port, ElrsSniffStats &stats) {
   while (port.available() > 0) {
     uint8_t byteIn = (uint8_t)port.read();
     stats.byteCount++;
+    stats.recentBytes[stats.recentByteIndex++ & 0x0F] = byteIn;
 
     if (index == 0) {
       if (byteIn != 0xC8 && byteIn != 0xEE && byteIn != 0xEA && byteIn != 0xEC) {
@@ -3186,11 +6131,32 @@ void readElrsSniffSerial(HardwareSerial &port, ElrsSniffStats &stats) {
       else if (type == 0x28) stats.type28Count++;
       else if (type == 0x29) stats.type29Count++;
       else if (type == 0x2B) stats.type2BCount++;
+      else if (type == 0x2E) stats.type2ECount++;
       else if (type == 0x32) stats.type32Count++;
       else if (type == 0x3A) stats.type3ACount++;
       else stats.otherCount++;
 
-      if (type == 0x28 || type == 0x29 || type == 0x2B || type == 0x2C || type == 0x2D || type == 0x32) {
+#if ELRS_SNIFF_LOG_WRITES_IMMEDIATE
+      if (type == 0x2C || type == 0x2D) {
+        logElrsSniffImmediateFrame(label, frame, expected);
+      }
+#endif
+
+#if ELRS_SNIFF_LOG_RC_SAMPLES
+      if (type == 0x16) {
+        unsigned long now = millis();
+        bool changed = (lastRcFrameLens[slot] != expected) ||
+                       (memcmp(lastRcFrames[slot], frame, min((int)expected, 32)) != 0);
+        if (changed && now - lastRcFrameLogTimes[slot] >= ELRS_SNIFF_RC_SAMPLE_MS) {
+          logElrsSniffImmediateFrame(label, frame, expected);
+          memcpy(lastRcFrames[slot], frame, min((int)expected, 32));
+          lastRcFrameLens[slot] = expected;
+          lastRcFrameLogTimes[slot] = now;
+        }
+      }
+#endif
+
+      if (type == 0x28 || type == 0x29 || type == 0x2B || type == 0x2C || type == 0x2D || type == 0x2E || type == 0x32) {
         memcpy(stats.frame, frame, expected);
         stats.frameLen = expected;
         stats.frameUpdated = true;
@@ -3200,6 +6166,17 @@ void readElrsSniffSerial(HardwareSerial &port, ElrsSniffStats &stats) {
     index = 0;
     expected = 0;
   }
+}
+
+void logElrsSniffImmediateFrame(const char *label, const uint8_t *frame, uint8_t frameLen) {
+  if (frame == nullptr || frameLen == 0) return;
+  uint8_t type = (frameLen >= 3) ? frame[2] : 0;
+  Serial.printf("%s instant type=0x%02X(%s) frame=", label, type, elrsFrameTypeName(type));
+  for (uint8_t i = 0; i < frameLen; i++) {
+    Serial.printf("%02X", frame[i]);
+    if (i + 1 != frameLen) Serial.print(' ');
+  }
+  Serial.println();
 }
 
 void logElrsSniffFrame(const char *label, ElrsSniffStats &stats) {
@@ -3215,7 +6192,7 @@ void logElrsSniffFrame(const char *label, ElrsSniffStats &stats) {
 }
 
 void logElrsSniffSummary(const char *label, ElrsSniffStats &stats) {
-  Serial.printf("%s bytes=%lu frames=%lu t16=%lu t28=%lu t29=%lu t2B=%lu t2C=%lu t2D=%lu t32=%lu t3A=%lu other=%lu lastType=0x%02X(%s)\n",
+  Serial.printf("%s bytes=%lu frames=%lu t16=%lu t28=%lu t29=%lu t2B=%lu t2C=%lu t2D=%lu t2E=%lu t32=%lu t3A=%lu other=%lu lastType=0x%02X(%s)\n",
                 label,
                 (unsigned long)stats.byteCount,
                 (unsigned long)stats.frameCount,
@@ -3225,11 +6202,21 @@ void logElrsSniffSummary(const char *label, ElrsSniffStats &stats) {
                 (unsigned long)stats.type2BCount,
                 (unsigned long)stats.type2CCount,
                 (unsigned long)stats.type2DCount,
+                (unsigned long)stats.type2ECount,
                 (unsigned long)stats.type32Count,
                 (unsigned long)stats.type3ACount,
                 (unsigned long)stats.otherCount,
                 (unsigned int)stats.lastType,
                 elrsFrameTypeName(stats.lastType));
+  if (stats.byteCount > 0 && stats.frameCount == 0) {
+    Serial.printf("%s recent=", label);
+    for (uint8_t i = 0; i < 16; i++) {
+      uint8_t idx = (stats.recentByteIndex + i) & 0x0F;
+      Serial.printf("%02X", stats.recentBytes[idx]);
+      if (i != 15) Serial.print(' ');
+    }
+    Serial.println();
+  }
   logElrsSniffFrame(label, stats);
 }
 
@@ -3332,6 +6319,7 @@ void readElrsSerial(unsigned long now) {
       } else if (type == 0x3A) {
         elrsType3ACount++;
       } else if (type == 0x2B) {
+        elrsType2BCount++;
         // Parameter settings entry (response to 0x2C reads)
       } else {
         elrsTypeOtherCount++;
@@ -3349,6 +6337,8 @@ void readElrsSerial(unsigned long now) {
         parseElrsDeviceInfoFrame(frame, expected);
       } else if (type == 0x2B) {
         parseElrsParameterEntryFrame(frame, expected);
+      } else if (type == 0x2E) {
+        parseElrsParameterValueFrame(frame, expected);
       }
     }
 
@@ -3357,34 +6347,174 @@ void readElrsSerial(unsigned long now) {
   }
 }
 
+void applyElrsModuleProfile(uint8_t profile, bool resetDiscovery) {
+  uint8_t previousRxPin = elrsActiveRxPin;
+  elrsActiveModuleProfile = profile;
+  if (profile == ELRS_MODULE_PROFILE_RANGER_NANO) {
+    elrsRuntimeHalfDuplex = true;
+    elrsActiveTxPin = ELRS_UART_DATA_PIN;
+    elrsActiveRxPin = ELRS_UART_DATA_PIN;
+    elrsInvertModeIndex = 2; // Ranger Nano module bay traffic is inverted on the shared data line.
+    elrsPinPairIndex = 0;
+  } else {
+    elrsRuntimeHalfDuplex = false;
+    elrsActiveTxPin = 43;
+    elrsActiveRxPin = 44;
+    elrsInvertModeIndex = 0;
+    elrsPinPairIndex = 1;
+  }
+
+  if (elrsRxInterruptAttached) {
+    detachInterrupt(digitalPinToInterrupt(previousRxPin));
+    elrsRxInterruptAttached = false;
+  }
+  pinMode(elrsActiveRxPin, INPUT_PULLUP);
+#if ELRS_FORCE_INVERT_MODE >= 0
+  elrsInvertModeIndex = ELRS_FORCE_INVERT_MODE % elrsInvertModeCount;
+#endif
+
+  elrsRxInvert = elrsInvertModes[elrsInvertModeIndex][0];
+  elrsTxInvert = elrsInvertModes[elrsInvertModeIndex][1];
+
+  if (!resetDiscovery) return;
+  elrsBindFieldKnown = false;
+  elrsBindFieldIndex = 0;
+  elrsTxPowerFieldKnown = false;
+  elrsTxPowerFieldIndex = 0;
+  elrsTxPowerFieldIsSelection = false;
+  elrsTxPowerSelectionOneBased = false;
+  elrsTxPowerOptionCount = 0;
+  elrsParameterCount = 0;
+  elrsParameterVersion = 0;
+  elrsParamScanIndex = 1;
+  lastElrsParamReadTime = 0;
+  lastElrsSerialRxTime = 0;
+  lastElrsLinkStatsTime = 0;
+  lastElrsDeviceInfoTime = 0;
+  lastElrsTxTime = 0;
+  lastElrsDevicePingTime = 0;
+  elrsModulePresent = false;
+  elrsLinkActive = false;
+  elrsRxByteCount = 0;
+  elrsRxFrameCount = 0;
+  elrsDeviceInfoCount = 0;
+  elrsType16Count = 0;
+  elrsType14Count = 0;
+  elrsType1CCount = 0;
+  elrsType1DCount = 0;
+  elrsType29Count = 0;
+  elrsType2BCount = 0;
+  elrsType2ECount = 0;
+  elrsType3ACount = 0;
+  elrsTypeOtherCount = 0;
+  elrsLastFrameType = 0;
+  elrsLastOtherFrameType = 0;
+  elrsDeviceName[0] = '\0';
+  elrsBindCommandInfo[0] = '\0';
+  elrsProfileDetectStartTime = millis();
+  elrsProfileDetectStartResponses = getElrsModuleResponseCount();
+  elrsNoModuleDetected = false;
+}
+
 void initElrsUart() {
+  if (elrsInitialized) return;
 #if ELRS_PASSIVE_SNIFF_MODE
   initElrsPassiveSniffer();
   elrsInitialized = true;
   return;
 #endif
-  #if ELRS_FORCE_PIN_PAIR_INDEX >= 0
-  elrsPinPairIndex = ELRS_FORCE_PIN_PAIR_INDEX % elrsPinPairCount;
-  #endif
-  #if ELRS_FORCE_INVERT_MODE >= 0
-  elrsInvertModeIndex = ELRS_FORCE_INVERT_MODE % elrsInvertModeCount;
-  #endif
-  applyElrsUartPinPair(elrsPinPairIndex);
-  elrsBindFieldKnown = false;
-  elrsBindFieldIndex = 0;
-  elrsParameterCount = 0;
-  elrsParameterVersion = 0;
-  elrsParamScanIndex = 1;
-  lastElrsParamReadTime = 0;
-  elrsRxInvert = elrsInvertModes[elrsInvertModeIndex][0];
-  elrsTxInvert = elrsInvertModes[elrsInvertModeIndex][1];
+  if (ELRS_MODULE_PROFILE == ELRS_MODULE_PROFILE_RANGER_NANO) {
+    applyElrsModuleProfile(ELRS_MODULE_PROFILE_RANGER_NANO, true);
+  } else {
+    applyElrsModuleProfile(ELRS_MODULE_PROFILE_INTERNAL, true);
+  }
+  elrsAutoDetectLocked = (ELRS_MODULE_PROFILE != ELRS_MODULE_PROFILE_AUTO);
   restartElrsUart(elrsBaudCandidates[elrsBaudIndex]);
   elrsInitialized = true;
   if (RADIO_PROTOCOL_SERIAL_DEBUG) {
-    Serial.printf("ELRS UART mode: %s tx=%d rx=%d\n",
-                  ELRS_HALF_DUPLEX_MODE ? "half-duplex" : "full-duplex",
+    Serial.printf("ELRS UART profile=%s mode=%s tx=%d rx=%d invert(rx=%d,tx=%d)\n",
+                  elrsModuleProfileName(elrsActiveModuleProfile),
+                  elrsRuntimeHalfDuplex ? "half-duplex" : "full-duplex",
                   (int)elrsActiveTxPin,
-                  (int)elrsActiveRxPin);
+                  (int)elrsActiveRxPin,
+                  elrsRxInvert ? 1 : 0,
+                  elrsTxInvert ? 1 : 0);
+  }
+}
+
+void stopElrsUart() {
+  if (!elrsInitialized && !elrsProtocolActive && !elrsModulePresent && !elrsLinkActive) return;
+
+  elrsSerial.flush();
+  elrsSerial.end();
+  elrsHostSniffSerial.end();
+  if (elrsRxInterruptAttached) {
+    detachInterrupt(digitalPinToInterrupt(elrsActiveRxPin));
+    elrsRxInterruptAttached = false;
+  }
+
+  pinMode(elrsActiveTxPin, INPUT);
+  pinMode(elrsActiveRxPin, INPUT);
+  elrsInitialized = false;
+  elrsProtocolActive = false;
+  elrsModulePresent = false;
+  elrsLinkActive = false;
+  lastElrsSerialRxTime = 0;
+  lastElrsLinkStatsTime = 0;
+  elrsUplinkLq = 0;
+  elrsUplinkSnr = 0;
+  elrsUplinkRssi1 = 0;
+  elrsUplinkRssi2 = 0;
+  elrsNoModuleDetected = false;
+  elrsNoLinkPowerTimerStart = 0;
+  elrsLowPowerFallbackActive = false;
+  signalStrength = 0;
+  topBarNeedsRedraw = true;
+}
+
+void updateElrsProfileAutoDetect(unsigned long now) {
+  if (ELRS_MODULE_PROFILE != ELRS_MODULE_PROFILE_AUTO || elrsAutoDetectLocked) return;
+
+  uint32_t responses = getElrsModuleResponseCount();
+  if (responses > elrsProfileDetectStartResponses) {
+    elrsAutoDetectLocked = true;
+    elrsNoModuleDetected = false;
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.printf("ELRS auto-detect: locked %s profile (%lu response frames)\n",
+                    elrsModuleProfileName(elrsActiveModuleProfile),
+                    (unsigned long)(responses - elrsProfileDetectStartResponses));
+    }
+    return;
+  }
+
+  if (elrsActiveModuleProfile == ELRS_MODULE_PROFILE_INTERNAL &&
+      now - elrsProfileDetectStartTime >= ELRS_PROFILE_DETECT_SWITCH_MS) {
+#if !ELRS_AUTO_PROBE_RANGER_ON_SILENT_INTERNAL
+    elrsAutoDetectLocked = true;
+    elrsNoModuleDetected = true;
+    elrsNoModuleRetryTime = now + ELRS_AUTO_RETRY_NO_MODULE_MS;
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ELRS auto-detect: internal profile silent; ELRS output paused");
+    }
+    return;
+#else
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ELRS auto-detect: internal profile silent, trying Ranger Nano one-wire profile");
+    }
+    applyElrsModuleProfile(ELRS_MODULE_PROFILE_RANGER_NANO, true);
+    restartElrsUart(elrsBaudCandidates[elrsBaudIndex]);
+    return;
+#endif
+  }
+
+  if (elrsActiveModuleProfile == ELRS_MODULE_PROFILE_RANGER_NANO &&
+      now - elrsProfileDetectStartTime >= ELRS_PROFILE_DETECT_ACTIVE_MS) {
+    elrsAutoDetectLocked = true;
+    elrsNoModuleDetected = true;
+    elrsNoModuleRetryTime = now + ELRS_AUTO_RETRY_NO_MODULE_MS;
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ELRS auto-detect: no module response; ELRS output paused until retry");
+    }
   }
 }
 
@@ -3392,21 +6522,27 @@ void initElrsPassiveSniffer() {
   elrsSerial.end();
   elrsHostSniffSerial.end();
 
+#if !ELRS_SNIFF_SINGLE_WIRE_ONLY
   pinMode(ELRS_SNIFF_MODULE_TO_HOST_PIN, INPUT_PULLUP);
+#endif
   pinMode(ELRS_SNIFF_HOST_TO_MODULE_PIN, INPUT_PULLUP);
 
-  elrsSerial.begin(ELRS_FORCE_BAUD, SERIAL_8N1, ELRS_SNIFF_MODULE_TO_HOST_PIN, -1, false);
+#if !ELRS_SNIFF_SINGLE_WIRE_ONLY
+  elrsSerial.begin(ELRS_PASSIVE_SNIFF_BAUD, SERIAL_8N1, ELRS_SNIFF_MODULE_TO_HOST_PIN, -1, false);
   elrsSerial.setMode(UART_MODE_UART);
-  elrsSerial.setRxInvert(false);
+  elrsSerial.setRxInvert(ELRS_PASSIVE_SNIFF_RX_INVERT);
+#endif
 
-  elrsHostSniffSerial.begin(ELRS_FORCE_BAUD, SERIAL_8N1, ELRS_SNIFF_HOST_TO_MODULE_PIN, -1, false);
+  elrsHostSniffSerial.begin(ELRS_PASSIVE_SNIFF_BAUD, SERIAL_8N1, ELRS_SNIFF_HOST_TO_MODULE_PIN, -1, false);
   elrsHostSniffSerial.setMode(UART_MODE_UART);
-  elrsHostSniffSerial.setRxInvert(false);
+  elrsHostSniffSerial.setRxInvert(ELRS_PASSIVE_SNIFF_RX_INVERT);
 
-  Serial.printf("ELRS passive sniffer: host->module rx=%d module->host rx=%d baud=%lu\n",
+  Serial.printf("ELRS passive sniffer: shared rx=%d module->host rx=%d enabled=%d baud=%lu rxInvert=%d\n",
                 ELRS_SNIFF_HOST_TO_MODULE_PIN,
                 ELRS_SNIFF_MODULE_TO_HOST_PIN,
-                (unsigned long)ELRS_FORCE_BAUD);
+                ELRS_SNIFF_SINGLE_WIRE_ONLY ? 0 : 1,
+                (unsigned long)ELRS_PASSIVE_SNIFF_BAUD,
+                ELRS_PASSIVE_SNIFF_RX_INVERT ? 1 : 0);
 }
 
 void applyElrsUartPinPair(int pinPairIndex) {
@@ -3459,6 +6595,14 @@ void advanceElrsSerialMode() {
 }
 
 void updateElrsLink(unsigned long now) {
+  if (getModelProtocol(activeModel) != PROTOCOL_ELRS) {
+    stopElrsUart();
+    return;
+  }
+
+  if (!elrsInitialized) {
+    initElrsUart();
+  }
   if (!elrsInitialized) return;
 
 #if ELRS_PASSIVE_SNIFF_MODE
@@ -3467,6 +6611,19 @@ void updateElrsLink(unsigned long now) {
 #endif
 
   readElrsSerial(now);
+  updateElrsProfileAutoDetect(now);
+
+  if (ELRS_MODULE_PROFILE == ELRS_MODULE_PROFILE_AUTO &&
+      elrsNoModuleDetected &&
+      now >= elrsNoModuleRetryTime) {
+    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+      Serial.println("ELRS auto-detect: retrying module detection");
+    }
+    elrsAutoDetectLocked = false;
+    applyElrsModuleProfile(ELRS_MODULE_PROFILE_INTERNAL, true);
+    restartElrsUart(elrsBaudCandidates[elrsBaudIndex]);
+    return;
+  }
 
   elrsModulePresent = (lastElrsSerialRxTime > 0) &&
     ((now - lastElrsSerialRxTime) <= ELRS_MODULE_TIMEOUT_MS);
@@ -3476,32 +6633,40 @@ void updateElrsLink(unsigned long now) {
     if (elrsLinkActive) {
       elrsBindSuccessTime = now;
       elrsBindAwaitingResult = false;
+      elrsBindBurstUntil = 0;
     } else if (now > elrsBindAwaitUntil) {
       elrsBindAwaitingResult = false;
+      elrsBindBurstUntil = 0;
     }
   }
-  if (elrsBindBurstUntil > now && (now - lastElrsBindBurstSendTime >= 200UL)) {
+  if (elrsBindBurstUntil > now && (now - lastElrsBindBurstSendTime >= ELRS_BIND_BURST_INTERVAL_MS)) {
     lastElrsBindBurstSendTime = now;
-    uint8_t bindFieldIndex = elrsBindFieldKnown ? elrsBindFieldIndex : 0x11;
+    uint8_t bindFieldIndex = elrsBindFieldKnown ? elrsBindFieldIndex : getElrsBindFallbackFieldIndex();
     if (!elrsBindFieldKnown && strcmp(elrsDeviceName, "RM Pocket") == 0 && elrsParameterCount >= 28) {
       bindFieldIndex = 28;
     }
     sendElrsLuaCommandWrite(0x00, 0x00);
     if (elrsBindCommandStep == 3) {
       sendElrsLuaCommandWrite(bindFieldIndex, 0x04);
-    } else if (elrsBindCommandStep == 2) {
-      sendElrsLuaBindExecWrite(bindFieldIndex);
     } else {
-      sendElrsLuaBindWrite(bindFieldIndex);
+      sendElrsLuaBindExecWrite(bindFieldIndex);
     }
   }
 
-  if (getModelProtocol(activeModel) != PROTOCOL_ELRS) {
+  if (elrsReceiverConfigActive) {
     elrsProtocolActive = false;
+    signalStrength = 0;
+    return;
+  }
+
+  if (elrsNoModuleDetected) {
+    elrsProtocolActive = false;
+    signalStrength = 0;
     return;
   }
 
   elrsProtocolActive = true;
+  updateElrsLowPowerFallback(now);
 
   bool haveModuleFrames = hasElrsModuleFrames();
   bool haveAnyValidFrames = (elrsRxFrameCount > 0);
@@ -3694,13 +6859,17 @@ void updateElrsLink(unsigned long now) {
 void updateElrsPassiveSniffer(unsigned long now) {
   (void)now;
   readElrsSniffSerial(elrsHostSniffSerial, elrsHostToModuleSniff);
+#if !ELRS_SNIFF_SINGLE_WIRE_ONLY
   readElrsSniffSerial(elrsSerial, elrsModuleToHostSniff);
+#endif
 
   static unsigned long lastElrsSniffPrintTime = 0;
   if (RADIO_PROTOCOL_SERIAL_DEBUG && millis() - lastElrsSniffPrintTime >= 1000) {
     lastElrsSniffPrintTime = millis();
-    logElrsSniffSummary("SNIFF H->M", elrsHostToModuleSniff);
+    logElrsSniffSummary(ELRS_SNIFF_SINGLE_WIRE_ONLY ? "SNIFF SHARED" : "SNIFF H->M", elrsHostToModuleSniff);
+#if !ELRS_SNIFF_SINGLE_WIRE_ONLY
     logElrsSniffSummary("SNIFF M->H", elrsModuleToHostSniff);
+#endif
   }
 }
 
@@ -3716,6 +6885,63 @@ bool hasEspNowHeaderSignal(unsigned long now) {
 
   if (espNowProtocolStartTime == 0) return false;
   return (now - espNowProtocolStartTime) <= ESPNOW_HEADER_SIGNAL_TIMEOUT_MS;
+}
+
+void updateTopBarDirtyState(unsigned long now) {
+  if (currentScreen == SCREEN_SPLASH || currentScreen == SCREEN_SPACE_GAME) return;
+
+  static bool initialized = false;
+  static ProtocolType lastProtocol = PROTOCOL_ELRS;
+  static int lastBatteryLevel = -1;
+  static bool lastBatteryPresent = false;
+  static bool lastBatteryCharging = false;
+  static int lastSignalBars = -1;
+  static int lastLatency = -1;
+  static bool lastEspNowSignalPresent = false;
+  static bool lastEspNowNoSignalEligible = false;
+  static bool lastElrsLinkActive = false;
+  static bool lastElrsModulePresent = false;
+  static bool lastElrsNoSignalEligible = false;
+  static uint8_t lastElrsLq = 255;
+
+  ProtocolType protocol = getModelProtocol(activeModel);
+  bool espNowSignalPresent = hasEspNowHeaderSignal(now);
+  bool espNowNoSignalEligible = (lastEspNowAliveTime > 0) ||
+    (espNowProtocolStartTime > 0 &&
+     (now - espNowProtocolStartTime) > ESPNOW_HEADER_SIGNAL_TIMEOUT_MS);
+  bool elrsNoSignalEligible = elrsModulePresent || lastElrsSerialRxTime > 0;
+  int latencySnapshot = espNowLatency;
+
+  bool changed = !initialized ||
+    protocol != lastProtocol ||
+    batteryLevel != lastBatteryLevel ||
+    batteryPresent != lastBatteryPresent ||
+    batteryCharging != lastBatteryCharging ||
+    signalStrength != lastSignalBars ||
+    latencySnapshot != lastLatency ||
+    espNowSignalPresent != lastEspNowSignalPresent ||
+    espNowNoSignalEligible != lastEspNowNoSignalEligible ||
+    elrsLinkActive != lastElrsLinkActive ||
+    elrsModulePresent != lastElrsModulePresent ||
+    elrsNoSignalEligible != lastElrsNoSignalEligible ||
+    elrsUplinkLq != lastElrsLq;
+
+  if (changed) {
+    topBarNeedsRedraw = true;
+    initialized = true;
+    lastProtocol = protocol;
+    lastBatteryLevel = batteryLevel;
+    lastBatteryPresent = batteryPresent;
+    lastBatteryCharging = batteryCharging;
+    lastSignalBars = signalStrength;
+    lastLatency = latencySnapshot;
+    lastEspNowSignalPresent = espNowSignalPresent;
+    lastEspNowNoSignalEligible = espNowNoSignalEligible;
+    lastElrsLinkActive = elrsLinkActive;
+    lastElrsModulePresent = elrsModulePresent;
+    lastElrsNoSignalEligible = elrsNoSignalEligible;
+    lastElrsLq = elrsUplinkLq;
+  }
 }
 
 uint16_t getLatencyIndicatorColor(int latencyMs) {
@@ -3737,8 +6963,8 @@ void onEspNowSend(const uint8_t *macAddr, esp_now_send_status_t status) {
 void onEspNowReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (info == nullptr || data == nullptr || len <= 0) return;
   handleEspNowBindPacket(info, data, len);
-  handleEspNowTelemetryPacket(data, len);
-  handleEspNowPingAckPacket(data, len);
+  handleEspNowTelemetryPacket(info, data, len);
+  handleEspNowPingAckPacket(info, data, len);
 }
 
 void setup() {
@@ -3746,6 +6972,11 @@ void setup() {
   delay(1200);
   Serial.println();
   Serial.println("Booting Hosyond transmitter...");
+  initStatusRgbLed();
+  initPowerButton();
+  handleSoftPowerBootState();
+  initPeripheralPowerSwitches();
+  EEPROM.begin(EEPROM_SIZE);
 
   SPI.begin(12, 13, 11, 10);
 
@@ -3763,16 +6994,14 @@ void setup() {
   tft.setRotation(0);
   tft.invertDisplay(true);
     
-  Wire.begin(16, 15);
-  scanI2cBus("startup");
-  probeI2cAddress(0x18);
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  printI2cStartupScan();
+  loadStickCalibration();
   touchPanel.begin();
-  initMcp23017();
   initAds1115();
+  initAudio();
   lastActivityTime = millis();
   splashStartTime = millis();
-
-  EEPROM.begin(EEPROM_SIZE);
 
   bool displaySettingsRepaired = loadDisplaySettings();
   applyThemePalette();
@@ -3781,6 +7010,7 @@ void setup() {
   loadRateValues();
   loadExpoValues();
   loadEndpointValues();
+  bool escMapLoaded = loadTankEscChannelMap();
   loadOtaSettings();
   loadReceiverBindings();
   applyDisplayBacklight();
@@ -3831,8 +7061,15 @@ void setup() {
       for (int mix = 0; mix < MIX_COUNT; mix++) {
         initDefaultMixSlot(i, mix);
       }
+      for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
+        models[i].reverse[ch] = false;
+        models[i].failsafe[ch] = false;
+      }
+      for (int g = 0; g < 2; g++) {
+        models[i].trimX[g] = 0;
+        models[i].trimY[g] = 0;
+      }
       repairedAnyMix = true;
-      continue;
     }
 
     if (sanitizeModelMixes(i)) {
@@ -3844,6 +7081,10 @@ void setup() {
     }
 
     if (sanitizeModelProtocol(i)) {
+      repairedAnyMix = true;
+    }
+
+    if (sanitizeModelTankEscChannels(i)) {
       repairedAnyMix = true;
     }
   }
@@ -3869,6 +7110,9 @@ void setup() {
   if (initializedAnyModel || resetEndpointSchema) {
     saveEndpointValues();
   }
+  if (!escMapLoaded || initializedAnyModel || repairedAnyMix) {
+    saveTankEscChannelMap();
+  }
   if (EEPROM.read(EEPROM_OTA_VERSION_ADDR) != OTA_SETTINGS_STORAGE_VERSION) {
     saveOtaSettings();
   }
@@ -3885,11 +7129,14 @@ void setup() {
   activeModel = 0;
   currentModelName = String(models[0].name);
   currentDrive = getModelDriveType(0);
+  elrsTxPowerMw = clampElrsTxPowerMw(modelElrsTxPowerMw[activeModel]);
 
   // optional polish
   trimRenderX = models[activeModel].trimX[currentTrimPage];
   trimRenderY = models[activeModel].trimY[currentTrimPage];
-  initElrsUart();
+  if (getModelProtocol(activeModel) == PROTOCOL_ELRS) {
+    initElrsUart();
+  }
 #if !ELRS_PASSIVE_SNIFF_MODE
   initEspNowLink();
 #endif
@@ -3897,6 +7144,13 @@ void setup() {
 
 void loop() {
   unsigned long now = millis();
+  updatePowerButton(now);
+  if (powerButtonShutdownPending) {
+    delay(10);
+    return;
+  }
+  updatePowerLed(now);
+  updateAudioDiagnostics(now);
     
   if (currentScreen != lastScreen) {
 
@@ -3925,17 +7179,18 @@ void loop() {
     lastTouchPollTime = now;
   }
 
-  uint8_t dpadPortB = readMcp23017PortB();
-  if (!mcp23017Ready && now - lastMcpReconnectAttemptMs >= ADS1115_RECONNECT_INTERVAL_MS) {
-    lastMcpReconnectAttemptMs = now;
-    initMcp23017();
-    dpadPortB = readMcp23017PortB();
+  if (pcf8575Ready) {
+    uint16_t pcfValue = 0xFFFF;
+    readPcf8575(pcfValue);
   }
-  bool select = ((dpadPortB & (1U << MCP23017_DPAD_SELECT_BIT)) == 0);
-  bool left   = ((dpadPortB & (1U << MCP23017_DPAD_LEFT_BIT)) == 0);
-  bool up     = ((dpadPortB & (1U << MCP23017_DPAD_UP_BIT)) == 0);
-  bool down   = ((dpadPortB & (1U << MCP23017_DPAD_DOWN_BIT)) == 0);
-  bool right  = ((dpadPortB & (1U << MCP23017_DPAD_RIGHT_BIT)) == 0);
+  uint16_t dpadPort = pcf8575Ready ? pcf8575LastValue : 0xFFFF;
+  bool select = ((dpadPort & (1U << PCF8575_DPAD_SELECT_BIT)) == 0);
+  bool left   = ((dpadPort & (1U << PCF8575_DPAD_LEFT_BIT)) == 0);
+  bool up     = ((dpadPort & (1U << PCF8575_DPAD_UP_BIT)) == 0);
+  bool down   = ((dpadPort & (1U << PCF8575_DPAD_DOWN_BIT)) == 0);
+  bool right  = ((dpadPort & (1U << PCF8575_DPAD_RIGHT_BIT)) == 0);
+  bool powerButtonInput = POWER_BUTTON_ENABLED && isPowerButtonPressed();
+  bool earlyInputDetected = (touchCount > 0) || select || up || down || left || right || powerButtonInput;
 
   bool userActive = false;
 
@@ -3946,13 +7201,69 @@ void loop() {
     }
   }
 
+  updateAccessoryInputs(now);
   updateStickInputs(now);
   updateBatteryState();
+  updateStatusRgbLed(now);
+  bool stickInputDetected = updateStickDisplayWake(now);
+  if (stickInputDetected || powerButtonInput) {
+    userActive = true;
+  }
+  bool batteryUserDismiss = (touchCount > 0) || select || up || down || left || right;
+  if (updateBatterySafety(now, batteryUserDismiss)) {
+    return;
+  }
+
+  if (!startupThrottleSafetyCleared) {
+    if (isStartupThrottleSafe()) {
+      startupThrottleSafetyCleared = true;
+      startupThrottleSafetyScreenDrawn = false;
+      startupThrottleBypassTapCount = 0;
+      startupThrottleBypassTouchActive = false;
+      splashStartTime = now;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      topBarNeedsRedraw = true;
+    } else if (handleStartupThrottleSafetyBypass(touchCount, rawX, rawY, now)) {
+      startupThrottleSafetyCleared = true;
+      startupThrottleSafetyScreenDrawn = false;
+      startupThrottleBypassTapCount = 0;
+      startupThrottleBypassTouchActive = false;
+      splashStartTime = now;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      topBarNeedsRedraw = true;
+    } else {
+      updateStartupThrottleSafetyScreen(now);
+      applyDisplayBacklight();
+      return;
+    }
+  }
+
   updateOtaService();
+  updateElrsReceiverConfig();
 #if !ELRS_PASSIVE_SNIFF_MODE
   updateEspNowLink(now);
 #endif
   updateElrsLink(now);
+  updateStatusRgbLed(now);
+
+  if (updateAutoDeepSleep(now, earlyInputDetected || stickInputDetected, powerButtonInput)) {
+    applyDisplayBacklight();
+    return;
+  }
+
+  if (currentScreen == SCREEN_ENDPOINTS) {
+    bool endpointFocusChanged = updateEndpointAutoFocus();
+    bool endpointSideChanged = false;
+    for (int i = 0; i < CHANNEL_COUNT; i++) {
+      if (updateEndpointSideLatch(i)) endpointSideChanged = true;
+    }
+    if (endpointFocusChanged || endpointSideChanged) {
+      endpointNeedsRedraw = true;
+      uiNeedsRedraw = true;
+    }
+  }
 
   static int lastProtocolBindSeconds = -1;
   static bool lastProtocolBindingMode = false;
@@ -4006,6 +7317,16 @@ void loop() {
     lastElrsScreenAutoRefreshTime = 0;
   }
 
+  if (currentScreen == SCREEN_TIMER) {
+    bool timerAlarmBlinking = isTimerElapsed(now);
+    unsigned long timerRefreshMs = timerAlarmBlinking ? TIMER_ALARM_BLINK_MS : TIMER_REFRESH_MS;
+    if (timerNeedsRedraw ||
+        ((timerRunning || timerAlarmBlinking) && now - timerLastUiTickMs >= timerRefreshMs)) {
+      timerLastUiTickMs = now;
+      uiNeedsRedraw = true;
+    }
+  }
+
   m1 = (leftThrottle + 1.0f) * 0.5f;
   m2 = (rightThrottle + 1.0f) * 0.5f;
   m3 = (leftY + 1.0f) * 0.5f;
@@ -4013,7 +7334,7 @@ void loop() {
 
   static unsigned long lastDpadTime = 0;
   static unsigned long lastMainFrameTime = 0;
-  static unsigned long lastTopBarFrameTime = 0;
+  static bool displaySettingsSelectHeld = false;
 
   if (keyboardActive) {
 
@@ -4021,8 +7342,8 @@ void loop() {
 
     bool didInput = false;
 
-    if (down) {
-      kbCursorRow = (kbCursorRow + 1) % KB_ROWS;
+    if (down || up) {
+      kbCursorRow = cycleFocusIndex(kbCursorRow, KB_ROWS, down);
       keyboardNeedsRedraw = true;
       didInput = true;
     }
@@ -4059,12 +7380,7 @@ void loop() {
     uiNeedsRedraw = true;
   }
 
-  if (currentScreen != SCREEN_SPLASH &&
-      currentScreen != SCREEN_SPACE_GAME &&
-      now - lastTopBarFrameTime >= TOPBAR_UPDATE_INTERVAL_MS) {
-    topBarNeedsRedraw = true;
-    lastTopBarFrameTime = now;
-  }
+  updateTopBarDirtyState(now);
 
   if (currentScreen == SCREEN_SPLASH) {
     drawSplash();
@@ -4085,8 +7401,8 @@ void loop() {
         {"<", "0", "-"}
       };
 
-      if (down) {
-        mixNumpadCursorRow = (mixNumpadCursorRow + 1) % 4;
+      if (down || up) {
+        mixNumpadCursorRow = cycleFocusIndex(mixNumpadCursorRow, 4, down);
         if (mixNumpadCursorRow > 0 && mixNumpadCursorCol > 2) {
           mixNumpadCursorCol = 2;
         }
@@ -4122,8 +7438,12 @@ void loop() {
         else {
           const char* key = mixPadLayout[mixNumpadCursorRow][mixNumpadCursorCol];
           bool positiveOnlyTarget = (mixNumpadTarget == NUMPAD_TARGET_RATE_VALUE ||
-                                     mixNumpadTarget == NUMPAD_TARGET_EXPO_VALUE ||
-                                     mixNumpadTarget == NUMPAD_TARGET_ENDPOINT_VALUE);
+                                     mixNumpadTarget == NUMPAD_TARGET_ENDPOINT_VALUE ||
+                                     mixNumpadTarget == NUMPAD_TARGET_ELRS_TX_POWER ||
+                                     mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_MODEL_ID ||
+                                     mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_FAILSAFE ||
+                                     mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE ||
+                                     mixNumpadTarget == NUMPAD_TARGET_TIMER_VALUE);
 
           if (strcmp(key, "<") == 0) {
             if (mixNumpadBuffer.length() > 0) {
@@ -4152,8 +7472,19 @@ void loop() {
             int parsedValue = candidate.toInt();
             bool validCandidate = false;
             if (positiveOnlyTarget) {
-              int maxValue = (mixNumpadTarget == NUMPAD_TARGET_ENDPOINT_VALUE) ? 120 : 100;
-              validCandidate = (digitCount <= 3 && parsedValue >= 0 && parsedValue <= maxValue);
+              int maxValue = 100;
+              if (mixNumpadTarget == NUMPAD_TARGET_ENDPOINT_VALUE) maxValue = 120;
+              else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_TX_POWER) maxValue = ELRS_TX_POWER_MAX_MW;
+              else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_MODEL_ID ||
+                       mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_FAILSAFE) maxValue = 255;
+              else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE) maxValue = ELRS_RX_PWM_FAILSAFE_MAX_US;
+              else if (mixNumpadTarget == NUMPAD_TARGET_TIMER_VALUE) maxValue = 9959;
+              int maxDigits = (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE ||
+                               mixNumpadTarget == NUMPAD_TARGET_TIMER_VALUE) ? 4 : 3;
+              validCandidate = (digitCount <= maxDigits && parsedValue >= 0 && parsedValue <= maxValue);
+              if (mixNumpadTarget == NUMPAD_TARGET_TIMER_VALUE) {
+                validCandidate = validCandidate && ((parsedValue % 100) <= 59);
+              }
             } else {
               validCandidate = (digitCount <= 3 && (candidate == "-" || (parsedValue >= -100 && parsedValue <= 100)));
             }
@@ -4164,15 +7495,14 @@ void loop() {
           }
 
           mixNumpadNeedsRedraw = true;
-          uiNeedsRedraw = true;
           didInput = true;
         }
       }
     }
     else if (currentScreen == SCREEN_MAIN) {
-      if (down || left || right || select) dpadFocusVisible = true;
+      if (down || up || left || right || select) dpadFocusVisible = true;
 
-      if (down) {
+      if (down || up) {
         selectedButton = BTN_MENU;
         uiNeedsRedraw = true;
         didInput = true;
@@ -4186,16 +7516,13 @@ void loop() {
     }
 
   else if (currentScreen == SCREEN_MENU) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-
-      if (selectedButton == BTN_NONE) selectedButton = BTN_CTRL;
-        else if (selectedButton == BTN_CTRL) selectedButton = BTN_MODEL;
-        else if (selectedButton == BTN_MODEL) selectedButton = BTN_DISPLAY_SETTINGS;
-        else if (selectedButton == BTN_DISPLAY_SETTINGS) selectedButton = BTN_GAME;
-        else if (selectedButton == BTN_GAME) selectedButton = BTN_BACK;
-        else if (selectedButton == BTN_BACK) selectedButton = BTN_CTRL;
+    if (down || up) {
+      const ButtonID order[] = {
+        BTN_CTRL, BTN_MODEL, BTN_DISPLAY_SETTINGS, BTN_GAME, BTN_BACK
+      };
+      selectedButton = cycleButtonOrder(selectedButton, order, 5, down);
           fullRedraw = true;
           uiNeedsRedraw = true;
           didInput = true;
@@ -4221,14 +7548,12 @@ void loop() {
 
     if (right && selectedButton == BTN_MODEL) {
       selectedButton = BTN_DISPLAY_SETTINGS;
-      fullRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
       userActive = true;
     }
     else if (right && selectedButton == BTN_DISPLAY_SETTINGS) {
       selectedButton = BTN_GAME;
-      fullRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
       userActive = true;
@@ -4249,22 +7574,20 @@ void loop() {
   }
 
   else if (currentScreen == SCREEN_DISPLAY_SETTINGS) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
+    bool selectPressed = (select && !displaySettingsSelectHeld);
+    displaySettingsSelectHeld = select;
 
-    if (down) {
-      if (selectedButton == BTN_NONE) selectedButton = BTN_DISPLAY_BRIGHTNESS_DEC;
-      else if (selectedButton == BTN_DISPLAY_BRIGHTNESS_DEC) selectedButton = BTN_DISPLAY_BRIGHTNESS_INC;
-      else if (selectedButton == BTN_DISPLAY_BRIGHTNESS_INC) selectedButton = BTN_DISPLAY_TIMEOUT_DEC;
-      else if (selectedButton == BTN_DISPLAY_TIMEOUT_DEC) selectedButton = BTN_DISPLAY_TIMEOUT_INC;
-      else if (selectedButton == BTN_DISPLAY_TIMEOUT_INC) selectedButton = BTN_DISPLAY_OFF_TIMEOUT_DEC;
-      else if (selectedButton == BTN_DISPLAY_OFF_TIMEOUT_DEC) selectedButton = BTN_DISPLAY_OFF_TIMEOUT_INC;
-      else if (selectedButton == BTN_DISPLAY_OFF_TIMEOUT_INC) selectedButton = BTN_DISPLAY_SLEEP_DEC;
-      else if (selectedButton == BTN_DISPLAY_SLEEP_DEC) selectedButton = BTN_DISPLAY_SLEEP_INC;
-      else if (selectedButton == BTN_DISPLAY_SLEEP_INC) selectedButton = BTN_DISPLAY_THEME_TOGGLE;
-      else if (selectedButton == BTN_DISPLAY_THEME_TOGGLE) selectedButton = BTN_DISPLAY_SLEEP_NOW;
-      else if (selectedButton == BTN_DISPLAY_SLEEP_NOW) selectedButton = BTN_BACK;
-      else selectedButton = BTN_DISPLAY_BRIGHTNESS_DEC;
-      fullRedraw = true;
+    if (down || up) {
+      const ButtonID order[] = {
+        BTN_DISPLAY_BRIGHTNESS_DEC, BTN_DISPLAY_BRIGHTNESS_INC,
+        BTN_DISPLAY_TIMEOUT_DEC, BTN_DISPLAY_TIMEOUT_INC,
+        BTN_DISPLAY_OFF_TIMEOUT_DEC, BTN_DISPLAY_OFF_TIMEOUT_INC,
+        BTN_DISPLAY_SLEEP_DEC, BTN_DISPLAY_SLEEP_INC,
+        BTN_DISPLAY_THEME_TOGGLE, BTN_BACK
+      };
+      selectedButton = cycleButtonOrder(selectedButton, order, 10, down);
+      displaySettingsNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
       userActive = true;
@@ -4276,30 +7599,26 @@ void loop() {
       }
       else if (selectedButton == BTN_DISPLAY_BRIGHTNESS_INC) {
         selectedButton = BTN_DISPLAY_BRIGHTNESS_DEC;
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else if (selectedButton == BTN_DISPLAY_TIMEOUT_INC) {
         selectedButton = BTN_DISPLAY_TIMEOUT_DEC;
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else if (selectedButton == BTN_DISPLAY_OFF_TIMEOUT_INC) {
         selectedButton = BTN_DISPLAY_OFF_TIMEOUT_DEC;
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else if (selectedButton == BTN_DISPLAY_SLEEP_INC) {
         selectedButton = BTN_DISPLAY_SLEEP_DEC;
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       } else if (selectedButton == BTN_DISPLAY_THEME_TOGGLE) {
         selectedButton = BTN_DISPLAY_SLEEP_INC;
-        fullRedraw = true;
-        uiNeedsRedraw = true;
-      } else if (selectedButton == BTN_DISPLAY_SLEEP_NOW) {
-        selectedButton = BTN_DISPLAY_THEME_TOGGLE;
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else {
@@ -4325,16 +7644,13 @@ void loop() {
       else if (selectedButton == BTN_DISPLAY_SLEEP_INC) {
         selectedButton = BTN_DISPLAY_THEME_TOGGLE;
       }
-      else if (selectedButton == BTN_DISPLAY_THEME_TOGGLE) {
-        selectedButton = BTN_DISPLAY_SLEEP_NOW;
-      }
-      fullRedraw = true;
+      displaySettingsNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
       userActive = true;
     }
 
-    if (select) {
+    if (selectPressed) {
       if (selectedButton == BTN_BACK) {
         setScreen(SCREEN_MENU);
       }
@@ -4343,52 +7659,52 @@ void loop() {
         displaySleepBrightness = min(displaySleepBrightness, displayBrightness);
         saveDisplaySettings();
         applyDisplayBacklight();
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else if (selectedButton == BTN_DISPLAY_BRIGHTNESS_INC) {
         stepDisplayOption(displayBrightness, displayBrightnessOptions, displayBrightnessOptionCount, 1);
         saveDisplaySettings();
         applyDisplayBacklight();
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else if (selectedButton == BTN_DISPLAY_TIMEOUT_DEC) {
         displayTimeoutIndex = constrain((int)displayTimeoutIndex - 1, 0, displayTimeoutOptionCount - 1);
         saveDisplaySettings();
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else if (selectedButton == BTN_DISPLAY_TIMEOUT_INC) {
         displayTimeoutIndex = constrain((int)displayTimeoutIndex + 1, 0, displayTimeoutOptionCount - 1);
         saveDisplaySettings();
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else if (selectedButton == BTN_DISPLAY_OFF_TIMEOUT_DEC) {
         displayOffTimeoutIndex = constrain((int)displayOffTimeoutIndex - 1, 0, displayOffTimeoutOptionCount - 1);
         saveDisplaySettings();
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else if (selectedButton == BTN_DISPLAY_OFF_TIMEOUT_INC) {
         displayOffTimeoutIndex = constrain((int)displayOffTimeoutIndex + 1, 0, displayOffTimeoutOptionCount - 1);
         saveDisplaySettings();
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else if (selectedButton == BTN_DISPLAY_SLEEP_DEC) {
         stepDisplayOption(displaySleepBrightness, displaySleepBrightnessOptions, displaySleepBrightnessOptionCount, -1);
         saveDisplaySettings();
         applyDisplayBacklight();
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else if (selectedButton == BTN_DISPLAY_SLEEP_INC) {
         stepDisplayOption(displaySleepBrightness, displaySleepBrightnessOptions, displaySleepBrightnessOptionCount, 1);
         saveDisplaySettings();
         applyDisplayBacklight();
-        fullRedraw = true;
+        displaySettingsNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
       else if (selectedButton == BTN_DISPLAY_THEME_TOGGLE) {
@@ -4399,35 +7715,26 @@ void loop() {
         uiNeedsRedraw = true;
         topBarNeedsRedraw = true;
       }
-      else if (selectedButton == BTN_DISPLAY_SLEEP_NOW) {
-        displayDimmed = false;
-        screenAwake = false;
-        suppressWakeUntilRelease = true;
-        applyDisplayBacklight();
-      }
 
       didInput = true;
       userActive = true;
     }
   }
   else if (currentScreen == SCREEN_CONTROLLER_SETTINGS) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
+    if (down || up) {
       if (controllerSettingsPage == 0) {
-        if (selectedButton == BTN_NONE) selectedButton = BTN_TRIM;
-        else if (selectedButton == BTN_TRIM) selectedButton = BTN_FAILSAFE;
-        else if (selectedButton == BTN_FAILSAFE) selectedButton = BTN_ENDPOINTS;
-        else if (selectedButton == BTN_ENDPOINTS) selectedButton = BTN_PAGE_NAV;
-        else if (selectedButton == BTN_PAGE_NAV) selectedButton = BTN_BACK;
-        else selectedButton = BTN_TRIM;
+        const ButtonID order[] = {BTN_TRIM, BTN_FAILSAFE, BTN_ENDPOINTS, BTN_PAGE_NAV, BTN_BACK};
+        selectedButton = cycleButtonOrder(selectedButton, order, 5, down);
+      } else if (controllerSettingsPage == 1) {
+        const ButtonID order[] = {BTN_EXPO, BTN_RATES, BTN_PROTOCOL, BTN_PAGE_NAV, BTN_BACK};
+        selectedButton = cycleButtonOrder(selectedButton, order, 5, down);
+      } else if (STICK_CAL_SCREEN_ENABLED) {
+        const ButtonID order[] = {BTN_STICK_CAL, BTN_PAGE_NAV, BTN_BACK};
+        selectedButton = cycleButtonOrder(selectedButton, order, 3, down);
       } else {
-        if (selectedButton == BTN_NONE) selectedButton = BTN_EXPO;
-        else if (selectedButton == BTN_EXPO) selectedButton = BTN_RATES;
-        else if (selectedButton == BTN_RATES) selectedButton = BTN_PROTOCOL;
-        else if (selectedButton == BTN_PROTOCOL) selectedButton = BTN_PAGE_NAV;
-        else if (selectedButton == BTN_PAGE_NAV) selectedButton = BTN_BACK;
-        else selectedButton = BTN_EXPO;
+        selectedButton = BTN_BACK;
       }
       fullRedraw = true;
       uiNeedsRedraw = true;
@@ -4435,15 +7742,27 @@ void loop() {
     }
 
     if (left) {
-      setScreen(SCREEN_MENU);
+      if (selectedButton == BTN_PAGE_NAV) selectedButton = BTN_BACK;
+      else if (selectedButton != BTN_BACK) selectedButton = BTN_BACK;
+      else setScreen(SCREEN_MENU);
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (right) {
+      if (selectedButton == BTN_BACK) selectedButton = BTN_PAGE_NAV;
+      else if (selectedButton != BTN_PAGE_NAV) selectedButton = BTN_PAGE_NAV;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
       didInput = true;
     }
 
     if (select) {
       if (selectedButton == BTN_BACK) setScreen(SCREEN_MENU);
       else if (selectedButton == BTN_PAGE_NAV) {
-        controllerSettingsPage = 1 - controllerSettingsPage;
-        selectedButton = (controllerSettingsPage == 0) ? BTN_TRIM : BTN_EXPO;
+        controllerSettingsPage = (controllerSettingsPage + 1) % controllerSettingsPageCount;
+        selectedButton = getControllerSettingsDefaultButtonForPage(controllerSettingsPage);
         fullRedraw = true;
         uiNeedsRedraw = true;
       }
@@ -4453,14 +7772,43 @@ void loop() {
       else if (selectedButton == BTN_EXPO) setScreen(SCREEN_EXPO);
       else if (selectedButton == BTN_RATES) setScreen(SCREEN_RATES);
       else if (selectedButton == BTN_PROTOCOL) setScreen(SCREEN_PROTOCOL);
+      else if (STICK_CAL_SCREEN_ENABLED && selectedButton == BTN_STICK_CAL) setScreen(SCREEN_STICK_CALIBRATION);
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_STICK_CALIBRATION) {
+    if (down || up || left || right || select) dpadFocusVisible = true;
+
+    if (down || up) {
+      focusIndex = cycleFocusIndex(focusIndex, 2, down);
+      stickCalibrationNeedsRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (left) {
+      setScreen(SCREEN_CONTROLLER_SETTINGS);
+      didInput = true;
+    }
+
+    if (select) {
+      if (focusIndex == 1) {
+        setScreen(SCREEN_CONTROLLER_SETTINGS);
+      } else if (stickCalibrationState == STICK_CAL_STATE_CAPTURE_CENTER) {
+        captureStickCalibrationCenter();
+      } else if (finalizeStickCalibration()) {
+        setScreen(SCREEN_CONTROLLER_SETTINGS);
+      }
+      stickCalibrationNeedsRedraw = true;
+      uiNeedsRedraw = true;
       didInput = true;
     }
   }
   else if (currentScreen == SCREEN_ENDPOINTS) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      focusIndex = (focusIndex + 1) % (CHANNEL_COUNT + 1);
+    if (down || up) {
+      focusIndex = cycleFocusIndex(focusIndex, CHANNEL_COUNT + 1, down);
       endpointNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
@@ -4485,10 +7833,11 @@ void loop() {
     }
   }
   else if (currentScreen == SCREEN_EXPO) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      focusIndex = (focusIndex + 1) % 6;
+    const int expoValueFocus = CHANNEL_COUNT + 1;
+    if (down || up) {
+      focusIndex = cycleFocusIndex(focusIndex, CHANNEL_COUNT + 2, down);
       expoNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
@@ -4499,14 +7848,14 @@ void loop() {
         setScreen(SCREEN_CONTROLLER_SETTINGS);
         didInput = true;
       }
-      else if (focusIndex >= 1 && focusIndex <= 4) {
+      else if (focusIndex >= 1 && focusIndex <= CHANNEL_COUNT) {
         selectedExpoChannel = (selectedExpoChannel + CHANNEL_COUNT - 1) % CHANNEL_COUNT;
         focusIndex = selectedExpoChannel + 1;
         expoNeedsRedraw = true;
         uiNeedsRedraw = true;
         didInput = true;
       }
-      else if (focusIndex == 5) {
+      else if (focusIndex == expoValueFocus) {
         setModelExpoValue(activeModel, selectedExpoChannel,
                           getModelExpoValue(activeModel, selectedExpoChannel) - 1);
         saveExpoValues();
@@ -4517,14 +7866,14 @@ void loop() {
     }
 
     if (right) {
-      if (focusIndex >= 1 && focusIndex <= 4) {
+      if (focusIndex >= 1 && focusIndex <= CHANNEL_COUNT) {
         selectedExpoChannel = (selectedExpoChannel + 1) % CHANNEL_COUNT;
         focusIndex = selectedExpoChannel + 1;
         expoNeedsRedraw = true;
         uiNeedsRedraw = true;
         didInput = true;
       }
-      else if (focusIndex == 5) {
+      else if (focusIndex == expoValueFocus) {
         setModelExpoValue(activeModel, selectedExpoChannel,
                           getModelExpoValue(activeModel, selectedExpoChannel) + 1);
         saveExpoValues();
@@ -4538,22 +7887,26 @@ void loop() {
       if (focusIndex == 0) {
         setScreen(SCREEN_CONTROLLER_SETTINGS);
       }
-      else if (focusIndex >= 1 && focusIndex <= 4) {
+      else if (focusIndex >= 1 && focusIndex <= CHANNEL_COUNT) {
         selectedExpoChannel = focusIndex - 1;
         expoNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
-      else if (focusIndex == 5) {
+      else if (focusIndex == expoValueFocus) {
         openMixNumpad(NUMPAD_TARGET_EXPO_VALUE);
       }
       didInput = true;
     }
   }
   else if (currentScreen == SCREEN_RATES) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      focusIndex = (focusIndex + 1) % 9;
+    const int rateLowFocus = CHANNEL_COUNT + 1;
+    const int rateNormalFocus = CHANNEL_COUNT + 2;
+    const int rateHighFocus = CHANNEL_COUNT + 3;
+    const int rateValueFocus = CHANNEL_COUNT + 4;
+    if (down || up) {
+      focusIndex = cycleFocusIndex(focusIndex, CHANNEL_COUNT + 5, down);
       ratesNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
@@ -4564,14 +7917,14 @@ void loop() {
         setScreen(SCREEN_CONTROLLER_SETTINGS);
         didInput = true;
       }
-      else if (focusIndex >= 1 && focusIndex <= 4) {
+      else if (focusIndex >= 1 && focusIndex <= CHANNEL_COUNT) {
         selectedRateChannel = (selectedRateChannel + CHANNEL_COUNT - 1) % CHANNEL_COUNT;
         focusIndex = selectedRateChannel + 1;
         ratesNeedsRedraw = true;
         uiNeedsRedraw = true;
         didInput = true;
       }
-      else if (focusIndex == 8) {
+      else if (focusIndex == rateValueFocus) {
         setModelRateValue(activeModel, selectedRateChannel,
                           getModelRateValue(activeModel, selectedRateChannel) - 1);
         saveRateValues();
@@ -4582,14 +7935,14 @@ void loop() {
     }
 
     if (right) {
-      if (focusIndex >= 1 && focusIndex <= 4) {
+      if (focusIndex >= 1 && focusIndex <= CHANNEL_COUNT) {
         selectedRateChannel = (selectedRateChannel + 1) % CHANNEL_COUNT;
         focusIndex = selectedRateChannel + 1;
         ratesNeedsRedraw = true;
         uiNeedsRedraw = true;
         didInput = true;
       }
-      else if (focusIndex == 8) {
+      else if (focusIndex == rateValueFocus) {
         setModelRateValue(activeModel, selectedRateChannel,
                           getModelRateValue(activeModel, selectedRateChannel) + 1);
         saveRateValues();
@@ -4603,54 +7956,73 @@ void loop() {
       if (focusIndex == 0) {
         setScreen(SCREEN_CONTROLLER_SETTINGS);
       }
-      else if (focusIndex >= 1 && focusIndex <= 4) {
+      else if (focusIndex >= 1 && focusIndex <= CHANNEL_COUNT) {
         selectedRateChannel = focusIndex - 1;
         ratesNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
-      else if (focusIndex == 5) {
+      else if (focusIndex == rateLowFocus) {
         setModelRateValue(activeModel, selectedRateChannel, RATE_LOW_VALUE);
         saveRateValues();
         ratesNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
-      else if (focusIndex == 6) {
+      else if (focusIndex == rateNormalFocus) {
         setModelRateValue(activeModel, selectedRateChannel, RATE_NORMAL_VALUE);
         saveRateValues();
         ratesNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
-      else if (focusIndex == 7) {
+      else if (focusIndex == rateHighFocus) {
         setModelRateValue(activeModel, selectedRateChannel, RATE_HIGH_VALUE);
         saveRateValues();
         ratesNeedsRedraw = true;
         uiNeedsRedraw = true;
       }
-      else if (focusIndex == 8) {
+      else if (focusIndex == rateValueFocus) {
         openMixNumpad(NUMPAD_TARGET_RATE_VALUE);
       }
       didInput = true;
     }
   }
   else if (currentScreen == SCREEN_PROTOCOL) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      if (selectedButton == BTN_NONE) selectedButton = BTN_PROTOCOL_ELRS;
-      else if (selectedButton == BTN_PROTOCOL_ELRS) selectedButton = BTN_PROTOCOL_ESPNOW;
-      else if (selectedButton == BTN_PROTOCOL_ESPNOW) selectedButton = BTN_PROTOCOL_BIND;
-      else if (selectedButton == BTN_PROTOCOL_BIND) selectedButton = BTN_PROTOCOL_OTA;
-      else if (selectedButton == BTN_PROTOCOL_OTA) selectedButton = BTN_PROTOCOL_OTA_CFG;
-      else if (selectedButton == BTN_PROTOCOL_OTA_CFG) selectedButton = BTN_BACK;
-      else selectedButton = BTN_PROTOCOL_ELRS;
+    if (down || up) {
+      const ButtonID order[] = {
+        BTN_PROTOCOL_ELRS, BTN_PROTOCOL_ESPNOW, BTN_PROTOCOL_BIND,
+        BTN_PROTOCOL_OTA, BTN_PROTOCOL_OTA_CFG, BTN_BACK
+      };
+      selectedButton = cycleButtonOrder(selectedButton, order, 6, down);
       fullRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
     }
 
     if (left) {
-      if (!otaUpdateInProgress) {
+      if (selectedButton == BTN_PROTOCOL_ESPNOW) {
+        selectedButton = BTN_PROTOCOL_ELRS;
+        uiNeedsRedraw = true;
+      } else if (selectedButton == BTN_PROTOCOL_OTA_CFG) {
+        selectedButton = BTN_PROTOCOL_OTA;
+        uiNeedsRedraw = true;
+      } else if (!otaUpdateInProgress && selectedButton == BTN_BACK) {
         setScreen(SCREEN_CONTROLLER_SETTINGS);
+      } else if (!otaUpdateInProgress) {
+        selectedButton = BTN_BACK;
+        uiNeedsRedraw = true;
+      }
+      didInput = true;
+    }
+
+    if (right) {
+      if (selectedButton == BTN_PROTOCOL_ELRS) {
+        selectedButton = BTN_PROTOCOL_ESPNOW;
+        uiNeedsRedraw = true;
+        didInput = true;
+      } else if (selectedButton == BTN_PROTOCOL_OTA) {
+        selectedButton = BTN_PROTOCOL_OTA_CFG;
+        uiNeedsRedraw = true;
         didInput = true;
       }
     }
@@ -4664,6 +8036,9 @@ void loop() {
         if (!otaModeActive) {
           cancelEspNowBinding(true);
           setModelProtocol(activeModel, PROTOCOL_ELRS);
+          elrsTxPowerMw = clampElrsTxPowerMw(modelElrsTxPowerMw[activeModel]);
+          initElrsUart();
+          sendElrsTxPowerWrite(elrsTxPowerMw);
           saveModels();
           fullRedraw = true;
           uiNeedsRedraw = true;
@@ -4671,6 +8046,7 @@ void loop() {
       } else if (selectedButton == BTN_PROTOCOL_ESPNOW) {
         if (!otaModeActive) {
           setModelProtocol(activeModel, PROTOCOL_ESPNOW);
+          stopElrsUart();
           saveModels();
           fullRedraw = true;
           uiNeedsRedraw = true;
@@ -4700,10 +8076,10 @@ void loop() {
     }
   }
   else if (currentScreen == SCREEN_OTA_SETTINGS) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      focusIndex = (focusIndex + 1) % 4;
+    if (down || up) {
+      focusIndex = cycleFocusIndex(focusIndex, 4, down);
       otaSettingsNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
@@ -4728,20 +8104,54 @@ void loop() {
     }
   }
   else if (currentScreen == SCREEN_ELRS) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      if (selectedButton == BTN_NONE) selectedButton = BTN_ELRS_BIND;
-      else if (selectedButton == BTN_ELRS_BIND) selectedButton = BTN_BACK;
-      else selectedButton = BTN_ELRS_BIND;
+    if (down || up) {
+      const ButtonID order[] = {
+        BTN_ELRS_BIND, BTN_ELRS_RX_CONFIG,
+        BTN_ELRS_TX_POWER_SLIDER, BTN_ELRS_TX_POWER_VALUE, BTN_BACK
+      };
+      selectedButton = cycleButtonOrder(selectedButton, order, 5, down);
       fullRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
     }
 
     if (left) {
-      setScreen(SCREEN_PROTOCOL);
+      if (selectedButton == BTN_ELRS_TX_POWER_SLIDER) {
+        uint16_t nextPower = (uint16_t)max(ELRS_TX_POWER_MIN_MW, (int)elrsTxPowerMw - 1);
+        sendElrsTxPowerWrite(nextPower);
+        uiNeedsRedraw = true;
+      } else if (selectedButton == BTN_ELRS_RX_CONFIG) {
+        selectedButton = BTN_ELRS_BIND;
+        uiNeedsRedraw = true;
+      } else if (selectedButton == BTN_ELRS_TX_POWER_VALUE) {
+        selectedButton = BTN_ELRS_TX_POWER_SLIDER;
+        uiNeedsRedraw = true;
+      } else if (selectedButton == BTN_BACK) {
+        setScreen(SCREEN_PROTOCOL);
+      } else {
+        selectedButton = BTN_BACK;
+        uiNeedsRedraw = true;
+      }
       didInput = true;
+    }
+
+    if (right) {
+      if (selectedButton == BTN_ELRS_BIND) {
+        selectedButton = BTN_ELRS_RX_CONFIG;
+        uiNeedsRedraw = true;
+        didInput = true;
+      } else if (selectedButton == BTN_ELRS_TX_POWER_SLIDER) {
+        uint16_t nextPower = (uint16_t)min(ELRS_TX_POWER_MAX_MW, (int)elrsTxPowerMw + 1);
+        sendElrsTxPowerWrite(nextPower);
+        uiNeedsRedraw = true;
+        didInput = true;
+      } else if (selectedButton == BTN_ELRS_TX_POWER_VALUE) {
+        selectedButton = BTN_ELRS_TX_POWER_SLIDER;
+        uiNeedsRedraw = true;
+        didInput = true;
+      }
     }
 
     if (select) {
@@ -4751,27 +8161,61 @@ void loop() {
         sendElrsBindCommand();
         fullRedraw = true;
         uiNeedsRedraw = true;
+      } else if (selectedButton == BTN_ELRS_RX_CONFIG) {
+        beginElrsReceiverConfig();
+      } else if (selectedButton == BTN_ELRS_TX_POWER_VALUE) {
+        openMixNumpad(NUMPAD_TARGET_ELRS_TX_POWER);
+        uiNeedsRedraw = true;
+      }
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_ELRS_RX_CONFIG) {
+    if (down || up || left || right || select) dpadFocusVisible = true;
+
+    if (down || up) {
+      ButtonID order[7] = {BTN_ELRS_RX_MODEL_ID, BTN_ELRS_RX_SAVE, BTN_BACK};
+      int count = 1;
+      if (elrsReceiverPwmCount > 0) order[count++] = BTN_ELRS_RX_PWM1;
+      if (elrsReceiverPwmCount > 1) order[count++] = BTN_ELRS_RX_PWM2;
+      if (elrsReceiverPwmCount > 2) order[count++] = BTN_ELRS_RX_PWM3;
+      if (elrsReceiverPwmCount > 3) order[count++] = BTN_ELRS_RX_PWM4;
+      order[count++] = BTN_ELRS_RX_SAVE;
+      order[count++] = BTN_BACK;
+      selectedButton = cycleButtonOrder(selectedButton, order, count, down);
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (left) {
+      setScreen(SCREEN_ELRS);
+      didInput = true;
+    }
+
+    if (select) {
+      if (selectedButton == BTN_BACK || selectedButton == BTN_NONE) {
+        setScreen(SCREEN_ELRS);
+      } else if (selectedButton == BTN_ELRS_RX_MODEL_ID) {
+        openMixNumpad(NUMPAD_TARGET_ELRS_RX_MODEL_ID);
+      } else if (getElrsReceiverPwmIndexForButton(selectedButton) >= 0) {
+        openElrsReceiverPwmNumpad(getElrsReceiverPwmIndexForButton(selectedButton));
+      } else if (selectedButton == BTN_ELRS_RX_SAVE) {
+        saveElrsReceiverConfig();
       }
       didInput = true;
     }
   }
   else if (currentScreen == SCREEN_MODEL_SETTINGS) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
+    if (down || up) {
       if (modelSettingsPage == 0) {
-        if (selectedButton == BTN_NONE) selectedButton = BTN_MODEL_NAME;
-        else if (selectedButton == BTN_MODEL_NAME) selectedButton = BTN_DRIVE_TYPE;
-        else if (selectedButton == BTN_DRIVE_TYPE) selectedButton = BTN_MIXING;
-        else if (selectedButton == BTN_MIXING) selectedButton = BTN_PAGE_NAV;
-        else if (selectedButton == BTN_PAGE_NAV) selectedButton = BTN_BACK;
-        else selectedButton = BTN_MODEL_NAME;
+        const ButtonID order[] = {BTN_MODEL_NAME, BTN_DRIVE_TYPE, BTN_MIXING, BTN_PAGE_NAV, BTN_BACK};
+        selectedButton = cycleButtonOrder(selectedButton, order, 5, down);
       }
       else {
-        if (selectedButton == BTN_NONE) selectedButton = BTN_REVERSE;
-        else if (selectedButton == BTN_REVERSE) selectedButton = BTN_PAGE_NAV;
-        else if (selectedButton == BTN_PAGE_NAV) selectedButton = BTN_BACK;
-        else selectedButton = BTN_REVERSE;
+        const ButtonID order[] = {BTN_REVERSE, BTN_PAGE_NAV, BTN_BACK};
+        selectedButton = cycleButtonOrder(selectedButton, order, 3, down);
       }
       fullRedraw = true;
       uiNeedsRedraw = true;
@@ -4779,7 +8223,19 @@ void loop() {
     }
 
     if (left) {
-      setScreen(SCREEN_MENU);
+      if (selectedButton == BTN_PAGE_NAV) selectedButton = BTN_BACK;
+      else if (selectedButton != BTN_BACK) selectedButton = BTN_BACK;
+      else setScreen(SCREEN_MENU);
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (right) {
+      if (selectedButton == BTN_BACK) selectedButton = BTN_PAGE_NAV;
+      else if (selectedButton != BTN_PAGE_NAV) selectedButton = BTN_PAGE_NAV;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
       didInput = true;
     }
 
@@ -4799,21 +8255,32 @@ void loop() {
     }
   }
   else if (currentScreen == SCREEN_DRIVE_TYPE) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      if (selectedButton == BTN_NONE || selectedButton == BTN_DRIVE_TANK) selectedButton = BTN_DRIVE_CAR;
-      else if (selectedButton == BTN_DRIVE_CAR) selectedButton = BTN_DRIVE_OMNI;
-      else if (selectedButton == BTN_DRIVE_OMNI) selectedButton = BTN_DRIVE_X_DRONE;
-      else if (selectedButton == BTN_DRIVE_X_DRONE) selectedButton = BTN_BACK;
-      else selectedButton = BTN_DRIVE_TANK;
+    if (down || up) {
+      const ButtonID order[] = {BTN_DRIVE_TANK, BTN_DRIVE_CAR, BTN_DRIVE_OMNI, BTN_DRIVE_X_DRONE, BTN_BACK};
+      selectedButton = cycleButtonOrder(selectedButton, order, 5, down);
       fullRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
     }
 
     if (left) {
-      setScreen(SCREEN_MODEL_SETTINGS);
+      if (selectedButton == BTN_DRIVE_CAR) selectedButton = BTN_DRIVE_TANK;
+      else if (selectedButton == BTN_DRIVE_X_DRONE) selectedButton = BTN_DRIVE_OMNI;
+      else if (selectedButton == BTN_BACK) setScreen(SCREEN_MODEL_SETTINGS);
+      else selectedButton = BTN_BACK;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (right) {
+      if (selectedButton == BTN_DRIVE_TANK) selectedButton = BTN_DRIVE_CAR;
+      else if (selectedButton == BTN_DRIVE_OMNI) selectedButton = BTN_DRIVE_X_DRONE;
+      else if (selectedButton == BTN_BACK) selectedButton = BTN_DRIVE_TANK;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
       didInput = true;
     }
 
@@ -4824,6 +8291,7 @@ void loop() {
         if (selectedButton == BTN_DRIVE_TANK) {
           currentDrive = DRIVE_TANK;
           setModelDriveType(activeModel, DRIVE_TANK);
+          applyDrivePresetMixes(activeModel);
           saveModels();
           setScreen(SCREEN_TANK_MODE);
         }
@@ -4831,6 +8299,7 @@ void loop() {
           if (selectedButton == BTN_DRIVE_CAR) {
             currentDrive = DRIVE_CAR;
             setModelDriveType(activeModel, DRIVE_CAR);
+            applyDrivePresetMixes(activeModel);
             saveModels();
             setScreen(SCREEN_TANK_MODE);
           }
@@ -4839,6 +8308,7 @@ void loop() {
 
           if (selectedButton != BTN_DRIVE_CAR) {
             setModelDriveType(activeModel, currentDrive);
+            applyDrivePresetMixes(activeModel);
             saveModels();
             fullRedraw = true;
             uiNeedsRedraw = true;
@@ -4849,19 +8319,30 @@ void loop() {
     }
   }
   else if (currentScreen == SCREEN_TANK_MODE) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      if (selectedButton == BTN_NONE || selectedButton == BTN_TANK_DUAL) selectedButton = BTN_TANK_SINGLE;
-      else if (selectedButton == BTN_TANK_SINGLE) selectedButton = BTN_BACK;
-      else selectedButton = BTN_TANK_DUAL;
+    if (down || up) {
+      const ButtonID order[] = {BTN_TANK_DUAL, BTN_TANK_SINGLE, BTN_BACK};
+      selectedButton = cycleButtonOrder(selectedButton, order, 3, down);
       fullRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
     }
 
     if (left) {
-      setScreen(SCREEN_DRIVE_TYPE);
+      if (selectedButton == BTN_TANK_SINGLE) selectedButton = BTN_TANK_DUAL;
+      else if (selectedButton == BTN_BACK) setScreen(SCREEN_DRIVE_TYPE);
+      else selectedButton = BTN_BACK;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (right) {
+      if (selectedButton == BTN_TANK_DUAL) selectedButton = BTN_TANK_SINGLE;
+      else if (selectedButton == BTN_BACK) selectedButton = BTN_TANK_DUAL;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
       didInput = true;
     }
 
@@ -4870,23 +8351,86 @@ void loop() {
         setScreen(SCREEN_DRIVE_TYPE);
       } else if (selectedButton == BTN_TANK_DUAL) {
         setModelTankMode(activeModel, TANK_MODE_DUAL_STICK);
+        applyDrivePresetMixes(activeModel);
+        escSetupStep = 0;
+        escSetupPendingLeftChannel = getModelTankLeftEscChannel(activeModel);
         saveModels();
-        fullRedraw = true;
-        uiNeedsRedraw = true;
+        setScreen(SCREEN_ESC_CHANNEL_SETUP);
       } else if (selectedButton == BTN_TANK_SINGLE) {
         setModelTankMode(activeModel, TANK_MODE_RIGHT_STICK);
+        applyDrivePresetMixes(activeModel);
+        escSetupStep = 0;
+        escSetupPendingLeftChannel = getModelTankLeftEscChannel(activeModel);
         saveModels();
-        fullRedraw = true;
-        uiNeedsRedraw = true;
+        setScreen(SCREEN_ESC_CHANNEL_SETUP);
+      }
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_ESC_CHANNEL_SETUP) {
+    if (down || up || left || right || select) dpadFocusVisible = true;
+
+    if (down || up) {
+      const ButtonID order[] = {BTN_ESC_CH1, BTN_ESC_CH2, BTN_ESC_CH3, BTN_ESC_CH4, BTN_BACK};
+      selectedButton = cycleButtonOrder(selectedButton, order, 5, down);
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (left) {
+      if (selectedButton == BTN_ESC_CH2) selectedButton = BTN_ESC_CH1;
+      else if (selectedButton == BTN_ESC_CH4) selectedButton = BTN_ESC_CH3;
+      else if (selectedButton == BTN_BACK) setScreen(SCREEN_TANK_MODE);
+      else selectedButton = BTN_BACK;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (right) {
+      if (selectedButton == BTN_ESC_CH1) selectedButton = BTN_ESC_CH2;
+      else if (selectedButton == BTN_ESC_CH3) selectedButton = BTN_ESC_CH4;
+      else if (selectedButton == BTN_BACK) selectedButton = BTN_ESC_CH1;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (select) {
+      if (selectedButton == BTN_BACK) {
+        setScreen(SCREEN_TANK_MODE);
+      } else {
+        int selectedChannel = 0;
+        if (selectedButton == BTN_ESC_CH1) selectedChannel = 0;
+        else if (selectedButton == BTN_ESC_CH2) selectedChannel = 1;
+        else if (selectedButton == BTN_ESC_CH3) selectedChannel = 2;
+        else if (selectedButton == BTN_ESC_CH4) selectedChannel = 3;
+        else selectedChannel = -1;
+
+        if (selectedChannel >= 0) {
+          if (escSetupStep == 0) {
+            escSetupPendingLeftChannel = (uint8_t)selectedChannel;
+            escSetupStep = 1;
+            fullRedraw = true;
+            uiNeedsRedraw = true;
+          } else if ((uint8_t)selectedChannel != escSetupPendingLeftChannel) {
+            setModelTankEscChannels(activeModel, escSetupPendingLeftChannel, (uint8_t)selectedChannel);
+            applyDrivePresetMixes(activeModel);
+            escSetupStep = 0;
+            saveModels();
+            setScreen(SCREEN_TANK_MODE);
+          }
+        }
       }
       didInput = true;
     }
   }
   else if (currentScreen == SCREEN_REVERSE) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      focusIndex = (focusIndex + 1) % (CHANNEL_COUNT + 1);
+    if (down || up) {
+      focusIndex = cycleFocusIndex(focusIndex, CHANNEL_COUNT + 1, down);
       uiNeedsRedraw = true;
       didInput = true;
     }
@@ -4896,13 +8440,13 @@ void loop() {
       didInput = true;
     }
 
-    if (select || right) {
+    if (select || left || right) {
       if (focusIndex == CHANNEL_COUNT) {
         setScreen(reverseReturnScreen);
       } else {
         bool linked[CHANNEL_COUNT] = {false, false, false, false};
         getLinkedReverseChannels(activeModel, focusIndex, linked);
-        bool newState = !models[activeModel].reverse[focusIndex];
+        bool newState = select ? !models[activeModel].reverse[focusIndex] : right;
 
         for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
           if (!linked[ch]) continue;
@@ -4918,10 +8462,10 @@ void loop() {
     }
   }
   else if (currentScreen == SCREEN_TRIM) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      focusIndex = (focusIndex + 1) % 7;
+    if (down || up) {
+      focusIndex = cycleFocusIndex(focusIndex, 7, down);
       fullRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
@@ -4981,10 +8525,10 @@ void loop() {
     }
   }
   else if (currentScreen == SCREEN_FAILSAFE) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      focusIndex = (focusIndex + 1) % (CHANNEL_COUNT + 1);
+    if (down || up) {
+      focusIndex = cycleFocusIndex(focusIndex, CHANNEL_COUNT + 1, down);
       uiNeedsRedraw = true;
       didInput = true;
     }
@@ -4994,11 +8538,11 @@ void loop() {
       didInput = true;
     }
 
-    if (select || right) {
+    if (select || left || right) {
       if (focusIndex == CHANNEL_COUNT) {
         setScreen(SCREEN_CONTROLLER_SETTINGS);
       } else {
-        bool newState = !models[activeModel].failsafe[focusIndex];
+        bool newState = select ? !models[activeModel].failsafe[focusIndex] : right;
         models[activeModel].failsafe[focusIndex] = newState;
         if (newState) {
           setModelFailsafeValue(activeModel, focusIndex,
@@ -5014,10 +8558,10 @@ void loop() {
     }
   }
   else if (currentScreen == SCREEN_MODEL_NAME) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      focusIndex = (focusIndex + 1) % 10;
+    if (down || up) {
+      focusIndex = cycleFocusIndex(focusIndex, 10, down);
       fullRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
@@ -5039,7 +8583,7 @@ void loop() {
       }
       else if (focusIndex == 1) {
         int targetModel = (selectedModelIndex >= 0) ? selectedModelIndex : activeModel;
-        keyboardBuffer = modelNames[targetModel];
+        keyboardBuffer = "";
         selectedModelIndex = targetModel;
         keyboardTarget = KEYBOARD_TARGET_MODEL_NAME;
         keyboardActive = true;
@@ -5069,6 +8613,8 @@ void loop() {
         for (int j = i; j < 3; j++) {
           modelNames[j] = modelNames[j + 1];
           models[j] = models[j + 1];
+          modelTankLeftEscChannel[j] = modelTankLeftEscChannel[j + 1];
+          modelTankRightEscChannel[j] = modelTankRightEscChannel[j + 1];
           memcpy(boundReceiverMacs[j], boundReceiverMacs[j + 1], ESP_NOW_ETH_ALEN);
           for (int channel = 0; channel < CHANNEL_COUNT; channel++) {
             modelFailsafeValues[j][channel] = modelFailsafeValues[j + 1][channel];
@@ -5099,10 +8645,10 @@ void loop() {
     }
   }
   else if (currentScreen == SCREEN_MIXING) {
-    if (down || left || right || select) dpadFocusVisible = true;
+    if (down || up || left || right || select) dpadFocusVisible = true;
 
-    if (down) {
-      focusIndex = (focusIndex + 1) % 15;
+    if (down || up) {
+      focusIndex = cycleFocusIndex(focusIndex, 16, down);
       mixingNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
@@ -5111,6 +8657,7 @@ void loop() {
     MixData &mix = models[activeModel].mixes[selectedMixIndex];
     uint8_t source = getMixSource(mix);
     uint8_t destination = getMixDestination(mix);
+    int pageBase = getMixPageBase(selectedMixPage);
 
     if (left && focusIndex == 0) {
       setScreen(SCREEN_MODEL_SETTINGS);
@@ -5119,7 +8666,7 @@ void loop() {
     else if ((select || left || right) && focusIndex >= 1 && focusIndex <= 4) {
       if (left && focusIndex > 1) focusIndex--;
       else if (right && focusIndex < 4) focusIndex++;
-      selectedMixIndex = focusIndex - 1;
+      selectedMixIndex = pageBase + (focusIndex - 1);
       mixingNeedsRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
@@ -5200,9 +8747,16 @@ void loop() {
       uiNeedsRedraw = true;
       didInput = true;
     }
+    else if (focusIndex == 15 && (select || left || right)) {
+      toggleSelectedMixPageDebounced(millis());
+      didInput = true;
+    }
   }
 
     if (didInput) {
+      if (screenAwake) {
+        playAudioClick();
+      }
       lastDpadTime = millis();
       userActive = true;
     }
@@ -5216,6 +8770,13 @@ void loop() {
 
   x = constrain(x, 0, 240);
   y = constrain(y, 0, 320);
+  bool backHoldHandled = handleBackHoldTouch(isTouching, x, y);
+  if (!backHoldHandled && handleMainSwipeGesture(isTouching, x, y, now)) {
+    backHoldHandled = true;
+    if (isTouching) {
+      userActive = true;
+    }
+  }
 
   if (isTouching &&
       currentScreen == SCREEN_MODEL_NAME &&
@@ -5239,6 +8800,7 @@ void loop() {
       lastActivityTime = millis();
       screenAwake = true;
       displayDimmed = false;
+      screenOffManual = false;
       suppressWakeUntilRelease = false;
       applyDisplayBacklight();
       fullRedraw = true;
@@ -5266,7 +8828,11 @@ if (!isTouching && expoValueDirty) {
 }
 
 // ===== RELEASE → ACTION =====
-if (!isTouching && waitingForRelease) {
+if (!backHoldHandled && !isTouching && waitingForRelease) {
+  if (screenAwake) {
+    playAudioClick();
+  }
+
   if (currentScreen == SCREEN_MODEL_NAME && pendingModelHoldIndex >= 0) {
     if (!pendingModelHoldTriggered) {
       selectModelSlot(pendingModelHoldIndex);
@@ -5282,6 +8848,9 @@ if (!isTouching && waitingForRelease) {
 
   if (currentScreen == SCREEN_DRIVE_TYPE) {
     fullRedraw = true;
+  }
+  if (currentScreen == SCREEN_DISPLAY_SETTINGS) {
+    displaySettingsNeedsRedraw = true;
   }
 
   if (screenChangePending) {
@@ -5317,7 +8886,23 @@ if (!isTouching && waitingForRelease) {
   uiNeedsRedraw = true;
 }
 
+if (currentScreen == SCREEN_ELRS_RX_CONFIG && elrsReceiverConfigTouchLocked) {
+  if (isTouching) {
+    elrsReceiverConfigNoTouchSince = 0;
+  } else {
+    if (elrsReceiverConfigNoTouchSince == 0) {
+      elrsReceiverConfigNoTouchSince = millis();
+    }
+    if (millis() >= elrsReceiverConfigTouchUnlockAt &&
+        millis() - elrsReceiverConfigNoTouchSince >= 900UL) {
+      elrsReceiverConfigTouchLocked = false;
+      Serial.println("ELRS RX config: touch unlocked after quiet release");
+    }
+  }
+}
+
   // ===== DRAW =====
+  bool uiFrameRedrew = false;
   if (uiNeedsRedraw) {
     frameCount++;
 
@@ -5376,6 +8961,11 @@ if (!isTouching && waitingForRelease) {
           drawProtocolScreen();
           break;
 
+          case SCREEN_STICK_CALIBRATION:
+          drawStickCalibrationScreen();
+          stickCalibrationNeedsRedraw = false;
+          break;
+
           case SCREEN_OTA_SETTINGS:
           drawOtaSettingsStatic();
           otaSettingsNeedsRedraw = true;
@@ -5383,6 +8973,10 @@ if (!isTouching && waitingForRelease) {
 
           case SCREEN_ELRS:
           drawElrsScreen();
+          break;
+
+          case SCREEN_ELRS_RX_CONFIG:
+          drawElrsReceiverConfigScreen();
           break;
 
           case SCREEN_MODEL_SETTINGS:
@@ -5423,13 +9017,24 @@ if (!isTouching && waitingForRelease) {
           drawTankModeScreen();
           break;
 
+          case SCREEN_ESC_CHANNEL_SETUP:
+          drawEscChannelSetupScreen();
+          break;
+
           case SCREEN_MIXING:
           drawMixingStatic();
           mixingNeedsRedraw = true;
           break;
 
           case SCREEN_DISPLAY_SETTINGS:
-          drawDisplaySettingsScreen();
+          drawDisplaySettingsStatic();
+          displaySettingsNeedsRedraw = true;
+          break;
+
+          case SCREEN_TIMER:
+          drawTimerScreen();
+          timerStaticNeedsRedraw = false;
+          timerNeedsRedraw = true;
           break;
         }
 
@@ -5450,11 +9055,21 @@ if (!isTouching && waitingForRelease) {
       if (currentScreen == SCREEN_PROTOCOL) {
         drawProtocolDynamic();
       }
+      if (currentScreen == SCREEN_STICK_CALIBRATION && stickCalibrationNeedsRedraw) {
+        drawStickCalibrationScreen();
+        stickCalibrationNeedsRedraw = false;
+      }
+      if (currentScreen == SCREEN_DISPLAY_SETTINGS) {
+        drawDisplaySettingsDynamic();
+      }
       if (currentScreen == SCREEN_OTA_SETTINGS) {
         drawOtaSettingsDynamic();
       }
       if (currentScreen == SCREEN_ELRS) {
         drawElrsDynamic();
+      }
+      if (currentScreen == SCREEN_ELRS_RX_CONFIG) {
+        drawElrsReceiverConfigDynamic();
       }
       if (currentScreen == SCREEN_TRIM) {
         drawTrimDynamic();
@@ -5471,11 +9086,15 @@ if (!isTouching && waitingForRelease) {
       if (currentScreen == SCREEN_MIXING) {
       drawMixingDynamic();
       }
+      if (currentScreen == SCREEN_TIMER) {
+      drawTimerDynamic();
+      }
     }
 
     tft.endWrite();
 
     uiNeedsRedraw = false;
+    uiFrameRedrew = true;
   }
 
   if (keyboardActive) {
@@ -5486,7 +9105,7 @@ if (!isTouching && waitingForRelease) {
   drawKeyboardDynamic();
   }
 
-  if (mixNumpadActive && mixNumpadNeedsRedraw) {
+  if (mixNumpadActive && (mixNumpadNeedsRedraw || uiFrameRedrew)) {
     drawMixNumpad();
     mixNumpadNeedsRedraw = false;
   }
@@ -5515,6 +9134,7 @@ if (!isTouching && waitingForRelease) {
       lastActivityTime = millis();
       screenAwake = true;
       displayDimmed = false;
+      screenOffManual = false;
       applyDisplayBacklight();
 
       fullRedraw = true;
@@ -5533,7 +9153,9 @@ if (!isTouching && waitingForRelease) {
       uiNeedsRedraw = true;
     }
 
-  handleTouch(x, y);
+  if (!backHoldHandled) {
+    handleTouch(x, y);
+  }
   touchActive = true;
   userActive = true;
   }
@@ -5563,29 +9185,28 @@ if (!isTouching && waitingForRelease) {
   unsigned long dimTimeoutMs = getDisplayDimTimeoutMs();
   unsigned long offTimeoutMs = getDisplayOffTimeoutMs();
   bool shouldDim = (dimTimeoutMs > 0 && idleTime > dimTimeoutMs);
-  bool shouldTurnOff = (offTimeoutMs > 0 && dimTimeoutMs > 0 && idleTime > (dimTimeoutMs + offTimeoutMs));
+  bool shouldTurnOff = (offTimeoutMs > 0 && idleTime > offTimeoutMs);
 
   if (shouldTurnOff) {
     if (screenAwake) {
       screenAwake = false;
       displayDimmed = false;
+      screenOffManual = false;
       applyDisplayBacklight();
     }
   }
   else {
     if (!screenAwake) {
-      screenAwake = true;
-      displayDimmed = false;
-      fullRedraw = true;
-      uiNeedsRedraw = true;
+      applyDisplayBacklight();
     }
-
-    bool nextDimmed = shouldDim && displaySleepBrightness < displayBrightness;
-    if (displayDimmed != nextDimmed) {
-      displayDimmed = nextDimmed;
-      applyDisplayBacklight();
-    } else {
-      applyDisplayBacklight();
+    else {
+      bool nextDimmed = shouldDim && displaySleepBrightness < displayBrightness;
+      if (displayDimmed != nextDimmed) {
+        displayDimmed = nextDimmed;
+        applyDisplayBacklight();
+      } else {
+        applyDisplayBacklight();
+      }
     }
   }
 }
@@ -5593,7 +9214,11 @@ if (!isTouching && waitingForRelease) {
 bool initAds1115() {
   Wire.beginTransmission(ADS1115_I2C_ADDR);
   if (Wire.endTransmission() != 0) {
-    Serial.println("ADS1115 not detected, using neutral stick inputs.");
+    if (!ads1115StatusLogged || ads1115LastLoggedReady) {
+      Serial.println("ADS1115 not detected, using neutral stick inputs.");
+    }
+    ads1115StatusLogged = true;
+    ads1115LastLoggedReady = false;
     ads1115Ready = false;
     return false;
   }
@@ -5601,100 +9226,109 @@ bool initAds1115() {
   ads1115Ready = true;
   stickFilterInitialized = false;
   adsConsecutiveReadFails = 0;
+  lastStickSampleTime = 0;
 
-  const int calibrationSamples = 8;
-  int32_t sums[4] = { 0, 0, 0, 0 };
-
-  for (int sample = 0; sample < calibrationSamples; sample++) {
-    for (uint8_t channel = 0; channel < 4; channel++) {
-      int16_t rawValue = 0;
-      if (!readAds1115SingleEnded(channel, rawValue)) {
-        Serial.println("ADS1115 calibration read failed, using neutral stick inputs.");
-        ads1115Ready = false;
-        return false;
-      }
-      sums[channel] += rawValue;
-    }
-  }
-
-  for (uint8_t channel = 0; channel < 4; channel++) {
-    adsStickCenter[channel] = (int16_t)(sums[channel] / calibrationSamples);
+  for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
     filteredStickAxis[channel] = 0.0f;
   }
 
-  Serial.printf(
-    "ADS1115 ready. Centers A0=%d A1=%d A2=%d A3=%d\n",
-    adsStickCenter[0], adsStickCenter[1], adsStickCenter[2], adsStickCenter[3]
-  );
-  return true;
-}
+  if (!adsStickCalibrationValid) {
+    const int calibrationSamples = 8;
+    int32_t sums[STICK_AXIS_COUNT] = { 0, 0, 0, 0 };
 
-void scanI2cBus(const char *label) {
-  Serial.printf("I2C scan");
-  if (label != nullptr && label[0] != '\0') {
-    Serial.printf(" (%s)", label);
-  }
-  Serial.println(":");
-  Serial.println("ADDR  STATUS  DEVICE");
-
-  for (uint8_t addr = 0x03; addr <= 0x77; addr++) {
-    Wire.beginTransmission(addr);
-    uint8_t result = Wire.endTransmission();
-    const char *status = (result == 0) ? "ACK" : "--";
-    const char *device = "";
-
-    if (result == 0) {
-      if (addr >= MCP23017_I2C_ADDR_MIN && addr <= MCP23017_I2C_ADDR_MAX) {
-        device = "MCP23017-compatible";
-      } else if (addr == ADS1115_I2C_ADDR) {
-        device = "ADS1115";
-      } else if (addr == 0x38) {
-        device = "touch-controller?";
-      } else if (addr == 0x3C || addr == 0x3D) {
-        device = "OLED/SSD1306?";
-      } else if (addr == 0x68) {
-        device = "RTC/IMU?";
-      } else if (addr == 0x76 || addr == 0x77) {
-        device = "baro/sensor?";
-      } else {
-        device = "unknown";
+    for (int sample = 0; sample < calibrationSamples; sample++) {
+      for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+        int16_t rawValue = 0;
+        if (!readAds1115SingleEnded(channel, rawValue)) {
+          if (!ads1115StatusLogged || ads1115LastLoggedReady) {
+            Serial.println("ADS1115 calibration read failed, using neutral stick inputs.");
+          }
+          ads1115StatusLogged = true;
+          ads1115LastLoggedReady = false;
+          ads1115Ready = false;
+          return false;
+        }
+        sums[channel] += rawValue;
       }
     }
 
-    Serial.printf("0x%02X  %-6s  %s\n", addr, status, device);
+    for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+      adsStickCenter[channel] = (int16_t)(sums[channel] / calibrationSamples);
+      adsStickMin[channel] = ADS1115_DEFAULT_MIN_COUNT;
+      adsStickMax[channel] = ADS1115_JOYSTICK_MAX_COUNT;
+    }
+
+    if (!ads1115StatusLogged || !ads1115LastLoggedReady) {
+      Serial.printf(
+        "ADS1115 ready. Centers A0=%d A1=%d A2=%d A3=%d\n",
+        adsStickCenter[0], adsStickCenter[1], adsStickCenter[2], adsStickCenter[3]
+      );
+    }
+  } else {
+    if (!ads1115StatusLogged || !ads1115LastLoggedReady) {
+      Serial.printf(
+        "ADS1115 ready. Cal A0=%d/%d/%d A1=%d/%d/%d A2=%d/%d/%d A3=%d/%d/%d\n",
+        adsStickMin[0], adsStickCenter[0], adsStickMax[0],
+        adsStickMin[1], adsStickCenter[1], adsStickMax[1],
+        adsStickMin[2], adsStickCenter[2], adsStickMax[2],
+        adsStickMin[3], adsStickCenter[3], adsStickMax[3]
+      );
+    }
+  }
+  ads1115StatusLogged = true;
+  ads1115LastLoggedReady = true;
+  return true;
+}
+
+bool captureStickCalibrationCenter() {
+  if (!ads1115Ready) return false;
+
+  int16_t rawValues[STICK_AXIS_COUNT] = { 0, 0, 0, 0 };
+  for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+    if (!readAds1115SingleEnded(channel, rawValues[channel])) {
+      return false;
+    }
+  }
+
+  for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+    adsStickCenter[channel] = rawValues[channel];
+    adsLastRawValues[channel] = rawValues[channel];
+    stickCalibrationSweepMin[channel] = rawValues[channel];
+    stickCalibrationSweepMax[channel] = rawValues[channel];
+  }
+
+  stickCalibrationState = STICK_CAL_STATE_SWEEP_RANGE;
+  stickCalibrationNeedsRedraw = true;
+  return true;
+}
+
+void updateStickCalibrationSweep() {
+  if (currentScreen != SCREEN_STICK_CALIBRATION ||
+      stickCalibrationState != STICK_CAL_STATE_SWEEP_RANGE) {
+    return;
+  }
+
+  for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+    stickCalibrationSweepMin[channel] = min(stickCalibrationSweepMin[channel], adsLastRawValues[channel]);
+    stickCalibrationSweepMax[channel] = max(stickCalibrationSweepMax[channel], adsLastRawValues[channel]);
   }
 }
 
-void probeI2cAddress(uint8_t addr) {
-  static const uint8_t regs[] = {
-    0x00, // MCP23017 IODIRA
-    0x01, // MCP23017 IODIRB
-    0x12, // MCP23017 GPIOA
-    0x13, // MCP23017 GPIOB
-    0x0A, // MCP23017 IOCON
-    0x0B  // MCP23017 IOCON (banked pair)
-  };
-
-  Serial.printf("I2C probe 0x%02X:\n", addr);
-  for (uint8_t i = 0; i < sizeof(regs); i++) {
-    uint8_t reg = regs[i];
-    Wire.beginTransmission(addr);
-    Wire.write(reg);
-    uint8_t txResult = Wire.endTransmission(false);
-    if (txResult != 0) {
-      Serial.printf("  reg 0x%02X -> write failed (%u)\n", reg, txResult);
-      continue;
+bool finalizeStickCalibration() {
+  for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+    if (stickCalibrationSweepMin[channel] >= adsStickCenter[channel] ||
+        stickCalibrationSweepMax[channel] <= adsStickCenter[channel]) {
+      return false;
     }
-
-    uint8_t value = 0xFF;
-    int rxCount = Wire.requestFrom((int)addr, 1);
-    if (rxCount == 1) {
-      value = Wire.read();
-      Serial.printf("  reg 0x%02X -> 0x%02X\n", reg, value);
-    } else {
-      Serial.printf("  reg 0x%02X -> read failed (%d)\n", reg, rxCount);
-    }
+    adsStickMin[channel] = stickCalibrationSweepMin[channel];
+    adsStickMax[channel] = stickCalibrationSweepMax[channel];
   }
+
+  saveStickCalibration();
+  stickFilterInitialized = false;
+  stickCalibrationState = STICK_CAL_STATE_CAPTURE_CENTER;
+  stickCalibrationNeedsRedraw = true;
+  return true;
 }
 
 bool initMcp23017() {
@@ -5758,6 +9392,68 @@ uint8_t readMcp23017PortB() {
   return Wire.read();
 }
 
+const char* identifyI2cDevice(uint8_t addr) {
+  if (addr >= PCF8575_I2C_ADDR_MIN && addr <= PCF8575_I2C_ADDR_MAX) {
+    return "PCF8575/MCP23017 range";
+  }
+  if (addr == 0x38) return "touch-controller?";
+  if (addr == ADS1115_I2C_ADDR) return "ADS1115";
+  return "unknown";
+}
+
+void printI2cStartupScan() {
+  if (!I2C_STARTUP_SCAN_ENABLED) return;
+
+  Serial.println("I2C scan (startup):");
+  Serial.println("ADDR  STATUS  DEVICE");
+  for (uint8_t addr = 0x03; addr <= 0x77; addr++) {
+    Wire.beginTransmission(addr);
+    uint8_t error = Wire.endTransmission();
+    if (error == 0) {
+      Serial.printf("0x%02X  ACK     %s\n", addr, identifyI2cDevice(addr));
+    } else {
+      Serial.printf("0x%02X  --\n", addr);
+    }
+    delay(1);
+  }
+}
+
+bool initPcf8575() {
+  for (uint8_t addr = PCF8575_I2C_ADDR_MIN; addr <= PCF8575_I2C_ADDR_MAX; addr++) {
+    if (addr == ADS1115_I2C_ADDR) continue;
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() != 0) continue;
+
+    pcf8575Address = addr;
+    Wire.beginTransmission(pcf8575Address);
+    Wire.write(0xFF);
+    Wire.write(0xFF);
+    if (Wire.endTransmission() == 0) {
+      pcf8575Ready = true;
+      Serial.printf("PCF8575 ready at 0x%02X for accessory channels\n", pcf8575Address);
+      return true;
+    }
+  }
+
+  pcf8575Ready = false;
+  return false;
+}
+
+bool readPcf8575(uint16_t &value) {
+  if (!pcf8575Ready) return false;
+
+  if (Wire.requestFrom((int)pcf8575Address, 2) != 2) {
+    pcf8575Ready = false;
+    return false;
+  }
+
+  uint8_t lowByte = Wire.read();
+  uint8_t highByte = Wire.read();
+  value = (uint16_t)lowByte | ((uint16_t)highByte << 8);
+  pcf8575LastValue = value;
+  return true;
+}
+
 bool readAds1115SingleEnded(uint8_t channel, int16_t &value) {
   if (channel > 3) return false;
 
@@ -5800,12 +9496,21 @@ bool readAds1115SingleEnded(uint8_t channel, int16_t &value) {
   return true;
 }
 
-float normalizeStickAxis(int16_t raw, int16_t center) {
+float normalizeStickAxis(int16_t raw, int channel) {
+  int16_t center = adsStickCenter[channel];
   int32_t delta = (int32_t)raw - (int32_t)center;
-  int32_t estimatedTop =
-    constrain((int32_t)center * 2, (int32_t)center + 1, (int32_t)ADS1115_JOYSTICK_MAX_COUNT);
-  int32_t positiveSpan = max<int32_t>(1, estimatedTop - center);
-  int32_t negativeSpan = max<int32_t>(1, center);
+  int32_t minValue = adsStickMin[channel];
+  int32_t maxValue = adsStickMax[channel];
+  int32_t positiveSpan = max<int32_t>(1, maxValue - center);
+  int32_t negativeSpan = max<int32_t>(1, center - minValue);
+
+  if (minValue >= center || maxValue <= center) {
+    int32_t estimatedTop =
+      constrain((int32_t)center * 2, (int32_t)center + 1, (int32_t)ADS1115_JOYSTICK_MAX_COUNT);
+    positiveSpan = max<int32_t>(1, estimatedTop - center);
+    negativeSpan = max<int32_t>(1, center);
+  }
+
   int32_t span = (delta >= 0) ? positiveSpan : negativeSpan;
 
   if (span < 1) span = 1;
@@ -5823,17 +9528,39 @@ float normalizeStickAxis(int16_t raw, int16_t center) {
   return (normalized < 0.0f) ? -scaled : scaled;
 }
 
+void updateAccessoryInputs(unsigned long now) {
+  accessoryInputChannels[0] = 0.0f;
+  accessoryInputChannels[1] = 0.0f;
+
+  if (!pcf8575Ready && now - lastPcfReconnectAttemptMs >= PCF8575_RECONNECT_INTERVAL_MS) {
+    lastPcfReconnectAttemptMs = now;
+    initPcf8575();
+  }
+
+  uint16_t pcfValue = 0xFFFF;
+  if (!readPcf8575(pcfValue)) {
+    return;
+  }
+
+  // PCF8575 is digital-only. CH5 is reserved for the future pot hardware
+  // mapping; CH6 uses a two-bit active-low three-position switch.
+  bool lowSide = ((pcfValue & (1U << PCF8575_SWITCH_LOW_BIT)) == 0);
+  bool highSide = ((pcfValue & (1U << PCF8575_SWITCH_HIGH_BIT)) == 0);
+  if (lowSide && !highSide) accessoryInputChannels[1] = -1.0f;
+  else if (highSide && !lowSide) accessoryInputChannels[1] = 1.0f;
+  else accessoryInputChannels[1] = 0.0f;
+}
+
 void updateStickInputs(unsigned long now) {
   if (!ads1115Ready) {
     if (now - lastAdsReconnectAttemptMs >= ADS1115_RECONNECT_INTERVAL_MS) {
       lastAdsReconnectAttemptMs = now;
-      if (initAds1115()) {
-        Serial.println("ADS1115 recovered");
-      }
+      initAds1115();
     }
 
     for (int i = 0; i < CHANNEL_COUNT; i++) {
       inputChannels[i] = 0.0f;
+      driveSourceChannels[i] = 0.0f;
       outputChannels[i] = 0.0f;
     }
     leftThrottle = 0.0f;
@@ -5844,22 +9571,26 @@ void updateStickInputs(unsigned long now) {
   }
 
   if (now - lastStickSampleTime < STICK_SAMPLE_INTERVAL_MS) {
-    inputChannels[0] = filteredStickAxis[0];
-    inputChannels[1] = filteredStickAxis[1];
-    inputChannels[2] = filteredStickAxis[3];
-    inputChannels[3] = filteredStickAxis[2];
+    inputChannels[0] = -filteredStickAxis[2];
+    inputChannels[1] = filteredStickAxis[3];
+    inputChannels[2] = -filteredStickAxis[1];
+    inputChannels[3] = filteredStickAxis[0];
+    inputChannels[4] = accessoryInputChannels[0];
+    inputChannels[5] = accessoryInputChannels[1];
     updateChannelOutputs();
     return;
   }
 
-  int16_t rawValues[4] = { 0, 0, 0, 0 };
-  for (uint8_t channel = 0; channel < 4; channel++) {
+  int16_t rawValues[STICK_AXIS_COUNT] = { 0, 0, 0, 0 };
+  for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
     if (!readAds1115SingleEnded(channel, rawValues[channel])) {
       adsConsecutiveReadFails++;
-      Serial.printf("ADS1115 read failed on A%d (streak %u)\n",
-                    channel, (unsigned int)adsConsecutiveReadFails);
       if (adsConsecutiveReadFails >= ADS1115_MAX_CONSECUTIVE_READ_FAILS) {
-        Serial.println("ADS1115 marked offline; using neutral inputs until reconnect");
+        if (!ads1115StatusLogged || ads1115LastLoggedReady) {
+          Serial.println("ADS1115 marked offline; using neutral inputs until reconnect");
+        }
+        ads1115StatusLogged = true;
+        ads1115LastLoggedReady = false;
         ads1115Ready = false;
       }
       return;
@@ -5867,8 +9598,9 @@ void updateStickInputs(unsigned long now) {
   }
   adsConsecutiveReadFails = 0;
 
-  for (uint8_t channel = 0; channel < 4; channel++) {
-    float normalized = normalizeStickAxis(rawValues[channel], adsStickCenter[channel]);
+  for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+    adsLastRawValues[channel] = rawValues[channel];
+    float normalized = normalizeStickAxis(rawValues[channel], channel);
 
     if (!stickFilterInitialized) {
       filteredStickAxis[channel] = normalized;
@@ -5879,16 +9611,61 @@ void updateStickInputs(unsigned long now) {
     }
   }
 
+  updateStickCalibrationSweep();
   stickFilterInitialized = true;
   lastStickSampleTime = now;
 
-  // Channel map from the external ADS1115 wiring:
-  // CH1 = right X (A0), CH2 = right Y (A1), CH3 = left Y (A3), CH4 = left X (A2).
-  inputChannels[0] = filteredStickAxis[0];
-  inputChannels[1] = filteredStickAxis[1];
-  inputChannels[2] = filteredStickAxis[3];
-  inputChannels[3] = filteredStickAxis[2];
+  // Channel map from the external ADS1115 wiring after the gimbals were
+  // swapped physically:
+  // CH1 = right X (A2), CH2 = right Y (A3), CH3 = left Y (A1), CH4 = left X (A0).
+  inputChannels[0] = -filteredStickAxis[2];
+  inputChannels[1] = filteredStickAxis[3];
+  inputChannels[2] = -filteredStickAxis[1];
+  inputChannels[3] = filteredStickAxis[0];
+  inputChannels[4] = accessoryInputChannels[0];
+  inputChannels[5] = accessoryInputChannels[1];
   updateChannelOutputs();
+}
+
+bool updateStickDisplayWake(unsigned long now) {
+  if (!ads1115Ready || !stickFilterInitialized) {
+    displayWakeStickBaselineValid = false;
+    return false;
+  }
+
+  if (!displayWakeStickBaselineValid) {
+    for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+      lastDisplayWakeStickChannels[channel] = inputChannels[channel];
+    }
+    displayWakeStickBaselineValid = true;
+    return false;
+  }
+
+  float maxDelta = 0.0f;
+  for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+    maxDelta = max(maxDelta, fabs(inputChannels[channel] - lastDisplayWakeStickChannels[channel]));
+  }
+
+  if (maxDelta < STICK_DISPLAY_WAKE_DELTA) {
+    return false;
+  }
+
+  for (uint8_t channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+    lastDisplayWakeStickChannels[channel] = inputChannels[channel];
+  }
+
+  lastActivityTime = now;
+  if (!screenAwake || displayDimmed) {
+    screenAwake = true;
+    displayDimmed = false;
+    screenOffManual = false;
+    suppressWakeUntilRelease = false;
+    applyDisplayBacklight();
+    fullRedraw = true;
+    uiNeedsRedraw = true;
+    topBarNeedsRedraw = true;
+  }
+  return true;
 }
 
 float getChannelTrimOffset(int channel) {
@@ -5912,13 +9689,15 @@ const char* getChannelAxisName(uint8_t channel) {
     case 1: return "RY";
     case 2: return "LY";
     case 3: return "LX";
+    case 4: return "POT";
+    case 5: return "3POS";
     default: return "--";
   }
 }
 
 float applyExpoCurve(float value, int expoPercent) {
   float x = constrain(value, -1.0f, 1.0f);
-  float expo = constrain(expoPercent, 0, 100) / 100.0f;
+  float expo = constrain(expoPercent, -100, 100) / 100.0f;
   float curved = (x * (1.0f - expo)) + (x * x * x * expo);
   return constrain(curved, -1.0f, 1.0f);
 }
@@ -5938,6 +9717,37 @@ bool isEndpointHighSideSelected(int channel) {
   return endpointSideLatch[channel] != 0;
 }
 
+bool updateEndpointAutoFocus() {
+  if (mixNumpadActive) return false;
+
+  int strongestChannel = -1;
+  float strongestMagnitude = 0.20f;
+  for (int channel = 0; channel < STICK_AXIS_COUNT; channel++) {
+    float magnitude = fabs(inputChannels[channel]);
+    if (magnitude > strongestMagnitude + 0.02f) {
+      strongestMagnitude = magnitude;
+      strongestChannel = channel;
+    }
+  }
+
+  if (strongestChannel < 0) {
+    if (!endpointAutoFocusActive) return false;
+    endpointAutoFocusActive = false;
+    if (focusIndex >= 0 && focusIndex < CHANNEL_COUNT) {
+      focusIndex = CHANNEL_COUNT;
+      dpadFocusVisible = false;
+    }
+    return true;
+  }
+
+  bool changed = (focusIndex != strongestChannel) || !dpadFocusVisible || !endpointAutoFocusActive;
+  focusIndex = strongestChannel;
+  dpadFocusVisible = true;
+  endpointAutoFocusActive = true;
+  endpointSideLatch[strongestChannel] = (inputChannels[strongestChannel] >= 0.0f) ? 1 : 0;
+  return changed;
+}
+
 float applyEndpointScaling(float value, int channel) {
   if (channel < 0 || channel >= CHANNEL_COUNT) return value;
   float normalized = constrain(value, -1.0f, 1.0f);
@@ -5950,16 +9760,16 @@ float applyEndpointScaling(float value, int channel) {
 }
 
 void updateChannelOutputs() {
+  float mixSourceChannels[CHANNEL_COUNT];
+
   for (int channel = 0; channel < CHANNEL_COUNT; channel++) {
     float value = inputChannels[channel] + getChannelTrimOffset(channel);
     value = constrain(value, -1.0f, 1.0f);
     value = applyExpoCurve(value, getModelExpoValue(activeModel, channel));
     value = applyEndpointScaling(value, channel);
 
-    if (models[activeModel].reverse[channel]) {
-      value = -value;
-    }
-
+    mixSourceChannels[channel] = value;
+    driveSourceChannels[channel] = value;
     outputChannels[channel] = value;
   }
 
@@ -5971,9 +9781,15 @@ void updateChannelOutputs() {
     uint8_t destination = getMixDestination(mix);
     if (source >= CHANNEL_COUNT || destination >= CHANNEL_COUNT) continue;
 
-    float mixAmount = outputChannels[source] * (mix.rate / 100.0f);
+    float mixAmount = mixSourceChannels[source] * (mix.rate / 100.0f);
     mixAmount += mix.offset / 100.0f;
     outputChannels[destination] = constrain(outputChannels[destination] + mixAmount, -1.0f, 1.0f);
+  }
+
+  for (int channel = 0; channel < CHANNEL_COUNT; channel++) {
+    if (models[activeModel].reverse[channel]) {
+      outputChannels[channel] = -outputChannels[channel];
+    }
   }
 
   rightThrottle = outputChannels[0];
@@ -5991,24 +9807,56 @@ void buildProtocolOutputChannels(float channels[CHANNEL_COUNT]) {
   TankControlMode tankMode = getModelTankMode(activeModel);
 
   if (driveType == DRIVE_TANK) {
-    // Keep the receiver wiring stable across tank presets by always driving
-    // the primary motor outputs on CH1/CH2. The source feeding those outputs
-    // changes with the selected control style.
+    float rightTrack = 0.0f;
+    float leftTrack = 0.0f;
+
     if (tankMode == TANK_MODE_DUAL_STICK) {
-      channels[0] = rightY;  // CH1 -> right track
-      channels[1] = leftY;   // CH2 -> left track
+      rightTrack = driveSourceChannels[1];  // CH2 = right stick Y
+      leftTrack = driveSourceChannels[2];   // CH3 = left stick Y
     } else {
-      float throttle = rightY;
-      float turn = rightThrottle;
-      channels[0] = constrain(throttle - turn, -1.0f, 1.0f);  // CH1 -> right track
-      channels[1] = constrain(throttle + turn, -1.0f, 1.0f);  // CH2 -> left track
+      // One-stick tank control: CH2 is right-stick Y (throttle) and CH1 is
+      // right-stick X (turn). Keep this aligned with the ADS/channel map.
+      float throttle = driveSourceChannels[1];
+      float turn = driveSourceChannels[0];
+      rightTrack = constrain(throttle - turn, -1.0f, 1.0f);
+      leftTrack = constrain(throttle + turn, -1.0f, 1.0f);
     }
+
+    uint8_t leftChannel = getModelTankLeftEscChannel(activeModel);
+    uint8_t rightChannel = getModelTankRightEscChannel(activeModel);
+    if (leftChannel >= CHANNEL_COUNT || rightChannel >= CHANNEL_COUNT || leftChannel == rightChannel) {
+      leftChannel = 1;
+      rightChannel = 0;
+    }
+
+    // Respect per-channel reverse settings on the actual ESC output channels.
+    if (models[activeModel].reverse[rightChannel]) {
+      rightTrack = -rightTrack;
+    }
+    if (models[activeModel].reverse[leftChannel]) {
+      leftTrack = -leftTrack;
+    }
+
+    channels[rightChannel] = rightTrack;
+    channels[leftChannel] = leftTrack;
   } else if (driveType == DRIVE_CAR) {
     // Car presets keep steering and throttle on CH1/CH2 regardless of whether
     // the user prefers one-stick or split-stick steering.
     channels[0] = getCarSteeringOutput();  // CH1 -> steering
     channels[1] = getCarThrottleOutput();  // CH2 -> throttle
   }
+}
+
+float getVehicleDisplayOutput(const float channels[CHANNEL_COUNT], uint8_t channel) {
+  if (channel >= CHANNEL_COUNT) return 0.0f;
+
+  // Reverse is a calibration fix for motor/servo wiring. The receiver signal
+  // is inverted, but the main panel should show corrected real-world motion.
+  float value = channels[channel];
+  if (models[activeModel].reverse[channel]) {
+    value = -value;
+  }
+  return constrain(value, -1.0f, 1.0f);
 }
 
 void updateBatteryState() {
@@ -6040,6 +9888,9 @@ void updateBatteryState() {
   if (!batteryPresent) {
     batteryCharging = false;
     batteryChargingHoldUntil = 0;
+    batteryCriticalSince = 0;
+    lowBatteryWarningVisible = false;
+    lowBatteryWarningScreenDrawn = false;
     batteryLevel = 0;
     batteryChargeWindowVoltage = transmitterBatteryVoltage;
     batteryChargeWindowStart = now;
@@ -6064,6 +9915,202 @@ void updateBatteryState() {
   }
 
   batteryCharging = (batteryChargingHoldUntil > now);
+}
+
+bool updateBatterySafety(unsigned long now, bool userDismiss) {
+  if (!batteryPresent || transmitterBatteryVoltage < 0.5f) {
+    batteryCriticalSince = 0;
+    lowBatteryWarningVisible = false;
+    lowBatteryWarningScreenDrawn = false;
+    return false;
+  }
+
+  bool critical = (transmitterBatteryVoltage <= BATTERY_CRITICAL_SLEEP_V && !batteryCharging);
+  if (critical) {
+    if (batteryCriticalSince == 0) {
+      batteryCriticalSince = now;
+    }
+
+    screenAwake = true;
+    displayDimmed = false;
+    screenOffManual = false;
+    suppressWakeUntilRelease = false;
+    applyDisplayBacklight();
+    drawBatterySafetyScreen(true, now);
+
+    if (now - batteryCriticalSince >= BATTERY_CRITICAL_GRACE_MS) {
+      Serial.printf("Battery critical %.2fV: entering deep sleep\n", transmitterBatteryVoltage);
+      enterDeepSleepPowerOff();
+    }
+    return true;
+  }
+
+  batteryCriticalSince = 0;
+
+  bool low = (transmitterBatteryVoltage <= BATTERY_LOW_WARN_V && !batteryCharging);
+  if (!low) {
+    lowBatteryWarningVisible = false;
+    lowBatteryWarningScreenDrawn = false;
+    return false;
+  }
+
+  if (userDismiss && lowBatteryWarningVisible) {
+    lowBatteryWarningVisible = false;
+    lowBatteryWarningScreenDrawn = false;
+    lowBatteryWarningDismissedUntil = now + BATTERY_LOW_WARNING_REPEAT_MS;
+    fullRedraw = true;
+    uiNeedsRedraw = true;
+    return true;
+  }
+
+  if (lowBatteryWarningVisible) {
+    if (!lowBatteryWarningScreenDrawn) {
+      drawBatterySafetyScreen(false, now);
+      lowBatteryWarningScreenDrawn = true;
+    }
+    return true;
+  }
+
+  if (now >= lowBatteryWarningDismissedUntil) {
+    lowBatteryWarningVisible = true;
+    lowBatteryWarningScreenDrawn = false;
+    screenAwake = true;
+    displayDimmed = false;
+    screenOffManual = false;
+    suppressWakeUntilRelease = false;
+    applyDisplayBacklight();
+    drawBatterySafetyScreen(false, now);
+    lowBatteryWarningScreenDrawn = true;
+    return true;
+  }
+
+  return false;
+}
+
+void drawBatterySafetyScreen(bool critical, unsigned long now) {
+  tft.fillScreen(COLOR_BG);
+  uint16_t panelColor = critical ? TFT_RED : COLOR_PANEL;
+  uint16_t titleColor = critical ? TFT_WHITE : TFT_ORANGE;
+
+  drawGradientControl(12, 70, 216, 168, 14, COLOR_PANEL, panelColor);
+  tft.setTextFont(2);
+  tft.setTextColor(titleColor, COLOR_PANEL);
+  tft.drawCentreString(critical ? "CRITICAL BATTERY" : "LOW BATTERY", 120, 88, 2);
+
+  char voltageText[32];
+  snprintf(voltageText, sizeof(voltageText), "%.2fV", transmitterBatteryVoltage);
+  tft.setTextFont(4);
+  tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+  tft.drawCentreString(voltageText, 120, 120, 4);
+
+  tft.setTextFont(2);
+  if (critical) {
+    unsigned long elapsed = (batteryCriticalSince == 0) ? 0 : (now - batteryCriticalSince);
+    unsigned long remainingMs = (elapsed >= BATTERY_CRITICAL_GRACE_MS)
+      ? 0
+      : (BATTERY_CRITICAL_GRACE_MS - elapsed);
+    unsigned int remainingSec = (unsigned int)((remainingMs + 999UL) / 1000UL);
+    char sleepText[36];
+    snprintf(sleepText, sizeof(sleepText), "Sleeping in %us", remainingSec);
+    tft.setTextColor(TFT_WHITE, COLOR_PANEL);
+    tft.drawCentreString(sleepText, 120, 164, 2);
+    tft.drawCentreString("Protecting LiPo", 120, 190, 2);
+  } else {
+    tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+    tft.drawCentreString("Charge soon", 120, 164, 2);
+    tft.drawCentreString("Press any key to dismiss", 120, 190, 2);
+  }
+}
+
+bool updateAutoDeepSleep(unsigned long now, bool inputDetected, bool powerButtonInput) {
+  if (!AUTO_DEEP_SLEEP_ENABLED || powerButtonShutdownPending) return false;
+  if (otaUpdateInProgress) return false;
+
+  if (inputDetected) {
+    lastActivityTime = now;
+    if (autoDeepSleepWarningVisible) {
+      autoDeepSleepWarningVisible = false;
+      autoDeepSleepWarningScreenDrawn = false;
+      autoDeepSleepLastWarningSeconds = -1;
+      if (powerButtonInput) {
+        powerButtonSuppressShortPressUntilRelease = true;
+      }
+      screenAwake = true;
+      displayDimmed = false;
+      screenOffManual = false;
+      suppressWakeUntilRelease = false;
+      applyDisplayBacklight();
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      topBarNeedsRedraw = true;
+      return true;
+    }
+    return false;
+  }
+
+  unsigned long idleMs = now - lastActivityTime;
+  if (idleMs >= AUTO_DEEP_SLEEP_TIMEOUT_MS) {
+    Serial.println("Auto sleep: inactivity timeout, entering deep sleep");
+    enterDeepSleepPowerOff();
+    return true;
+  }
+
+  unsigned long warningStartMs = (AUTO_DEEP_SLEEP_TIMEOUT_MS > AUTO_DEEP_SLEEP_WARNING_MS)
+    ? (AUTO_DEEP_SLEEP_TIMEOUT_MS - AUTO_DEEP_SLEEP_WARNING_MS)
+    : 0;
+  if (idleMs >= warningStartMs) {
+    autoDeepSleepWarningVisible = true;
+    screenAwake = true;
+    displayDimmed = false;
+    screenOffManual = false;
+    suppressWakeUntilRelease = false;
+    applyDisplayBacklight();
+    drawAutoDeepSleepWarningScreen(now);
+    return true;
+  }
+
+  if (autoDeepSleepWarningVisible) {
+    autoDeepSleepWarningVisible = false;
+    autoDeepSleepWarningScreenDrawn = false;
+    autoDeepSleepLastWarningSeconds = -1;
+    fullRedraw = true;
+    uiNeedsRedraw = true;
+  }
+  return false;
+}
+
+void drawAutoDeepSleepWarningScreen(unsigned long now) {
+  unsigned long idleMs = now - lastActivityTime;
+  unsigned long remainingMs = (idleMs >= AUTO_DEEP_SLEEP_TIMEOUT_MS)
+    ? 0
+    : (AUTO_DEEP_SLEEP_TIMEOUT_MS - idleMs);
+  int remainingSec = (int)((remainingMs + 999UL) / 1000UL);
+
+  if (autoDeepSleepWarningScreenDrawn &&
+      remainingSec == autoDeepSleepLastWarningSeconds) {
+    return;
+  }
+
+  if (!autoDeepSleepWarningScreenDrawn) {
+    tft.fillScreen(COLOR_BG);
+    drawGradientControl(12, 70, 216, 168, 14, COLOR_PANEL, TFT_ORANGE);
+    tft.setTextFont(2);
+    tft.setTextColor(TFT_ORANGE, COLOR_PANEL);
+    tft.drawCentreString("INACTIVITY", 120, 88, 2);
+    tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+    tft.drawCentreString("Auto shutdown soon", 120, 126, 2);
+    tft.drawCentreString("Touch, D-pad, button,", 120, 184, 2);
+    tft.drawCentreString("or move sticks to cancel", 120, 204, 2);
+    autoDeepSleepWarningScreenDrawn = true;
+  }
+
+  tft.fillRect(44, 146, 152, 30, COLOR_PANEL);
+  char countdownText[32];
+  snprintf(countdownText, sizeof(countdownText), "Sleeping in %ds", remainingSec);
+  tft.setTextFont(2);
+  tft.setTextColor(TFT_WHITE, COLOR_PANEL);
+  tft.drawCentreString(countdownText, 120, 150, 2);
+  autoDeepSleepLastWarningSeconds = remainingSec;
 }
 
 // !!!---- DRAWING ----!!!
@@ -6473,7 +10520,17 @@ void drawDisplaySettingsRow(int y, const char* label, const char* valueText,
     -1);
 }
 
-void drawDisplaySettingsScreen() {
+void drawDisplaySettingsStatic() {
+  tft.fillScreen(COLOR_BG);
+  tft.setTextColor(COLOR_TEXT, COLOR_BG);
+  tft.drawCentreString("Display Settings", 120, 38, 2);
+  tft.setTextColor(fadeColor(COLOR_TEXT, 0.65f), COLOR_BG);
+  tft.drawCentreString("Changes save automatically", 120, 50, 2);
+}
+
+void drawDisplaySettingsDynamic() {
+  if (!displaySettingsNeedsRedraw) return;
+
   char dimTimeoutText[16];
   char offTimeoutText[16];
   char brightnessText[16];
@@ -6487,7 +10544,6 @@ void drawDisplaySettingsScreen() {
     snprintf(sleepText, sizeof(sleepText), "%d%%", sleepPercent);
   }
 
-  tft.fillScreen(COLOR_BG);
   drawButtonBubble(
     BACK_BTN_X, BACK_BTN_Y,
     BACK_BTN_W, BACK_BTN_H,
@@ -6495,10 +10551,6 @@ void drawDisplaySettingsScreen() {
     pressedButton == BTN_BACK,
     dpadFocusVisible && selectedButton == BTN_BACK,
     BACK_TEXT_OFFSET);
-
-  tft.drawCentreString("Display Settings", 120, 38, 2);
-  tft.setTextColor(fadeColor(COLOR_TEXT, 0.65f));
-  tft.drawCentreString("Changes save automatically", 120, 50, 2);
 
   drawDisplaySettingsRow(
     DISPLAY_SETTINGS_BRIGHTNESS_Y,
@@ -6554,13 +10606,7 @@ void drawDisplaySettingsScreen() {
     dpadFocusVisible && selectedButton == BTN_DISPLAY_THEME_TOGGLE,
     -1);
 
-  drawButtonBubble(
-    DISPLAY_SETTINGS_SLEEP_NOW_X, DISPLAY_SETTINGS_SLEEP_NOW_Y,
-    DISPLAY_SETTINGS_SLEEP_NOW_W, DISPLAY_SETTINGS_SLEEP_NOW_H,
-    "Sleep Now",
-    pressedButton == BTN_DISPLAY_SLEEP_NOW,
-    dpadFocusVisible && selectedButton == BTN_DISPLAY_SLEEP_NOW,
-    -1);
+  displaySettingsNeedsRedraw = false;
 }
 
 void drawGearIcon(int x, int y, int size, uint16_t iconColor) {
@@ -7165,13 +11211,20 @@ void drawSpaceGameDynamic() {
                      pressedButton == BTN_FAILSAFE, dpadFocusVisible && selectedButton == BTN_FAILSAFE, 100);
     drawButtonBubble(20, 190, 200, BTN_HEIGHT, "End Points",
                      pressedButton == BTN_ENDPOINTS, dpadFocusVisible && selectedButton == BTN_ENDPOINTS, -1);
-  } else {
+  } else if (controllerSettingsPage == 1) {
     drawButtonBubble(20, 50, 200, BTN_HEIGHT, "Expo",
                      pressedButton == BTN_EXPO, dpadFocusVisible && selectedButton == BTN_EXPO, 100);
     drawButtonBubble(20, 120, 200, BTN_HEIGHT, "Rates",
                      pressedButton == BTN_RATES, dpadFocusVisible && selectedButton == BTN_RATES, 100);
     drawButtonBubble(20, 190, 200, BTN_HEIGHT, "Protocol",
                      pressedButton == BTN_PROTOCOL, dpadFocusVisible && selectedButton == BTN_PROTOCOL, 100);
+  } else if (STICK_CAL_SCREEN_ENABLED) {
+    drawButtonBubble(20, 85, 200, BTN_HEIGHT, "Stick Calibration",
+                     pressedButton == BTN_STICK_CAL, dpadFocusVisible && selectedButton == BTN_STICK_CAL, -1);
+    tft.setTextColor(COLOR_TEXT, COLOR_BG);
+    tft.setTextFont(2);
+    tft.drawCentreString("Factory setup only", 120, 176, 2);
+    tft.drawCentreString("Stores min / center / max", 120, 196, 2);
   }
   }
 
@@ -7191,8 +11244,8 @@ void drawEndpointStatic() {
   tft.drawCentreString("End Points", 120, 38, 2);
   tft.drawCentreString("Move stick -/+ to pick side", 120, 58, 2);
 
-  int startY = 88;
-  int spacing = 42;
+  int startY = 78;
+  int spacing = 33;
   for (int i = 0; i < CHANNEL_COUNT; i++) {
     int y = startY + (i * spacing);
     tft.setTextColor(COLOR_TEXT);
@@ -7206,15 +11259,10 @@ void drawEndpointStatic() {
 }
 
 void drawEndpointDynamic() {
-  bool sideChanged = false;
-  for (int i = 0; i < CHANNEL_COUNT; i++) {
-    if (updateEndpointSideLatch(i)) sideChanged = true;
-  }
-  if (sideChanged) endpointNeedsRedraw = true;
   if (!endpointNeedsRedraw) return;
 
-  int startY = 88;
-  int spacing = 42;
+  int startY = 78;
+  int spacing = 33;
 
   for (int i = 0; i < CHANNEL_COUNT; i++) {
     int y = startY + (i * spacing);
@@ -7223,7 +11271,7 @@ void drawEndpointDynamic() {
     bool rowFocused = (dpadFocusVisible && focusIndex == i);
     bool highSide = isEndpointHighSideSelected(i);
 
-    tft.fillRect(90, y + 2, 132, 26, COLOR_BG);
+    tft.fillRect(84, y - 4, 146, 40, COLOR_BG);
     tft.fillRoundRect(90, y + 2, 132, 26, 8, COLOR_PANEL);
     tft.drawRoundRect(88, y, 136, 30, 10, COLOR_ACCENT);
 
@@ -7245,10 +11293,10 @@ void drawEndpointDynamic() {
 
     tft.fillRoundRect(lowBoxX, valueBoxY, lowBoxW, valueBoxH, 6, COLOR_BG);
     tft.drawRoundRect(lowBoxX, valueBoxY, lowBoxW, valueBoxH, 6,
-                      (!highSide) ? COLOR_ACCENT_HI : COLOR_ACCENT);
+                      (rowFocused && !highSide) ? COLOR_ACCENT_HI : COLOR_ACCENT);
     tft.fillRoundRect(highBoxX, valueBoxY, highBoxW, valueBoxH, 6, COLOR_BG);
     tft.drawRoundRect(highBoxX, valueBoxY, highBoxW, valueBoxH, 6,
-                      highSide ? COLOR_ACCENT_HI : COLOR_ACCENT);
+                      (rowFocused && highSide) ? COLOR_ACCENT_HI : COLOR_ACCENT);
 
     tft.setTextColor((rowFocused && !highSide) ? COLOR_ACCENT_HI : COLOR_TEXT);
     tft.drawCentreString(lowText, lowBoxX + (lowBoxW / 2), y + 9, 2);
@@ -7279,6 +11327,58 @@ void drawEndpointDynamic() {
   tft.drawCentreString(title, 120, 52, 2);
   tft.drawCentreString(line1, 120, 112, 2);
   tft.drawCentreString(line2, 120, 136, 2);
+  }
+
+  void drawStickCalibrationScreen() {
+  tft.fillScreen(COLOR_BG);
+
+  drawButtonBubble(
+    BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
+    "BACK",
+    pressedButton == BTN_BACK,
+    dpadFocusVisible && focusIndex == 1,
+    BACK_TEXT_OFFSET);
+
+  const char *actionLabel =
+    (stickCalibrationState == STICK_CAL_STATE_CAPTURE_CENTER)
+      ? "CAPTURE"
+      : "SAVE CAL";
+
+  drawButtonBubble(
+    130, BACK_BTN_Y, 100, BACK_BTN_H,
+    actionLabel,
+    pressedButton == BTN_STICK_CAL,
+    dpadFocusVisible && focusIndex == 0,
+    8);
+
+  tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
+  tft.setTextFont(2);
+  tft.setTextColor(COLOR_TEXT, COLOR_BG);
+  tft.drawCentreString("Stick Calibration", 120, 24, 2);
+
+  if (stickCalibrationState == STICK_CAL_STATE_CAPTURE_CENTER) {
+    tft.drawCentreString("Center sticks, then CAPTURE.", 120, 46, 2);
+  } else {
+    tft.drawCentreString("Sweep full travel, then SAVE.", 120, 46, 2);
+  }
+
+  int startY = 78;
+  int rowH = 40;
+  for (int channel = 0; channel < CHANNEL_COUNT; channel++) {
+    int y = startY + (channel * rowH);
+    int16_t minValue = (stickCalibrationState == STICK_CAL_STATE_SWEEP_RANGE)
+      ? stickCalibrationSweepMin[channel]
+      : adsStickMin[channel];
+    int16_t maxValue = (stickCalibrationState == STICK_CAL_STATE_SWEEP_RANGE)
+      ? stickCalibrationSweepMax[channel]
+      : adsStickMax[channel];
+
+    tft.setCursor(8, y);
+    tft.setTextColor(COLOR_TEXT, COLOR_BG);
+    tft.printf("A%d L%5d C%5d", channel, minValue, adsStickCenter[channel]);
+    tft.setCursor(8, y + 16);
+    tft.printf("   H%5d RAW%5d", maxValue, adsLastRawValues[channel]);
+  }
   }
 
   void drawExpoStatic() {
@@ -7360,7 +11460,7 @@ void drawEndpointDynamic() {
   drawGradientControl(
     RATE_VALUE_BOX_X, EXPO_VALUE_BOX_Y, RATE_VALUE_BOX_W, RATE_VALUE_BOX_H, 10,
     COLOR_PANEL, COLOR_ACCENT);
-  if (dpadFocusVisible && focusIndex == 5) {
+  if (dpadFocusVisible && focusIndex == CHANNEL_COUNT + 1) {
     tft.drawRoundRect(RATE_VALUE_BOX_X - 2, EXPO_VALUE_BOX_Y - 2,
                       RATE_VALUE_BOX_W + 4, RATE_VALUE_BOX_H + 4, 10, COLOR_ACCENT_HI);
   }
@@ -7390,7 +11490,7 @@ void drawEndpointDynamic() {
 
   const int notchValues[3] = {RATE_LOW_VALUE, RATE_NORMAL_VALUE, RATE_HIGH_VALUE};
   for (int i = 0; i < 3; i++) {
-    int notchX = RATE_SLIDER_X + ((notchValues[i] - 1) * RATE_SLIDER_W) / 99;
+    int notchX = RATE_SLIDER_X + ((notchValues[i] - 1) * (RATE_SLIDER_W - 1)) / 99;
     tft.drawFastVLine(notchX, RATE_SLIDER_Y + 2, 18, COLOR_ACCENT_HI);
   }
   }
@@ -7399,7 +11499,7 @@ void drawEndpointDynamic() {
   if (!ratesNeedsRedraw) return;
 
   int currentValue = getModelRateValue(activeModel, selectedRateChannel);
-  int sliderKnobX = RATE_SLIDER_X + ((currentValue - 1) * RATE_SLIDER_W) / 99;
+  int sliderKnobX = RATE_SLIDER_X + ((currentValue - 1) * (RATE_SLIDER_W - 1)) / 99;
   char valueText[12];
 
   drawButtonBubble(
@@ -7411,12 +11511,18 @@ void drawEndpointDynamic() {
 
   tft.fillRect(0, RATE_TAB_Y - 4, 240, RATE_TAB_H + 10, COLOR_BG);
   tft.fillRect(0, RATE_TOGGLE_Y - 4, 240, RATE_TOGGLE_H + 10, COLOR_BG);
-  tft.fillRect(RATE_SLIDER_X - 6, RATE_SLIDER_Y - 4, RATE_SLIDER_W + 12, RATE_SLIDER_H + 12, COLOR_BG);
+  tft.fillRect(
+    RATE_SLIDER_X - RATE_SLIDER_KNOB_RADIUS - 4,
+    RATE_SLIDER_Y - 6,
+    RATE_SLIDER_W + (RATE_SLIDER_KNOB_RADIUS * 2) + 8,
+    RATE_SLIDER_H + 16,
+    COLOR_BG
+  );
   tft.fillRoundRect(RATE_SLIDER_X, RATE_SLIDER_Y + 7, RATE_SLIDER_W, 8, 4, COLOR_PANEL);
   tft.drawRoundRect(RATE_SLIDER_X - 1, RATE_SLIDER_Y + 6, RATE_SLIDER_W + 2, 10, 4, COLOR_ACCENT);
   const int notchValues[3] = {RATE_LOW_VALUE, RATE_NORMAL_VALUE, RATE_HIGH_VALUE};
   for (int i = 0; i < 3; i++) {
-    int notchX = RATE_SLIDER_X + ((notchValues[i] - 1) * RATE_SLIDER_W) / 99;
+    int notchX = RATE_SLIDER_X + ((notchValues[i] - 1) * (RATE_SLIDER_W - 1)) / 99;
     tft.drawFastVLine(notchX, RATE_SLIDER_Y + 2, 18, COLOR_ACCENT_HI);
   }
   tft.fillRect(RATE_VALUE_BOX_X - 4, RATE_VALUE_BOX_Y - 4, RATE_VALUE_BOX_W + 8, RATE_VALUE_BOX_H + 8, COLOR_BG);
@@ -7447,7 +11553,7 @@ void drawEndpointDynamic() {
     drawGradientControl(
       toggleX, RATE_TOGGLE_Y, toggleW, RATE_TOGGLE_H, 8,
       isSelected ? COLOR_ACCENT : COLOR_PANEL, COLOR_ACCENT);
-    if (dpadFocusVisible && focusIndex == i + 5) {
+    if (dpadFocusVisible && focusIndex == i + CHANNEL_COUNT + 1) {
       tft.drawRoundRect(toggleX - 2, RATE_TOGGLE_Y - 2, toggleW + 4, RATE_TOGGLE_H + 4, 8, COLOR_ACCENT_HI);
     }
     tft.setTextColor(isSelected ? COLOR_BG : COLOR_TEXT);
@@ -7455,12 +11561,12 @@ void drawEndpointDynamic() {
   }
 
   tft.setTextColor(COLOR_TEXT);
-  if (dpadFocusVisible && focusIndex == 8) {
+  if (dpadFocusVisible && focusIndex == CHANNEL_COUNT + 4) {
     tft.drawRoundRect(RATE_SLIDER_X - 4, RATE_SLIDER_Y - 2, RATE_SLIDER_W + 8, RATE_SLIDER_H + 8, 8, COLOR_ACCENT_HI);
   }
 
-  tft.fillCircle(sliderKnobX, RATE_SLIDER_Y + 11, 11, COLOR_ACCENT);
-  tft.drawCircle(sliderKnobX, RATE_SLIDER_Y + 11, 11, COLOR_ACCENT_HI);
+  tft.fillCircle(sliderKnobX, RATE_SLIDER_Y + 11, RATE_SLIDER_KNOB_RADIUS, COLOR_ACCENT);
+  tft.drawCircle(sliderKnobX, RATE_SLIDER_Y + 11, RATE_SLIDER_KNOB_RADIUS, COLOR_ACCENT_HI);
   tft.fillCircle(sliderKnobX, RATE_SLIDER_Y + 11, 4, COLOR_BG);
 
   drawGradientControl(
@@ -7551,8 +11657,7 @@ void composeElrsStatusText(char *statusText, size_t statusTextSize, uint16_t *st
     snprintf(statusText, statusTextSize, "ELRS link active LQ %u", (unsigned int)elrsUplinkLq);
     resolvedColor = COLOR_SIG;
   } else if (haveModuleFrames || elrsModulePresent) {
-    snprintf(statusText, statusTextSize, "ELRS module rx baud %lu",
-             (unsigned long)elrsActiveBaud);
+    snprintf(statusText, statusTextSize, "ELRS module online");
     resolvedColor = COLOR_ACCENT_HI;
   } else if (haveRawRx) {
     snprintf(statusText, statusTextSize, "ELRS raw uart rx only");
@@ -7751,6 +11856,65 @@ void drawOtaSettingsDynamic() {
   otaSettingsNeedsRedraw = false;
 }
 
+void drawElrsPowerControl(bool selectedSlider, bool selectedValue, bool forceRedraw) {
+  static int lastDrawnPower = -1;
+  static bool lastSliderSelected = false;
+  static bool lastValueSelected = false;
+  static bool lastFieldKnown = false;
+  static bool lastNumpadActive = false;
+
+  bool numpadActive = (mixNumpadActive && mixNumpadTarget == NUMPAD_TARGET_ELRS_TX_POWER);
+  if (!forceRedraw &&
+      lastDrawnPower == (int)elrsTxPowerMw &&
+      lastSliderSelected == selectedSlider &&
+      lastValueSelected == selectedValue &&
+      lastFieldKnown == elrsTxPowerFieldKnown &&
+      lastNumpadActive == numpadActive) {
+    return;
+  }
+
+  tft.fillRect(8, 206, 224, 70, COLOR_BG);
+
+  tft.setTextColor(COLOR_TEXT, COLOR_BG);
+  tft.drawCentreString("TX Power", 120, 206, 2);
+
+  tft.fillRoundRect(ELRS_POWER_SLIDER_X, ELRS_POWER_SLIDER_Y + 5, ELRS_POWER_SLIDER_W, 4, 2, COLOR_PANEL);
+  tft.drawRoundRect(ELRS_POWER_SLIDER_X - 1, ELRS_POWER_SLIDER_Y + 4, ELRS_POWER_SLIDER_W + 2, 6, 2, COLOR_ACCENT);
+  if (selectedSlider) {
+    tft.drawRoundRect(ELRS_POWER_SLIDER_X - 3, ELRS_POWER_SLIDER_Y + 2, ELRS_POWER_SLIDER_W + 6, 10, 4, COLOR_ACCENT_HI);
+  }
+
+  int clampedMw = constrain((int)elrsTxPowerMw, ELRS_TX_POWER_MIN_MW, ELRS_TX_POWER_MAX_MW);
+  int knobX = ELRS_POWER_SLIDER_X + (clampedMw * (ELRS_POWER_SLIDER_W - 1)) / ELRS_TX_POWER_MAX_MW;
+  tft.fillCircle(knobX, ELRS_POWER_SLIDER_Y + 7, ELRS_POWER_SLIDER_KNOB_RADIUS, COLOR_ACCENT);
+  tft.drawCircle(knobX, ELRS_POWER_SLIDER_Y + 7, ELRS_POWER_SLIDER_KNOB_RADIUS, COLOR_ACCENT_HI);
+  tft.fillCircle(knobX, ELRS_POWER_SLIDER_Y + 7, 3, COLOR_BG);
+
+  tft.setTextColor(fadeColor(COLOR_TEXT, 0.7f), COLOR_BG);
+  tft.drawString("0", ELRS_POWER_SLIDER_X - 2, ELRS_POWER_SLIDER_Y + 16, 2);
+  tft.drawRightString("150", ELRS_POWER_SLIDER_X + ELRS_POWER_SLIDER_W + 2, ELRS_POWER_SLIDER_Y + 16, 2);
+
+  drawGradientControl(
+    ELRS_POWER_VALUE_BOX_X, ELRS_POWER_VALUE_BOX_Y,
+    ELRS_POWER_VALUE_BOX_W, ELRS_POWER_VALUE_BOX_H, 8,
+    COLOR_PANEL, COLOR_ACCENT);
+  if (selectedValue || numpadActive) {
+    tft.drawRoundRect(ELRS_POWER_VALUE_BOX_X - 2, ELRS_POWER_VALUE_BOX_Y - 2,
+                      ELRS_POWER_VALUE_BOX_W + 4, ELRS_POWER_VALUE_BOX_H + 4, 8, COLOR_ACCENT_HI);
+  }
+
+  char powerText[24];
+  snprintf(powerText, sizeof(powerText), "%u mW", (unsigned int)clampedMw);
+  tft.setTextColor(elrsTxPowerFieldKnown ? COLOR_ACCENT_HI : COLOR_TEXT, COLOR_PANEL);
+  tft.drawCentreString(powerText, ELRS_POWER_VALUE_BOX_X + (ELRS_POWER_VALUE_BOX_W / 2), ELRS_POWER_VALUE_BOX_Y + 8, 2);
+
+  lastDrawnPower = (int)elrsTxPowerMw;
+  lastSliderSelected = selectedSlider;
+  lastValueSelected = selectedValue;
+  lastFieldKnown = elrsTxPowerFieldKnown;
+  lastNumpadActive = numpadActive;
+}
+
 void drawElrsScreen() {
   tft.fillScreen(COLOR_BG);
 
@@ -7773,12 +11937,24 @@ void drawElrsScreen() {
   tft.setTextColor(statusColor, COLOR_BG);
   tft.drawString(statusText, 16, 84, 2);
 
+  drawButtonBubble(ELRS_RX_CONFIG_BTN_X, ELRS_RX_CONFIG_BTN_Y,
+                   ELRS_RX_CONFIG_BTN_W, ELRS_RX_CONFIG_BTN_H,
+                   "RECEIVER CONFIG",
+                   pressedButton == BTN_ELRS_RX_CONFIG,
+                   dpadFocusVisible && selectedButton == BTN_ELRS_RX_CONFIG,
+                   -1);
+
   drawButtonBubble(ELRS_BIND_BTN_X, ELRS_BIND_BTN_Y,
                    ELRS_BIND_BTN_W, ELRS_BIND_BTN_H,
                    "BIND",
                    pressedButton == BTN_ELRS_BIND,
                    dpadFocusVisible && selectedButton == BTN_ELRS_BIND,
                    -1);
+  drawElrsPowerControl(
+    dpadFocusVisible && selectedButton == BTN_ELRS_TX_POWER_SLIDER,
+    dpadFocusVisible && selectedButton == BTN_ELRS_TX_POWER_VALUE,
+    true
+  );
 }
 
 void drawElrsDynamic() {
@@ -7796,6 +11972,257 @@ void drawElrsDynamic() {
     strncpy(lastStatus, statusText, sizeof(lastStatus) - 1);
     lastStatus[sizeof(lastStatus) - 1] = '\0';
     lastStatusColor = statusColor;
+  }
+
+  drawButtonBubble(ELRS_RX_CONFIG_BTN_X, ELRS_RX_CONFIG_BTN_Y,
+                   ELRS_RX_CONFIG_BTN_W, ELRS_RX_CONFIG_BTN_H,
+                   "RECEIVER CONFIG",
+                   pressedButton == BTN_ELRS_RX_CONFIG,
+                   dpadFocusVisible && selectedButton == BTN_ELRS_RX_CONFIG,
+                   -1);
+
+  drawElrsPowerControl(
+    dpadFocusVisible && selectedButton == BTN_ELRS_TX_POWER_SLIDER,
+    dpadFocusVisible && selectedButton == BTN_ELRS_TX_POWER_VALUE,
+    false
+  );
+}
+
+void drawElrsReceiverConfigScreen() {
+  tft.fillScreen(COLOR_BG);
+  elrsReceiverConfigStaticDirty = true;
+
+  drawButtonBubble(
+    BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
+    "BACK",
+    pressedButton == BTN_BACK,
+    dpadFocusVisible && selectedButton == BTN_BACK,
+    BACK_TEXT_OFFSET);
+
+  tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
+  tft.setTextFont(2);
+  tft.setTextColor(COLOR_TEXT, COLOR_BG);
+  tft.drawCentreString("Receiver Config", 120, 38, 2);
+}
+
+void drawElrsReceiverConfigDynamic() {
+  static bool cacheValid = false;
+  static ElrsReceiverConfigState lastState = RX_CONFIG_IDLE;
+  static char lastStatus[72] = "";
+  static char lastDetail[96] = "";
+  static char lastEndpoint[24] = "";
+  static char lastLuaName[18] = "";
+  static unsigned long lastWaitSeconds = 0xFFFFFFFFUL;
+  static int lastModelId = -999;
+  static bool lastModelFocus = false;
+  static int lastPwmCount = -1;
+  static int lastPwmFailsafe[4] = {-999, -999, -999, -999};
+  static bool lastPwmFocus[4] = {false, false, false, false};
+  static bool lastSaveDirty = false;
+  static bool lastSavePressed = false;
+  static bool lastSaveFocus = false;
+  static bool lastBackPressed = false;
+  static bool lastBackFocus = false;
+
+  uint16_t statusColor = COLOR_TEXT;
+  if (elrsReceiverConfigState == RX_CONFIG_CONNECTING ||
+      elrsReceiverConfigState == RX_CONFIG_FETCHING) {
+    statusColor = COLOR_ACCENT_HI;
+  } else if (elrsReceiverConfigState == RX_CONFIG_DONE) {
+    statusColor = COLOR_SIG;
+  } else if (elrsReceiverConfigState == RX_CONFIG_FAILED) {
+    statusColor = TFT_ORANGE;
+  }
+
+  bool stateChanged = !cacheValid ||
+                      elrsReceiverConfigStaticDirty ||
+                      lastState != elrsReceiverConfigState;
+
+  if (stateChanged) {
+    tft.fillRect(10, 68, 220, 204, COLOR_BG);
+
+    lastStatus[0] = '\0';
+    lastDetail[0] = '\0';
+    lastEndpoint[0] = '\0';
+    lastLuaName[0] = '\0';
+    lastWaitSeconds = 0xFFFFFFFFUL;
+    lastModelId = -999;
+    lastModelFocus = false;
+    lastPwmCount = -1;
+    for (int i = 0; i < 4; i++) {
+      lastPwmFailsafe[i] = -999;
+      lastPwmFocus[i] = false;
+    }
+    lastSaveDirty = !elrsReceiverConfigDirty;
+    lastSavePressed = pressedButton == BTN_ELRS_RX_SAVE;
+    lastSaveFocus = dpadFocusVisible && selectedButton == BTN_ELRS_RX_SAVE;
+
+    tft.setTextFont(2);
+    tft.setTextColor(fadeColor(COLOR_TEXT, 0.72f), COLOR_BG);
+    if (elrsReceiverConfigState != RX_CONFIG_DONE) {
+      tft.drawString("Default: ExpressLRS RX", 16, 166, 2);
+      tft.drawString("Pass: expresslrs", 16, 188, 2);
+      tft.drawString("Serial prints page/API probe", 16, 222, 2);
+    } else {
+      tft.setTextColor(COLOR_TEXT, COLOR_BG);
+      tft.drawString("Model ID", 16, ELRS_RX_MODEL_ID_Y + 5, 2);
+      tft.drawString("PWM failsafe us", 16, 172, 2);
+
+      int maxRows = min((int)elrsReceiverPwmCount, 4);
+      for (int i = 0; i < maxRows; i++) {
+        bool rightCol = (i & 1);
+        int rowY = (i < 2) ? ELRS_RX_PWM_ROW1_Y : ELRS_RX_PWM_ROW2_Y;
+        int labelX = rightCol ? ELRS_RX_PWM_RIGHT_LABEL_X : ELRS_RX_PWM_LEFT_LABEL_X;
+        char line[8];
+        snprintf(line, sizeof(line), "O%d", i + 1);
+        tft.drawString(line, labelX, rowY + 5, 2);
+      }
+    }
+
+    lastState = elrsReceiverConfigState;
+    elrsReceiverConfigStaticDirty = false;
+    cacheValid = true;
+  }
+
+  bool backPressed = pressedButton == BTN_BACK;
+  bool backFocus = dpadFocusVisible && selectedButton == BTN_BACK;
+  if (stateChanged || backPressed != lastBackPressed || backFocus != lastBackFocus) {
+    drawButtonBubble(
+      BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
+      "BACK",
+      backPressed,
+      backFocus,
+      BACK_TEXT_OFFSET);
+    lastBackPressed = backPressed;
+    lastBackFocus = backFocus;
+  }
+
+  if (stateChanged ||
+      strcmp(lastStatus, elrsReceiverConfigStatus) != 0) {
+    tft.fillRect(14, 70, 214, 22, COLOR_BG);
+    tft.setTextFont(2);
+    tft.setTextColor(statusColor, COLOR_BG);
+    tft.drawString(elrsReceiverConfigStatus, 16, 72, 2);
+    strncpy(lastStatus, elrsReceiverConfigStatus, sizeof(lastStatus) - 1);
+    lastStatus[sizeof(lastStatus) - 1] = '\0';
+  }
+
+  if (stateChanged ||
+      strcmp(lastDetail, elrsReceiverConfigDetail) != 0) {
+    tft.fillRect(14, 96, 214, 22, COLOR_BG);
+    tft.setTextFont(2);
+    tft.setTextColor(COLOR_TEXT, COLOR_BG);
+    tft.drawString(elrsReceiverConfigDetail, 16, 98, 2);
+    strncpy(lastDetail, elrsReceiverConfigDetail, sizeof(lastDetail) - 1);
+    lastDetail[sizeof(lastDetail) - 1] = '\0';
+  }
+
+  if (elrsReceiverConfigState == RX_CONFIG_DONE) {
+    char line[64];
+
+    if (stateChanged || strcmp(lastLuaName, elrsReceiverLuaName) != 0) {
+      tft.fillRect(14, 120, 214, 20, COLOR_BG);
+      tft.setTextColor(COLOR_TEXT, COLOR_BG);
+      tft.drawString(elrsReceiverLuaName, 16, 122, 2);
+      strncpy(lastLuaName, elrsReceiverLuaName, sizeof(lastLuaName) - 1);
+      lastLuaName[sizeof(lastLuaName) - 1] = '\0';
+    }
+
+    bool modelFocus = dpadFocusVisible && selectedButton == BTN_ELRS_RX_MODEL_ID;
+    if (stateChanged ||
+        lastModelId != elrsReceiverEditModelId ||
+        lastModelFocus != modelFocus) {
+      tft.fillRect(ELRS_RX_FIELD_X - 3, ELRS_RX_MODEL_ID_Y - 3,
+                   ELRS_RX_FIELD_W + 6, ELRS_RX_FIELD_H + 6, COLOR_BG);
+      drawGradientControl(ELRS_RX_FIELD_X, ELRS_RX_MODEL_ID_Y,
+                          ELRS_RX_FIELD_W, ELRS_RX_FIELD_H, 7,
+                          COLOR_PANEL, COLOR_ACCENT);
+      if (modelFocus) {
+      tft.drawRoundRect(ELRS_RX_FIELD_X - 2, ELRS_RX_MODEL_ID_Y - 2,
+                        ELRS_RX_FIELD_W + 4, ELRS_RX_FIELD_H + 4, 7, COLOR_ACCENT_HI);
+      }
+      snprintf(line, sizeof(line), "%d", constrain(elrsReceiverEditModelId, 0, 255));
+      tft.setTextColor(elrsReceiverEditModelId != elrsReceiverModelId ? COLOR_ACCENT_HI : COLOR_TEXT, COLOR_PANEL);
+      tft.drawCentreString(line, ELRS_RX_FIELD_X + (ELRS_RX_FIELD_W / 2), ELRS_RX_MODEL_ID_Y + 5, 2);
+      lastModelId = elrsReceiverEditModelId;
+      lastModelFocus = modelFocus;
+    }
+
+    int maxRows = min((int)elrsReceiverPwmCount, 4);
+    if (stateChanged || lastPwmCount != maxRows) {
+      lastPwmCount = maxRows;
+      for (int i = 0; i < 4; i++) {
+        lastPwmFailsafe[i] = -999;
+        lastPwmFocus[i] = false;
+      }
+    }
+
+    for (int i = 0; i < maxRows; i++) {
+      bool rightCol = (i & 1);
+      int rowY = (i < 2) ? ELRS_RX_PWM_ROW1_Y : ELRS_RX_PWM_ROW2_Y;
+      int fieldX = rightCol ? ELRS_RX_PWM_RIGHT_FIELD_X : ELRS_RX_PWM_LEFT_FIELD_X;
+      ButtonID button = getElrsReceiverPwmButton(i);
+      bool pwmFocus = dpadFocusVisible && selectedButton == button;
+
+      if (stateChanged ||
+          lastPwmFailsafe[i] != elrsReceiverPwmEditFailsafeUs[i] ||
+          lastPwmFocus[i] != pwmFocus) {
+        tft.fillRect(fieldX - 3, rowY - 3,
+                     ELRS_RX_PWM_FIELD_W + 6, ELRS_RX_FIELD_H + 6, COLOR_BG);
+        drawGradientControl(fieldX, rowY,
+                            ELRS_RX_PWM_FIELD_W, ELRS_RX_FIELD_H, 7,
+                            COLOR_PANEL, COLOR_ACCENT);
+        if (pwmFocus) {
+          tft.drawRoundRect(fieldX - 2, rowY - 2,
+                            ELRS_RX_PWM_FIELD_W + 4, ELRS_RX_FIELD_H + 4, 7, COLOR_ACCENT_HI);
+        }
+        snprintf(line, sizeof(line), "%d", elrsReceiverPwmEditFailsafeUs[i]);
+        tft.setTextColor(isElrsReceiverPwmConfigEdited(i)
+                           ? COLOR_ACCENT_HI
+                           : COLOR_TEXT,
+                         COLOR_PANEL);
+        tft.drawCentreString(line, fieldX + (ELRS_RX_PWM_FIELD_W / 2), rowY + 5, 2);
+        lastPwmFailsafe[i] = elrsReceiverPwmEditFailsafeUs[i];
+        lastPwmFocus[i] = pwmFocus;
+      }
+    }
+
+    bool savePressed = pressedButton == BTN_ELRS_RX_SAVE;
+    bool saveFocus = dpadFocusVisible && selectedButton == BTN_ELRS_RX_SAVE;
+    if (stateChanged ||
+        lastSaveDirty != elrsReceiverConfigDirty ||
+        lastSavePressed != savePressed ||
+        lastSaveFocus != saveFocus) {
+      drawButtonBubble(ELRS_RX_SAVE_X, ELRS_RX_SAVE_Y,
+                       ELRS_RX_SAVE_W, ELRS_RX_SAVE_H,
+                       elrsReceiverConfigDirty ? "SAVE*" : "SAVE",
+                       savePressed,
+                       saveFocus,
+                       -1);
+      lastSaveDirty = elrsReceiverConfigDirty;
+      lastSavePressed = savePressed;
+      lastSaveFocus = saveFocus;
+    }
+  } else if (elrsReceiverConfigState == RX_CONFIG_CONNECTING) {
+    unsigned long elapsed = (millis() - elrsReceiverConfigStartTime) / 1000UL;
+    if (stateChanged || elapsed != lastWaitSeconds) {
+      char waitText[48];
+      snprintf(waitText, sizeof(waitText), "Waiting %lus for RX AP", elapsed);
+      tft.fillRect(14, 120, 214, 22, COLOR_BG);
+      tft.setTextColor(COLOR_TEXT, COLOR_BG);
+      tft.drawString(waitText, 16, 122, 2);
+      lastWaitSeconds = elapsed;
+    }
+  } else if (elrsReceiverConfigLastEndpoint[0] != '\0') {
+    if (stateChanged || strcmp(lastEndpoint, elrsReceiverConfigLastEndpoint) != 0) {
+      char endpointText[48];
+      snprintf(endpointText, sizeof(endpointText), "Endpoint: %s", elrsReceiverConfigLastEndpoint);
+      tft.fillRect(14, 120, 214, 22, COLOR_BG);
+      tft.setTextColor(COLOR_TEXT, COLOR_BG);
+      tft.drawString(endpointText, 16, 122, 2);
+      strncpy(lastEndpoint, elrsReceiverConfigLastEndpoint, sizeof(lastEndpoint) - 1);
+      lastEndpoint[sizeof(lastEndpoint) - 1] = '\0';
+    }
   }
 }
 
@@ -7899,6 +12326,79 @@ void drawTankModeScreen() {
   tft.drawLine(72, 213, 72, 205, singleColor);
   tft.drawLine(47, 192, 55, 192, singleColor);
   tft.drawLine(89, 192, 97, 192, singleColor);
+
+  char mapLine[40];
+  snprintf(mapLine, sizeof(mapLine), "L:CH%u  R:CH%u",
+           (unsigned)(getModelTankLeftEscChannel(activeModel) + 1),
+           (unsigned)(getModelTankRightEscChannel(activeModel) + 1));
+  tft.setTextFont(2);
+  tft.setTextColor(COLOR_TEXT);
+  tft.drawCentreString(mapLine, 120, 246, 2);
+}
+
+void drawEscChannelSetupScreen() {
+  tft.fillScreen(COLOR_BG);
+
+  drawButtonBubble(
+    BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
+    "BACK",
+    pressedButton == BTN_BACK,
+    dpadFocusVisible && selectedButton == BTN_BACK,
+    BACK_TEXT_OFFSET);
+
+  tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
+
+  tft.setTextFont(2);
+  tft.setTextColor(COLOR_TEXT);
+  bool carSetup = (getModelDriveType(activeModel) == DRIVE_CAR);
+  const char* setupTitle = carSetup ? "Car Channel Setup" : "ESC Channel Setup";
+  const char* firstOutputLabel = carSetup ? "Steering Servo" : "Left ESC";
+  const char* secondOutputLabel = carSetup ? "Throttle ESC" : "Right ESC";
+  char prompt[40];
+  snprintf(prompt, sizeof(prompt), "Select %s Channel",
+           (escSetupStep == 0) ? firstOutputLabel : secondOutputLabel);
+  tft.drawCentreString(setupTitle, 120, 34, 2);
+  tft.drawCentreString(prompt, 120, 56, 2);
+
+  const int bx[4] = {20, 130, 20, 130};
+  const int by[4] = {86, 86, 158, 158};
+  const ButtonID ids[4] = {BTN_ESC_CH1, BTN_ESC_CH2, BTN_ESC_CH3, BTN_ESC_CH4};
+  char label[8];
+  uint8_t currentLeft = getModelTankLeftEscChannel(activeModel);
+  uint8_t currentRight = getModelTankRightEscChannel(activeModel);
+
+  for (int i = 0; i < 4; i++) {
+    snprintf(label, sizeof(label), "CH%d", i + 1);
+    bool selected =
+      (escSetupStep == 0 && escSetupPendingLeftChannel == (uint8_t)i) ||
+      (escSetupStep == 1 && currentRight == (uint8_t)i) ||
+      (escSetupStep == 0 && currentLeft == (uint8_t)i);
+    bool blocked = (escSetupStep == 1 && escSetupPendingLeftChannel == (uint8_t)i);
+    bool focused = dpadFocusVisible && selectedButton == ids[i];
+    drawButtonBubble(
+      bx[i], by[i], 90, 54, label,
+      pressedButton == ids[i],
+      (!blocked && selected) || focused,
+      44);
+    if (blocked) {
+      tft.setTextFont(1);
+      tft.setTextColor(COLOR_ACCENT_HI);
+      tft.drawCentreString("USED", bx[i] + 45, by[i] + 40, 1);
+    }
+  }
+
+  char mapLine[48];
+  if (escSetupStep == 0) {
+    snprintf(mapLine, sizeof(mapLine), carSetup ? "Servo:CH%u ESC:CH%u" : "Current L:CH%u R:CH%u",
+             (unsigned)(currentLeft + 1), (unsigned)(currentRight + 1));
+  } else {
+    snprintf(mapLine, sizeof(mapLine), "%s -> CH%u",
+             firstOutputLabel,
+             (unsigned)(escSetupPendingLeftChannel + 1));
+  }
+  tft.setTextFont(2);
+  tft.setTextColor(COLOR_TEXT);
+  tft.drawCentreString(mapLine, 120, 246, 2);
 }
 
 void drawDriveTypeOption(int x, int y, int w, int h, const char* label,
@@ -8025,26 +12525,35 @@ void openMixNumpad(NumpadTarget target) {
   mixNumpadEditingRate = (target == NUMPAD_TARGET_MIX_RATE);
 
   if (target == NUMPAD_TARGET_MIX_RATE || target == NUMPAD_TARGET_MIX_OFFSET) {
-    MixData &mix = models[activeModel].mixes[selectedMixIndex];
-    mixNumpadBuffer = String((target == NUMPAD_TARGET_MIX_RATE) ? mix.rate : mix.offset);
     mixingNeedsRedraw = true;
   }
   else if (target == NUMPAD_TARGET_RATE_VALUE) {
-    mixNumpadBuffer = String(getModelRateValue(activeModel, selectedRateChannel));
     ratesNeedsRedraw = true;
   }
   else if (target == NUMPAD_TARGET_ENDPOINT_VALUE) {
-    int channel = constrain(endpointNumpadChannel, 0, CHANNEL_COUNT - 1);
-    mixNumpadBuffer = String(endpointNumpadHighSide
-                               ? getModelEndpointHighValue(activeModel, channel)
-                               : getModelEndpointLowValue(activeModel, channel));
     endpointNeedsRedraw = true;
   }
+  else if (target == NUMPAD_TARGET_ELRS_TX_POWER) {
+    uiNeedsRedraw = true;
+  }
+  else if (target == NUMPAD_TARGET_ELRS_RX_MODEL_ID) {
+    uiNeedsRedraw = true;
+  }
+  else if (target == NUMPAD_TARGET_ELRS_RX_FAILSAFE) {
+    uiNeedsRedraw = true;
+  }
+  else if (target == NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE) {
+    uiNeedsRedraw = true;
+  }
+  else if (target == NUMPAD_TARGET_TIMER_VALUE) {
+    timerNeedsRedraw = true;
+    uiNeedsRedraw = true;
+  }
   else {
-    mixNumpadBuffer = String(getModelExpoValue(activeModel, selectedExpoChannel));
     expoNeedsRedraw = true;
   }
 
+  mixNumpadBuffer = "";
   mixNumpadActive = true;
   mixNumpadNeedsRedraw = true;
   mixNumpadCursorRow = 0;
@@ -8052,15 +12561,36 @@ void openMixNumpad(NumpadTarget target) {
   uiNeedsRedraw = true;
 }
 
+void openElrsReceiverPwmNumpad(int pwmIndex) {
+  if (elrsReceiverConfigState != RX_CONFIG_DONE) return;
+  if (pwmIndex < 0 || pwmIndex >= elrsReceiverPwmCount) return;
+
+  elrsReceiverEditPwmIndex = pwmIndex;
+  elrsReceiverPwmNumpadArmed = true;
+  elrsReceiverPwmNumpadArmedIndex = pwmIndex;
+  elrsReceiverPwmNumpadOriginalUs = constrain(elrsReceiverPwmEditFailsafeUs[pwmIndex],
+                                              ELRS_RX_PWM_FAILSAFE_MIN_US,
+                                              ELRS_RX_PWM_FAILSAFE_MAX_US);
+  Serial.printf("ELRS RX PWM edit armed out%d original=%d gen=%lu\n",
+                pwmIndex + 1,
+                elrsReceiverPwmNumpadOriginalUs,
+                (unsigned long)elrsReceiverConfigGeneration);
+  openMixNumpad(NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE);
+}
+
 void closeMixNumpad(bool commitValue) {
   if (!mixNumpadActive) return;
 
   if (commitValue) {
+    if (mixNumpadBuffer.length() == 0 || mixNumpadBuffer == "-") {
+      commitValue = false;
+    }
+  }
+
+  if (commitValue) {
     int parsedValue = 0;
 
-    if (mixNumpadBuffer.length() > 0 && mixNumpadBuffer != "-") {
-      parsedValue = mixNumpadBuffer.toInt();
-    }
+    parsedValue = mixNumpadBuffer.toInt();
 
     if (mixNumpadTarget == NUMPAD_TARGET_MIX_RATE || mixNumpadTarget == NUMPAD_TARGET_MIX_OFFSET) {
       parsedValue = constrain(parsedValue, -100, 100);
@@ -8091,8 +12621,73 @@ void closeMixNumpad(bool commitValue) {
       saveEndpointValues();
       endpointNeedsRedraw = true;
     }
+    else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_TX_POWER) {
+      parsedValue = constrain(parsedValue, ELRS_TX_POWER_MIN_MW, ELRS_TX_POWER_MAX_MW);
+      sendElrsTxPowerWrite((uint16_t)parsedValue);
+      uiNeedsRedraw = true;
+    }
+    else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_MODEL_ID) {
+      elrsReceiverEditModelId = constrain(parsedValue, 0, 255);
+      elrsReceiverSaveArmed = true;
+      elrsReceiverConfigDirty = isElrsReceiverConfigEdited();
+      uiNeedsRedraw = true;
+    }
+    else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_FAILSAFE) {
+      elrsReceiverEditFailsafe = constrain(parsedValue, 0, 255);
+      elrsReceiverSaveArmed = true;
+      elrsReceiverConfigDirty = isElrsReceiverConfigEdited();
+      uiNeedsRedraw = true;
+    }
+    else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE) {
+      int pwmIndex = constrain(elrsReceiverEditPwmIndex, 0, max(0, (int)elrsReceiverPwmCount - 1));
+      int nextFailsafeUs = constrain(parsedValue,
+                                     ELRS_RX_PWM_FAILSAFE_MIN_US,
+                                     ELRS_RX_PWM_FAILSAFE_MAX_US);
+      bool armedForThisField = elrsReceiverPwmNumpadArmed &&
+                               pwmIndex == elrsReceiverPwmNumpadArmedIndex &&
+                               elrsReceiverConfigState == RX_CONFIG_DONE;
+
+      if (armedForThisField && nextFailsafeUs != elrsReceiverPwmNumpadOriginalUs) {
+        elrsReceiverPwmEditFailsafeUs[pwmIndex] = nextFailsafeUs;
+        elrsReceiverPwmEditTouched[pwmIndex] = true;
+        elrsReceiverPwmEditGeneration[pwmIndex] = elrsReceiverConfigGeneration;
+        elrsReceiverPwmEditRaw[pwmIndex] =
+          encodeElrsPwmFailsafeUs(elrsReceiverPwmRaw[pwmIndex], elrsReceiverPwmEditFailsafeUs[pwmIndex]);
+        elrsReceiverSaveArmed = true;
+        Serial.printf("ELRS RX PWM edit committed out%d value=%d gen=%lu\n",
+                      pwmIndex + 1,
+                      nextFailsafeUs,
+                      (unsigned long)elrsReceiverConfigGeneration);
+      } else {
+        Serial.printf("ELRS RX PWM edit ignored armed=%d index=%d/%d value=%d original=%d state=%d\n",
+                      armedForThisField ? 1 : 0,
+                      pwmIndex,
+                      elrsReceiverPwmNumpadArmedIndex,
+                      nextFailsafeUs,
+                      elrsReceiverPwmNumpadOriginalUs,
+                      (int)elrsReceiverConfigState);
+      }
+      elrsReceiverConfigDirty = isElrsReceiverConfigEdited();
+      uiNeedsRedraw = true;
+    }
+    else if (mixNumpadTarget == NUMPAD_TARGET_TIMER_VALUE) {
+      parsedValue = constrain(parsedValue, 0, 9959);
+      if ((parsedValue % 100) > 59) {
+        parsedValue = (parsedValue / 100) * 100 + 59;
+      }
+      if (parsedValue == 0) {
+        timerInputBuffer = "";
+        timerTargetSeconds = 0;
+      } else {
+        timerInputBuffer = String(parsedValue);
+        timerTargetSeconds = getTimerInputSeconds();
+      }
+      resetTimerRuntime();
+      timerNeedsRedraw = true;
+      uiNeedsRedraw = true;
+    }
     else {
-      parsedValue = constrain(parsedValue, 0, 100);
+      parsedValue = constrain(parsedValue, -100, 100);
       setModelExpoValue(activeModel, selectedExpoChannel, parsedValue);
       saveExpoValues();
       expoNeedsRedraw = true;
@@ -8100,6 +12695,11 @@ void closeMixNumpad(bool commitValue) {
   }
 
   mixNumpadActive = false;
+  if (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE) {
+    elrsReceiverPwmNumpadArmed = false;
+    elrsReceiverPwmNumpadArmedIndex = -1;
+    elrsReceiverPwmNumpadOriginalUs = 0;
+  }
   endpointNumpadChannel = -1;
   mixNumpadNeedsRedraw = false;
   fullRedraw = true;
@@ -8112,6 +12712,28 @@ int mapTouch(int val, int in_min, int in_max, int out_min, int out_max) {
 }
 bool isInside(int x, int y, int bx, int by, int bw, int bh) {
   return (x > bx && x < bx + bw && y > by && y < by + bh);
+}
+
+int cycleFocusIndex(int current, int count, bool forward) {
+  if (count <= 0) return 0;
+  if (current < 0 || current >= count) return forward ? 0 : count - 1;
+  return forward ? ((current + 1) % count) : ((current + count - 1) % count);
+}
+
+ButtonID cycleButtonOrder(ButtonID current, const ButtonID *order, int count, bool forward) {
+  if (order == nullptr || count <= 0) return BTN_NONE;
+
+  int index = -1;
+  for (int i = 0; i < count; i++) {
+    if (order[i] == current) {
+      index = i;
+      break;
+    }
+  }
+
+  if (index < 0) return forward ? order[0] : order[count - 1];
+  int next = forward ? ((index + 1) % count) : ((index + count - 1) % count);
+  return order[next];
 }
 
 void setScreen(Screen screen) {
@@ -8132,6 +12754,18 @@ void setScreen(Screen screen) {
       !otaUpdateInProgress) {
     stopOtaMode();
   }
+  if (previousScreen == SCREEN_ELRS_RX_CONFIG &&
+      screen != SCREEN_ELRS_RX_CONFIG) {
+    stopElrsReceiverConfig();
+  }
+  if (previousScreen == SCREEN_MODEL_NAME &&
+      screen != SCREEN_MODEL_NAME &&
+      keyboardActive) {
+    closeKeyboard();
+    inputBoxSelected = false;
+    kbPressedRow = -1;
+    kbPressedCol = -1;
+  }
 
   currentScreen = screen;
   lastScreen = screen;
@@ -8144,9 +12778,21 @@ void setScreen(Screen screen) {
   }
   else if (screen == SCREEN_DISPLAY_SETTINGS) {
     selectedButton = BTN_DISPLAY_BRIGHTNESS_DEC;
+    displaySettingsNeedsRedraw = true;
+  }
+  else if (screen == SCREEN_TIMER) {
+    selectedButton = BTN_TIMER_START_PAUSE;
+    timerStaticNeedsRedraw = true;
+    timerNeedsRedraw = true;
+    lastTimerDisplayText[0] = '\0';
   }
   else if (screen == SCREEN_CONTROLLER_SETTINGS) {
-    selectedButton = (controllerSettingsPage == 0) ? BTN_TRIM : BTN_EXPO;
+    selectedButton = getControllerSettingsDefaultButtonForPage(controllerSettingsPage);
+  }
+  else if (screen == SCREEN_STICK_CALIBRATION) {
+    focusIndex = 0;
+    stickCalibrationState = STICK_CAL_STATE_CAPTURE_CENTER;
+    stickCalibrationNeedsRedraw = true;
   }
   else if (screen == SCREEN_ENDPOINTS) {
     focusIndex = 0;
@@ -8176,8 +12822,15 @@ void setScreen(Screen screen) {
   else if (screen == SCREEN_ELRS) {
     selectedButton = BTN_ELRS_BIND;
   }
+  else if (screen == SCREEN_ELRS_RX_CONFIG) {
+    selectedButton = BTN_ELRS_RX_MODEL_ID;
+  }
   else if (screen == SCREEN_MODEL_SETTINGS) {
     selectedButton = (modelSettingsPage == 0) ? BTN_MODEL_NAME : BTN_REVERSE;
+  }
+  else if (screen == SCREEN_MIXING) {
+    setSelectedMixPage(selectedMixPage);
+    mixingNeedsRedraw = true;
   }
   else if (screen == SCREEN_REVERSE) {
     reverseReturnScreen = (previousScreen == SCREEN_MODEL_SETTINGS)
@@ -8194,6 +12847,9 @@ void setScreen(Screen screen) {
     selectedButton = (getModelTankMode(activeModel) == TANK_MODE_RIGHT_STICK)
       ? BTN_TANK_SINGLE
       : BTN_TANK_DUAL;
+  }
+  else if (screen == SCREEN_ESC_CHANNEL_SETUP) {
+    selectedButton = BTN_ESC_CH1;
   }
   else if (screen == SCREEN_SPACE_GAME) {
     resetSpaceGame();
@@ -8223,6 +12879,121 @@ void queueScreenButton(ButtonID button, Screen screen) {
   uiNeedsRedraw = true;
 }
 
+bool isBackHoldEligibleScreen(Screen screen) {
+  return screen != SCREEN_SPLASH &&
+         screen != SCREEN_MAIN &&
+         screen != SCREEN_MENU &&
+         screen != SCREEN_SPACE_GAME;
+}
+
+Screen getBackButtonShortTargetForScreen(Screen screen) {
+  switch (screen) {
+    case SCREEN_CONTROLLER_SETTINGS:
+    case SCREEN_MODEL_SETTINGS:
+    case SCREEN_SPACE_GAME:
+      return SCREEN_MENU;
+    case SCREEN_PROTOCOL:
+      return SCREEN_CONTROLLER_SETTINGS;
+    case SCREEN_ELRS:
+      return SCREEN_PROTOCOL;
+    case SCREEN_ELRS_RX_CONFIG:
+      return SCREEN_ELRS;
+    case SCREEN_OTA_SETTINGS:
+      return SCREEN_PROTOCOL;
+    case SCREEN_DRIVE_TYPE:
+    case SCREEN_MODEL_NAME:
+      return SCREEN_MODEL_SETTINGS;
+    case SCREEN_TANK_MODE:
+      return SCREEN_DRIVE_TYPE;
+    case SCREEN_ESC_CHANNEL_SETUP:
+      return SCREEN_TANK_MODE;
+    case SCREEN_MIXING:
+      return SCREEN_MODEL_SETTINGS;
+    case SCREEN_REVERSE:
+      return reverseReturnScreen;
+    case SCREEN_TRIM:
+    case SCREEN_ENDPOINTS:
+    case SCREEN_FAILSAFE:
+    case SCREEN_EXPO:
+    case SCREEN_RATES:
+    case SCREEN_STICK_CALIBRATION:
+      return SCREEN_CONTROLLER_SETTINGS;
+    case SCREEN_DISPLAY_SETTINGS:
+      return SCREEN_MENU;
+    case SCREEN_TIMER:
+      return SCREEN_MAIN;
+    default:
+      return SCREEN_MENU;
+  }
+}
+
+void cancelBackHold() {
+  backHoldActive = false;
+  backHoldTriggered = false;
+  backHoldStartTime = 0;
+}
+
+bool handleBackHoldTouch(bool isTouching, int x, int y) {
+  if (backHoldSuppressUntilRelease) {
+    if (!isTouching) {
+      backHoldSuppressUntilRelease = false;
+      cancelBackHold();
+      waitingForRelease = false;
+      pressedButton = BTN_NONE;
+    }
+    return true;
+  }
+
+  if (!isBackHoldEligibleScreen(currentScreen)) {
+    cancelBackHold();
+    return false;
+  }
+
+  bool onBackButton = isTouching && isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H);
+
+  if (onBackButton) {
+    if (!backHoldActive) {
+      backHoldActive = true;
+      backHoldTriggered = false;
+      backHoldStartTime = millis();
+      backHoldShortTarget = getBackButtonShortTargetForScreen(currentScreen);
+      pressedButton = BTN_BACK;
+      waitingForRelease = true;
+      uiNeedsRedraw = true;
+    } else if (!backHoldTriggered && millis() - backHoldStartTime >= BACK_HOLD_HOME_MS) {
+      backHoldTriggered = true;
+      screenChangePending = false;
+      waitingForRelease = false;
+      pressedButton = BTN_NONE;
+      backHoldSuppressUntilRelease = true;
+      setScreen(SCREEN_MAIN);
+    }
+    return true;
+  }
+
+  if (backHoldActive && !isTouching) {
+    if (!backHoldTriggered) {
+      Screen target = backHoldShortTarget;
+      cancelBackHold();
+      waitingForRelease = false;
+      pressedButton = BTN_NONE;
+      queueScreenButton(BTN_BACK, target);
+    } else {
+      cancelBackHold();
+      waitingForRelease = false;
+      pressedButton = BTN_NONE;
+    }
+    return true;
+  }
+
+  if (backHoldActive && isTouching) {
+    cancelBackHold();
+    waitingForRelease = false;
+    pressedButton = BTN_NONE;
+  }
+  return false;
+}
+
 void saveKeyboardBufferToModelSlot() {
   if (keyboardBuffer.length() == 0) return;
 
@@ -8231,8 +13002,10 @@ void saveKeyboardBufferToModelSlot() {
     targetModel = activeModel;
   }
 
-  if (modelNames[targetModel].length() == 0) {
+  bool creatingNewModel = modelNames[targetModel].length() == 0;
+  if (creatingNewModel) {
     initModelDefaults(targetModel);
+    clearBoundReceiver(targetModel);
   }
 
   strncpy(models[targetModel].name, keyboardBuffer.c_str(), 19);
@@ -8241,6 +13014,7 @@ void saveKeyboardBufferToModelSlot() {
 
   activeModel = targetModel;
   selectedModelIndex = targetModel;
+  clearActiveEspNowSessionTelemetry();
   currentModelName = String(models[targetModel].name);
 
   trimRenderX = models[targetModel].trimX[currentTrimPage];
@@ -8249,6 +13023,9 @@ void saveKeyboardBufferToModelSlot() {
   mixingNeedsRedraw = true;
 
   saveModels();
+  if (creatingNewModel) {
+    saveReceiverBindings();
+  }
 }
 
 bool modelSlotUninitialized(int i) {
@@ -8267,8 +13044,39 @@ void saveModels() {
     addr += sizeof(ModelData);
   }
 
+  uint8_t packed0 = 0;
+  uint8_t packed1 = 0;
+  for (int i = 0; i < MAX_MODELS; i++) {
+    sanitizeModelTankEscChannels(i);
+    uint8_t nibble =
+      (modelTankLeftEscChannel[i] & 0x03) |
+      ((modelTankRightEscChannel[i] & 0x03) << 2);
+    if (i < 2) {
+      packed0 |= (nibble << (i * 4));
+    } else {
+      packed1 |= (nibble << ((i - 2) * 4));
+    }
+  }
+  EEPROM.write(EEPROM_ESC_MAP_DATA_ADDR, packed0);
+  EEPROM.write(EEPROM_ESC_MAP_DATA_ADDR + 1, packed1);
+  EEPROM.write(EEPROM_ESC_MAP_VERSION_ADDR, ESC_MAP_STORAGE_VERSION);
+
   EEPROM.write(EEPROM_MIX_VERSION_ADDR, MIX_STORAGE_VERSION);
   EEPROM.commit();
+}
+
+void updateMainModelPanelBounds() {
+  const int stickY = 50;
+  const int stickSize = 80;
+  const int padding = 10;
+
+  const int panelY = stickY - padding;
+  const int panelH = stickSize + (padding * 2);
+
+  modelPanelX = 10;
+  modelPanelW = 220;
+  modelPanelY = panelY + panelH + 10;
+  modelPanelH = (MENU_BTN_Y - 10) - modelPanelY;
 }
 
 void loadModels() {
@@ -8295,8 +13103,62 @@ void handleTouch(int x, int y) {
 
   // ===== MAIN =====
   if (currentScreen == SCREEN_MAIN) {
+    updateMainModelPanelBounds();
+
+    const int mainStickY = 50;
+    const int mainStickSize = 80;
+    const int leftStickX = 20;
+    const int rightStickX = 140;
+    const int iconX = modelPanelX + 10;
+    const int iconY = modelPanelY + 10;
+    const int iconW = (modelPanelW - 20) / 2;
+    const int iconH = modelPanelH - 20;
+    const int rightPanelX = modelPanelX + (modelPanelW / 2);
+    const int rightPanelW = modelPanelW / 2;
+
     if (isInside(x, y, MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H)) {
       queueScreenButton(BTN_MENU, SCREEN_MENU);
+      return;
+    }
+
+    // Quick-trim shortcut: touch left/right gimbal to jump straight to that trim page.
+    if (isInside(x, y, leftStickX, mainStickY, mainStickSize, mainStickSize)) {
+      if (!waitingForRelease) {
+        currentTrimPage = 0;
+        trimRenderX = models[activeModel].trimX[currentTrimPage];
+        trimRenderY = models[activeModel].trimY[currentTrimPage];
+        trimNeedsRedraw = true;
+        trimDirty = true;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      queueScreenButton(BTN_TRIM, SCREEN_TRIM);
+      return;
+    }
+
+    if (isInside(x, y, rightStickX, mainStickY, mainStickSize, mainStickSize)) {
+      if (!waitingForRelease) {
+        currentTrimPage = 1;
+        trimRenderX = models[activeModel].trimX[currentTrimPage];
+        trimRenderY = models[activeModel].trimY[currentTrimPage];
+        trimNeedsRedraw = true;
+        trimDirty = true;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      }
+      queueScreenButton(BTN_TRIM, SCREEN_TRIM);
+      return;
+    }
+
+    // Touching the drive icon area opens Drive Type directly.
+    if (isInside(x, y, iconX, iconY, iconW, iconH)) {
+      queueScreenButton(BTN_DRIVE_TYPE, SCREEN_DRIVE_TYPE);
+      return;
+    }
+
+    // Touching the right info panel opens Protocol directly.
+    if (isInside(x, y, rightPanelX, modelPanelY, rightPanelW, modelPanelH)) {
+      queueScreenButton(BTN_PROTOCOL, SCREEN_PROTOCOL);
       return;
     }
 
@@ -8305,6 +13167,11 @@ void handleTouch(int x, int y) {
       queueScreenButton(BTN_DRIVE_TYPE, SCREEN_MODEL_SETTINGS);
       return;
     }
+  }
+
+  else if (currentScreen == SCREEN_TIMER) {
+    handleTimerTouch(x, y);
+    return;
   }
 
   // ===== MENU =====
@@ -8342,6 +13209,8 @@ void handleTouch(int x, int y) {
       return;
     }
 
+    if (waitingForRelease) return;
+
     if (isInside(x, y, DISPLAY_SETTINGS_MINUS_X, DISPLAY_SETTINGS_BRIGHTNESS_Y + DISPLAY_SETTINGS_ADJUST_BTN_Y_OFFSET,
                  DISPLAY_SETTINGS_ADJUST_BTN_W, DISPLAY_SETTINGS_ADJUST_BTN_H)) {
       pressedButton = BTN_DISPLAY_BRIGHTNESS_DEC;
@@ -8350,7 +13219,7 @@ void handleTouch(int x, int y) {
       displaySleepBrightness = min(displaySleepBrightness, displayBrightness);
       saveDisplaySettings();
       applyDisplayBacklight();
-      fullRedraw = true;
+      displaySettingsNeedsRedraw = true;
       uiNeedsRedraw = true;
       waitingForRelease = true;
       return;
@@ -8363,7 +13232,7 @@ void handleTouch(int x, int y) {
       stepDisplayOption(displayBrightness, displayBrightnessOptions, displayBrightnessOptionCount, 1);
       saveDisplaySettings();
       applyDisplayBacklight();
-      fullRedraw = true;
+      displaySettingsNeedsRedraw = true;
       uiNeedsRedraw = true;
       waitingForRelease = true;
       return;
@@ -8375,7 +13244,7 @@ void handleTouch(int x, int y) {
       selectedButton = BTN_DISPLAY_TIMEOUT_DEC;
       displayTimeoutIndex = constrain((int)displayTimeoutIndex - 1, 0, displayTimeoutOptionCount - 1);
       saveDisplaySettings();
-      fullRedraw = true;
+      displaySettingsNeedsRedraw = true;
       uiNeedsRedraw = true;
       waitingForRelease = true;
       return;
@@ -8387,7 +13256,7 @@ void handleTouch(int x, int y) {
       selectedButton = BTN_DISPLAY_TIMEOUT_INC;
       displayTimeoutIndex = constrain((int)displayTimeoutIndex + 1, 0, displayTimeoutOptionCount - 1);
       saveDisplaySettings();
-      fullRedraw = true;
+      displaySettingsNeedsRedraw = true;
       uiNeedsRedraw = true;
       waitingForRelease = true;
       return;
@@ -8399,7 +13268,7 @@ void handleTouch(int x, int y) {
       selectedButton = BTN_DISPLAY_OFF_TIMEOUT_DEC;
       displayOffTimeoutIndex = constrain((int)displayOffTimeoutIndex - 1, 0, displayOffTimeoutOptionCount - 1);
       saveDisplaySettings();
-      fullRedraw = true;
+      displaySettingsNeedsRedraw = true;
       uiNeedsRedraw = true;
       waitingForRelease = true;
       return;
@@ -8411,7 +13280,7 @@ void handleTouch(int x, int y) {
       selectedButton = BTN_DISPLAY_OFF_TIMEOUT_INC;
       displayOffTimeoutIndex = constrain((int)displayOffTimeoutIndex + 1, 0, displayOffTimeoutOptionCount - 1);
       saveDisplaySettings();
-      fullRedraw = true;
+      displaySettingsNeedsRedraw = true;
       uiNeedsRedraw = true;
       waitingForRelease = true;
       return;
@@ -8424,7 +13293,7 @@ void handleTouch(int x, int y) {
       stepDisplayOption(displaySleepBrightness, displaySleepBrightnessOptions, displaySleepBrightnessOptionCount, -1);
       saveDisplaySettings();
       applyDisplayBacklight();
-      fullRedraw = true;
+      displaySettingsNeedsRedraw = true;
       uiNeedsRedraw = true;
       waitingForRelease = true;
       return;
@@ -8437,20 +13306,8 @@ void handleTouch(int x, int y) {
       stepDisplayOption(displaySleepBrightness, displaySleepBrightnessOptions, displaySleepBrightnessOptionCount, 1);
       saveDisplaySettings();
       applyDisplayBacklight();
-      fullRedraw = true;
+      displaySettingsNeedsRedraw = true;
       uiNeedsRedraw = true;
-      waitingForRelease = true;
-      return;
-    }
-
-    if (isInside(x, y, DISPLAY_SETTINGS_SLEEP_NOW_X, DISPLAY_SETTINGS_SLEEP_NOW_Y,
-                 DISPLAY_SETTINGS_SLEEP_NOW_W, DISPLAY_SETTINGS_SLEEP_NOW_H)) {
-      pressedButton = BTN_DISPLAY_SLEEP_NOW;
-      selectedButton = BTN_DISPLAY_SLEEP_NOW;
-      displayDimmed = false;
-      screenAwake = false;
-      suppressWakeUntilRelease = true;
-      applyDisplayBacklight();
       waitingForRelease = true;
       return;
     }
@@ -8486,8 +13343,8 @@ void handleTouch(int x, int y) {
 
     else if (isInside(x, y, 130, BACK_BTN_Y, 100, BACK_BTN_H)) {
       if (!waitingForRelease) {
-        controllerSettingsPage = 1 - controllerSettingsPage;
-        selectedButton = (controllerSettingsPage == 0) ? BTN_TRIM : BTN_EXPO;
+        controllerSettingsPage = (controllerSettingsPage + 1) % controllerSettingsPageCount;
+        selectedButton = getControllerSettingsDefaultButtonForPage(controllerSettingsPage);
         pressedButton = BTN_PAGE_NAV;
         fullRedraw = true;
         uiNeedsRedraw = true;
@@ -8512,7 +13369,7 @@ void handleTouch(int x, int y) {
         return;
       }
     }
-    else {
+    else if (controllerSettingsPage == 1) {
       if (isInside(x, y, 20, 50, 200, BTN_HEIGHT)) {
         queueScreenButton(BTN_EXPO, SCREEN_EXPO);
         return;
@@ -8527,6 +13384,32 @@ void handleTouch(int x, int y) {
         queueScreenButton(BTN_PROTOCOL, SCREEN_PROTOCOL);
         return;
       }
+    }
+    else if (STICK_CAL_SCREEN_ENABLED) {
+      if (isInside(x, y, 20, 85, 200, BTN_HEIGHT)) {
+        queueScreenButton(BTN_STICK_CAL, SCREEN_STICK_CALIBRATION);
+        return;
+      }
+    }
+  }
+
+  else if (currentScreen == SCREEN_STICK_CALIBRATION) {
+    if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
+      queueScreenButton(BTN_BACK, SCREEN_CONTROLLER_SETTINGS);
+      return;
+    }
+
+    if (isInside(x, y, 130, BACK_BTN_Y, 100, BACK_BTN_H) && !waitingForRelease) {
+      pressedButton = BTN_STICK_CAL;
+      if (stickCalibrationState == STICK_CAL_STATE_CAPTURE_CENTER) {
+        captureStickCalibrationCenter();
+      } else if (finalizeStickCalibration()) {
+        setScreen(SCREEN_CONTROLLER_SETTINGS);
+      }
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      waitingForRelease = true;
+      return;
     }
   }
 
@@ -8552,7 +13435,7 @@ void handleTouch(int x, int y) {
 
       if (isInside(x, y, RATE_VALUE_BOX_X, EXPO_VALUE_BOX_Y, RATE_VALUE_BOX_W, RATE_VALUE_BOX_H)) {
         openMixNumpad(NUMPAD_TARGET_EXPO_VALUE);
-        focusIndex = 5;
+        focusIndex = CHANNEL_COUNT + 1;
         waitingForRelease = true;
         return;
       }
@@ -8575,7 +13458,7 @@ void handleTouch(int x, int y) {
           ratesValueDirty = true;
           ratesNeedsRedraw = true;
           uiNeedsRedraw = true;
-          focusIndex = 5;
+          focusIndex = CHANNEL_COUNT + 1;
           waitingForRelease = true;
           return;
         }
@@ -8585,7 +13468,7 @@ void handleTouch(int x, int y) {
           ratesValueDirty = true;
           ratesNeedsRedraw = true;
           uiNeedsRedraw = true;
-          focusIndex = 6;
+          focusIndex = CHANNEL_COUNT + 2;
           waitingForRelease = true;
           return;
         }
@@ -8595,7 +13478,7 @@ void handleTouch(int x, int y) {
           ratesValueDirty = true;
           ratesNeedsRedraw = true;
           uiNeedsRedraw = true;
-          focusIndex = 7;
+          focusIndex = CHANNEL_COUNT + 3;
           waitingForRelease = true;
           return;
         }
@@ -8607,13 +13490,13 @@ void handleTouch(int x, int y) {
         ratesValueDirty = true;
         ratesNeedsRedraw = true;
         uiNeedsRedraw = true;
-        focusIndex = 8;
+        focusIndex = CHANNEL_COUNT + 4;
         return;
       }
 
       if (isInside(x, y, RATE_VALUE_BOX_X, RATE_VALUE_BOX_Y, RATE_VALUE_BOX_W, RATE_VALUE_BOX_H)) {
         openMixNumpad(NUMPAD_TARGET_RATE_VALUE);
-        focusIndex = 8;
+        focusIndex = CHANNEL_COUNT + 4;
         waitingForRelease = true;
         return;
       }
@@ -8626,8 +13509,8 @@ void handleTouch(int x, int y) {
       return;
     }
 
-    int startY = 88;
-    int spacing = 42;
+    int startY = 78;
+    int spacing = 33;
     for (int i = 0; i < CHANNEL_COUNT; i++) {
       int rowY = startY + (i * spacing);
       if (isInside(x, y, 88, rowY, 136, 30)) {
@@ -8666,6 +13549,9 @@ void handleTouch(int x, int y) {
         if (!otaModeActive) {
           cancelEspNowBinding(true);
           setModelProtocol(activeModel, PROTOCOL_ELRS);
+          elrsTxPowerMw = clampElrsTxPowerMw(modelElrsTxPowerMw[activeModel]);
+          initElrsUart();
+          sendElrsTxPowerWrite(elrsTxPowerMw);
           pressedButton = BTN_PROTOCOL_ELRS;
           selectedButton = BTN_PROTOCOL_ELRS;
           saveModels();
@@ -8678,6 +13564,7 @@ void handleTouch(int x, int y) {
       else if (isInside(x, y, PROTOCOL_MODE_BTN_X, PROTOCOL_ESPNOW_BTN_Y, PROTOCOL_MODE_BTN_W, PROTOCOL_MODE_BTN_H)) {
         if (!otaModeActive) {
           setModelProtocol(activeModel, PROTOCOL_ESPNOW);
+          stopElrsUart();
           pressedButton = BTN_PROTOCOL_ESPNOW;
           selectedButton = BTN_PROTOCOL_ESPNOW;
           saveModels();
@@ -8783,6 +13670,85 @@ void handleTouch(int x, int y) {
         waitingForRelease = true;
         return;
       }
+
+      if (isInside(x, y, ELRS_RX_CONFIG_BTN_X, ELRS_RX_CONFIG_BTN_Y,
+                   ELRS_RX_CONFIG_BTN_W, ELRS_RX_CONFIG_BTN_H)) {
+        pressedButton = BTN_ELRS_RX_CONFIG;
+        selectedButton = BTN_ELRS_RX_CONFIG;
+        beginElrsReceiverConfig();
+        waitingForRelease = true;
+        return;
+      }
+
+      if (isInside(x, y, ELRS_POWER_SLIDER_X, ELRS_POWER_SLIDER_Y - 8, ELRS_POWER_SLIDER_W, ELRS_POWER_SLIDER_H + 16)) {
+        int sliderMw = mapTouch(x, ELRS_POWER_SLIDER_X, ELRS_POWER_SLIDER_X + ELRS_POWER_SLIDER_W, ELRS_TX_POWER_MIN_MW, ELRS_TX_POWER_MAX_MW);
+        sliderMw = constrain(sliderMw, ELRS_TX_POWER_MIN_MW, ELRS_TX_POWER_MAX_MW);
+        pressedButton = BTN_ELRS_TX_POWER_SLIDER;
+        selectedButton = BTN_ELRS_TX_POWER_SLIDER;
+        sendElrsTxPowerWrite((uint16_t)sliderMw);
+        uiNeedsRedraw = true;
+        waitingForRelease = true;
+        return;
+      }
+
+      if (isInside(x, y, ELRS_POWER_VALUE_BOX_X, ELRS_POWER_VALUE_BOX_Y, ELRS_POWER_VALUE_BOX_W, ELRS_POWER_VALUE_BOX_H)) {
+        pressedButton = BTN_ELRS_TX_POWER_VALUE;
+        selectedButton = BTN_ELRS_TX_POWER_VALUE;
+        openMixNumpad(NUMPAD_TARGET_ELRS_TX_POWER);
+        uiNeedsRedraw = true;
+        waitingForRelease = true;
+        return;
+      }
+    }
+    return;
+  }
+  else if (currentScreen == SCREEN_ELRS_RX_CONFIG) {
+    if (elrsReceiverConfigTouchLocked) {
+      if (!waitingForRelease) {
+        Serial.printf("ELRS RX config: touch ignored while locked x=%d y=%d until=%lu quietSince=%lu now=%lu\n",
+                      x,
+                      y,
+                      elrsReceiverConfigTouchUnlockAt,
+                      elrsReceiverConfigNoTouchSince,
+                      millis());
+      }
+      elrsReceiverConfigNoTouchSince = 0;
+      waitingForRelease = true;
+      return;
+    }
+
+    if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
+      queueScreenButton(BTN_BACK, SCREEN_ELRS);
+      return;
+    }
+    if (!waitingForRelease && elrsReceiverConfigState == RX_CONFIG_DONE) {
+      if (isInside(x, y, ELRS_RX_FIELD_X, ELRS_RX_MODEL_ID_Y, ELRS_RX_FIELD_W, ELRS_RX_FIELD_H)) {
+        pressedButton = BTN_ELRS_RX_MODEL_ID;
+        selectedButton = BTN_ELRS_RX_MODEL_ID;
+        openMixNumpad(NUMPAD_TARGET_ELRS_RX_MODEL_ID);
+        waitingForRelease = true;
+        return;
+      }
+      int maxRows = min((int)elrsReceiverPwmCount, 4);
+      for (int i = 0; i < maxRows; i++) {
+        bool rightCol = (i & 1);
+        int rowY = (i < 2) ? ELRS_RX_PWM_ROW1_Y : ELRS_RX_PWM_ROW2_Y;
+        int fieldX = rightCol ? ELRS_RX_PWM_RIGHT_FIELD_X : ELRS_RX_PWM_LEFT_FIELD_X;
+        if (isInside(x, y, fieldX, rowY, ELRS_RX_PWM_FIELD_W, ELRS_RX_FIELD_H)) {
+          pressedButton = getElrsReceiverPwmButton(i);
+          selectedButton = pressedButton;
+          openElrsReceiverPwmNumpad(i);
+          waitingForRelease = true;
+          return;
+        }
+      }
+      if (isInside(x, y, ELRS_RX_SAVE_X, ELRS_RX_SAVE_Y, ELRS_RX_SAVE_W, ELRS_RX_SAVE_H)) {
+        pressedButton = BTN_ELRS_RX_SAVE;
+        selectedButton = BTN_ELRS_RX_SAVE;
+        saveElrsReceiverConfig();
+        waitingForRelease = true;
+        return;
+      }
     }
     return;
   }
@@ -8840,16 +13806,22 @@ void handleTouch(int x, int y) {
   // ===== MIXING =====
   else if (currentScreen == SCREEN_MIXING) {
 
+    if (waitingForRelease) return;
+
     if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
       queueScreenButton(BTN_BACK, SCREEN_MODEL_SETTINGS);
       return;
     }
+    if (isInside(x, y, MIX_PAGE_BTN_X, MIX_PAGE_BTN_Y, MIX_PAGE_BTN_W, MIX_PAGE_BTN_H)) {
+      toggleSelectedMixPageDebounced(millis());
+      waitingForRelease = true;
+      return;
+    }
 
-    if (waitingForRelease) return;
-
-    for (int i = 0; i < MIX_COUNT; i++) {
+    int pageBase = getMixPageBase(selectedMixPage);
+    for (int i = 0; i < MIXES_PER_PAGE; i++) {
       if (isInside(x, y, MIX_TAB_X(i), MIX_TAB_Y, MIX_TAB_W, MIX_TAB_H)) {
-        selectedMixIndex = i;
+        selectedMixIndex = pageBase + i;
         mixingNeedsRedraw = true;
         uiNeedsRedraw = true;
         waitingForRelease = true;
@@ -8933,6 +13905,7 @@ void handleTouch(int x, int y) {
                    DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
         currentDrive = DRIVE_TANK;
         setModelDriveType(activeModel, DRIVE_TANK);
+        applyDrivePresetMixes(activeModel);
         pressedButton = BTN_DRIVE_TANK;
         selectedButton = BTN_DRIVE_TANK;
         nextScreen = SCREEN_TANK_MODE;
@@ -8945,6 +13918,7 @@ void handleTouch(int x, int y) {
                         DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
         currentDrive = DRIVE_CAR;
         setModelDriveType(activeModel, DRIVE_CAR);
+        applyDrivePresetMixes(activeModel);
         pressedButton = BTN_DRIVE_CAR;
         selectedButton = BTN_DRIVE_CAR;
         nextScreen = SCREEN_TANK_MODE;
@@ -8957,6 +13931,7 @@ void handleTouch(int x, int y) {
                         DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
         currentDrive = DRIVE_OMNI;
         setModelDriveType(activeModel, DRIVE_OMNI);
+        applyDrivePresetMixes(activeModel);
         pressedButton = BTN_DRIVE_OMNI;
         selectedButton = BTN_DRIVE_OMNI;
         screenChangePending = false;
@@ -8968,6 +13943,7 @@ void handleTouch(int x, int y) {
                         DRIVE_BTN_H + (DRIVE_TOUCH_PAD * 2))) {
         currentDrive = DRIVE_X_DRONE;
         setModelDriveType(activeModel, DRIVE_X_DRONE);
+        applyDrivePresetMixes(activeModel);
         pressedButton = BTN_DRIVE_X_DRONE;
         selectedButton = BTN_DRIVE_X_DRONE;
         screenChangePending = false;
@@ -8995,13 +13971,23 @@ void handleTouch(int x, int y) {
     if (!waitingForRelease) {
       if (isInside(x, y, 20, 70, 200, 72)) {
         setModelTankMode(activeModel, TANK_MODE_DUAL_STICK);
+        applyDrivePresetMixes(activeModel);
         pressedButton = BTN_TANK_DUAL;
         selectedButton = BTN_TANK_DUAL;
+        escSetupStep = 0;
+        escSetupPendingLeftChannel = getModelTankLeftEscChannel(activeModel);
+        nextScreen = SCREEN_ESC_CHANNEL_SETUP;
+        screenChangePending = true;
       }
       else if (isInside(x, y, 20, 160, 200, 72)) {
         setModelTankMode(activeModel, TANK_MODE_RIGHT_STICK);
+        applyDrivePresetMixes(activeModel);
         pressedButton = BTN_TANK_SINGLE;
         selectedButton = BTN_TANK_SINGLE;
+        escSetupStep = 0;
+        escSetupPendingLeftChannel = getModelTankLeftEscChannel(activeModel);
+        nextScreen = SCREEN_ESC_CHANNEL_SETUP;
+        screenChangePending = true;
       }
       else {
         return;
@@ -9016,6 +14002,58 @@ void handleTouch(int x, int y) {
     return;
   }
 
+  else if (currentScreen == SCREEN_ESC_CHANNEL_SETUP) {
+    if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
+      queueScreenButton(BTN_BACK, SCREEN_TANK_MODE);
+      return;
+    }
+
+    if (!waitingForRelease) {
+      const int bx[4] = {20, 130, 20, 130};
+      const int by[4] = {86, 86, 158, 158};
+      const ButtonID ids[4] = {BTN_ESC_CH1, BTN_ESC_CH2, BTN_ESC_CH3, BTN_ESC_CH4};
+
+      int selectedChannel = -1;
+      for (int i = 0; i < 4; i++) {
+        if (isInside(x, y, bx[i], by[i], 90, 54)) {
+          selectedChannel = i;
+          pressedButton = ids[i];
+          selectedButton = ids[i];
+          break;
+        }
+      }
+
+      if (selectedChannel < 0) {
+        return;
+      }
+
+      if (escSetupStep == 0) {
+        escSetupPendingLeftChannel = (uint8_t)selectedChannel;
+        escSetupStep = 1;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+        waitingForRelease = true;
+        return;
+      }
+
+      if ((uint8_t)selectedChannel == escSetupPendingLeftChannel) {
+        waitingForRelease = true;
+        return;
+      }
+
+      setModelTankEscChannels(activeModel, escSetupPendingLeftChannel, (uint8_t)selectedChannel);
+      applyDrivePresetMixes(activeModel);
+      saveModels();
+      nextScreen = SCREEN_TANK_MODE;
+      screenChangePending = true;
+      waitingForRelease = true;
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+    }
+
+    return;
+  }
+
   // ===== REVERSE =====
   else if (currentScreen == SCREEN_REVERSE) {
 
@@ -9024,8 +14062,8 @@ void handleTouch(int x, int y) {
       return;
     }
 
-    int startY = 40;
-    int spacing = 45;
+    int startY = 42;
+    int spacing = 38;
 
     for (int i = 0; i < CHANNEL_COUNT; i++) {
 
@@ -9241,8 +14279,9 @@ void handleTouch(int x, int y) {
     }
 
     // ===== INPUT BOX =====
-    if (isInside(x, y, 10, 65, 220, 30)) {
+    if (isInside(x, y, MODEL_NAME_INPUT_X, MODEL_NAME_INPUT_Y, MODEL_NAME_INPUT_W, MODEL_NAME_INPUT_H)) {
       if (!waitingForRelease) {
+        keyboardBuffer = "";
         keyboardTarget = KEYBOARD_TARGET_MODEL_NAME;
         keyboardActive = true;
         keyboardLowercase = false;
@@ -9254,14 +14293,14 @@ void handleTouch(int x, int y) {
     }
 
     // ===== SELECT MODEL =====
-    int listY = 130;
+    int listY = MODEL_NAME_LIST_Y;
 
     for (int i = 0; i < 4; i++) {
 
-      int bx = 30;
+      int bx = MODEL_NAME_BOX_X;
       int by = listY - 2;
-      int bw = 150;
-      int bh = 20;
+      int bw = MODEL_NAME_BOX_W;
+      int bh = MODEL_NAME_ROW_H - 6;
 
       if (isInside(x, y, bx, by, bw, bh)) {
 
@@ -9292,18 +14331,18 @@ void handleTouch(int x, int y) {
         return;
       }
 
-      listY += 25;
+      listY += MODEL_NAME_ROW_H;
     }
 
     // ===== DELETE BUTTONS =====
-    int rowY = 130;
+    int rowY = MODEL_NAME_LIST_Y;
 
     for (int i = 0; i < 4; i++) {
 
-    int bx = 200;
+    int bx = MODEL_NAME_DELETE_X;
     int by = rowY - 2;
-    int bw = 25;
-    int bh = 18;
+    int bw = MODEL_NAME_DELETE_W;
+    int bh = MODEL_NAME_ROW_H - 6;
 
       if (isInside(x, y, bx, by, bw, bh)) {
         if (!waitingForRelease) {
@@ -9312,6 +14351,8 @@ void handleTouch(int x, int y) {
           for (int j = i; j < 3; j++) {
             modelNames[j] = modelNames[j + 1];
             models[j] = models[j + 1];
+            modelTankLeftEscChannel[j] = modelTankLeftEscChannel[j + 1];
+            modelTankRightEscChannel[j] = modelTankRightEscChannel[j + 1];
             memcpy(boundReceiverMacs[j], boundReceiverMacs[j + 1], ESP_NOW_ETH_ALEN);
             for (int channel = 0; channel < CHANNEL_COUNT; channel++) {
               modelFailsafeValues[j][channel] = modelFailsafeValues[j + 1][channel];
@@ -9345,7 +14386,7 @@ void handleTouch(int x, int y) {
         }
       return;
       }
-      rowY += 25;
+      rowY += MODEL_NAME_ROW_H;
     }
 
   }
@@ -9354,6 +14395,7 @@ void handleTouch(int x, int y) {
 bool handleKeyboardTouch(int x, int y) {
 
   if (!keyboardActive) return false;
+  int adjustedX = adjustKeyboardTouchX(x);
 
   if (y < kbY) {
     if (!waitingForRelease) {
@@ -9371,21 +14413,10 @@ bool handleKeyboardTouch(int x, int y) {
       const char* key = getKeyboardKey(r, c);
       if (strlen(key) == 0) continue;
 
-      int kx = kbX + c * (keyW + keySpacing) + 5;
-      int ky = kbY + r * (keyH + keySpacing) + 5;
+      int kx, ky, kw, kh;
+      getKeyboardKeyRect(r, c, kx, ky, kw, kh);
 
-      int kw = keyW;
-
-      // ===== SPECIAL KEYS =====
-      if (strcmp(key, " ") == 0) {
-        kx = kbX + 10;
-        kw = kbW - 20;
-      }
-      else if (strcmp(key, "OK") == 0) {
-        kw = keyW * 2;
-      }
-
-      if (isInside(x, y, kx, ky, kw, keyH)) {
+      if (isInside(adjustedX, y, kx, ky, kw, kh)) {
 
         if (!waitingForRelease) {
 
@@ -9407,7 +14438,7 @@ bool handleKeyboardTouch(int x, int y) {
 bool handleMixNumpadTouch(int x, int y) {
   if (!mixNumpadActive) return false;
 
-  if (y < MIX_NUMPAD_Y) {
+  if (!isInside(x, y, MIX_NUMPAD_X, MIX_NUMPAD_Y, MIX_NUMPAD_W, MIX_NUMPAD_H)) {
     if (!waitingForRelease) {
       closeMixNumpad(false);
       waitingForRelease = true;
@@ -9443,8 +14474,12 @@ bool handleMixNumpadTouch(int x, int y) {
 
       const char* key = mixPadLayout[r][c];
       bool positiveOnlyTarget = (mixNumpadTarget == NUMPAD_TARGET_RATE_VALUE ||
-                                 mixNumpadTarget == NUMPAD_TARGET_EXPO_VALUE ||
-                                 mixNumpadTarget == NUMPAD_TARGET_ENDPOINT_VALUE);
+                                 mixNumpadTarget == NUMPAD_TARGET_ENDPOINT_VALUE ||
+                                 mixNumpadTarget == NUMPAD_TARGET_ELRS_TX_POWER ||
+                                 mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_MODEL_ID ||
+                                 mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_FAILSAFE ||
+                                 mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE ||
+                                 mixNumpadTarget == NUMPAD_TARGET_TIMER_VALUE);
 
       if (strcmp(key, "<") == 0) {
         if (mixNumpadBuffer.length() > 0) {
@@ -9455,7 +14490,6 @@ bool handleMixNumpadTouch(int x, int y) {
           }
 
           mixNumpadNeedsRedraw = true;
-          uiNeedsRedraw = true;
         }
       }
       else if (strcmp(key, "-") == 0) {
@@ -9472,7 +14506,6 @@ bool handleMixNumpadTouch(int x, int y) {
           }
 
           mixNumpadNeedsRedraw = true;
-          uiNeedsRedraw = true;
         }
       }
       else {
@@ -9489,14 +14522,25 @@ bool handleMixNumpadTouch(int x, int y) {
           if (candidate[i] >= '0' && candidate[i] <= '9') digitCount++;
         }
 
-        if (digitCount > 3) validLength = false;
+        int maxDigits = (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE ||
+                         mixNumpadTarget == NUMPAD_TARGET_TIMER_VALUE) ? 4 : 3;
+        if (digitCount > maxDigits) validLength = false;
 
         if (validLength) {
           int parsedValue = candidate.toInt();
           bool validCandidate = false;
           if (positiveOnlyTarget) {
-            int maxValue = (mixNumpadTarget == NUMPAD_TARGET_ENDPOINT_VALUE) ? 120 : 100;
-            validCandidate = (parsedValue >= 0 && parsedValue <= maxValue);
+            int maxValue = 100;
+            if (mixNumpadTarget == NUMPAD_TARGET_ENDPOINT_VALUE) maxValue = 120;
+            else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_TX_POWER) maxValue = ELRS_TX_POWER_MAX_MW;
+            else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_MODEL_ID ||
+                     mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_FAILSAFE) maxValue = 255;
+            else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE) maxValue = ELRS_RX_PWM_FAILSAFE_MAX_US;
+            else if (mixNumpadTarget == NUMPAD_TARGET_TIMER_VALUE) maxValue = 9959;
+            validCandidate = (digitCount <= maxDigits && parsedValue >= 0 && parsedValue <= maxValue);
+            if (mixNumpadTarget == NUMPAD_TARGET_TIMER_VALUE) {
+              validCandidate = validCandidate && ((parsedValue % 100) <= 59);
+            }
           } else {
             validCandidate = ((candidate == "-") || (parsedValue >= -100 && parsedValue <= 100));
           }
@@ -9504,7 +14548,6 @@ bool handleMixNumpadTouch(int x, int y) {
           if (validCandidate) {
             mixNumpadBuffer = candidate;
             mixNumpadNeedsRedraw = true;
-            uiNeedsRedraw = true;
           }
         }
       }
@@ -9518,7 +14561,89 @@ bool handleMixNumpadTouch(int x, int y) {
 }
 
 // ==== SPLASH SCREEN ====
-  void drawSplash() {
+bool isStartupThrottleSafe() {
+  if (!STARTUP_THROTTLE_SAFETY_ENABLED) return true;
+  if (!ads1115Ready) return false;
+  return inputChannels[STARTUP_THROTTLE_SAFETY_CHANNEL] <= STARTUP_THROTTLE_SAFE_THRESHOLD;
+}
+
+bool handleStartupThrottleSafetyBypass(uint8_t touchCount, int rawX, int rawY, unsigned long now) {
+  if (ads1115Ready) {
+    startupThrottleBypassTapCount = 0;
+    startupThrottleBypassTouchActive = false;
+    return false;
+  }
+
+  if (touchCount == 0) {
+    startupThrottleBypassTouchActive = false;
+    return false;
+  }
+
+  if (startupThrottleBypassTouchActive) return false;
+  startupThrottleBypassTouchActive = true;
+
+  int x = mapTouch(rawX, 0, 240, 0, 240);
+  int y = mapTouch(rawY, 320, 0, 320, 0);
+  if (x < 0 || x > 239 || y < STARTUP_THROTTLE_BYPASS_Y_MIN || y > 319) {
+    return false;
+  }
+
+  if (startupThrottleBypassTapCount < STARTUP_THROTTLE_BYPASS_TAPS) {
+    startupThrottleBypassTapCount++;
+  }
+  lastStartupThrottleSafetyDrawTime = 0;
+
+  if (startupThrottleBypassTapCount >= STARTUP_THROTTLE_BYPASS_TAPS) {
+    Serial.println("Startup throttle safety bypassed: stick input offline service tap sequence.");
+    return true;
+  }
+
+  return false;
+}
+
+void updateStartupThrottleSafetyScreen(unsigned long now) {
+  if (startupThrottleSafetyScreenDrawn &&
+      now - lastStartupThrottleSafetyDrawTime < STARTUP_THROTTLE_SCREEN_REFRESH_MS) {
+    return;
+  }
+  lastStartupThrottleSafetyDrawTime = now;
+
+  if (!startupThrottleSafetyScreenDrawn) {
+    tft.fillScreen(COLOR_BG);
+    drawGradientControl(14, 78, 212, 150, 14, COLOR_PANEL, COLOR_ACCENT);
+    tft.setTextFont(2);
+    tft.setTextColor(COLOR_ACCENT_HI, COLOR_PANEL);
+    tft.drawCentreString("THROTTLE SAFETY", 120, 96, 2);
+    tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+    tft.drawCentreString("Lower CH3 to zero", 120, 128, 2);
+    tft.drawCentreString("before arming transmitter.", 120, 148, 2);
+    tft.drawCentreString("Weapon channel locked.", 120, 188, 2);
+    startupThrottleSafetyScreenDrawn = true;
+  }
+
+  tft.fillRect(45, 166, 150, 18, COLOR_PANEL);
+  tft.setTextFont(2);
+  if (!ads1115Ready) {
+    tft.setTextColor(TFT_ORANGE, COLOR_PANEL);
+    tft.drawCentreString("Stick input offline", 120, 166, 2);
+    tft.fillRect(20, 235, 200, 20, COLOR_BG);
+    if (startupThrottleBypassTapCount > 0) {
+      char bypassText[28];
+      snprintf(bypassText, sizeof(bypassText), "Service bypass: %u/%u",
+               startupThrottleBypassTapCount, STARTUP_THROTTLE_BYPASS_TAPS);
+      tft.setTextColor(COLOR_TEXT, COLOR_BG);
+      tft.drawCentreString(bypassText, 120, 236, 2);
+    }
+  } else {
+    int throttlePercent = (int)roundf(constrain((inputChannels[STARTUP_THROTTLE_SAFETY_CHANNEL] + 1.0f) * 50.0f, 0.0f, 100.0f));
+    char throttleText[24];
+    snprintf(throttleText, sizeof(throttleText), "CH3: %d%%", throttlePercent);
+    tft.setTextColor(TFT_ORANGE, COLOR_PANEL);
+    tft.drawCentreString(throttleText, 120, 166, 2);
+  }
+}
+
+void drawSplash() {
 
   static bool drawn = false;
 
@@ -9529,17 +14654,357 @@ bool handleMixNumpadTouch(int x, int y) {
     tft.setSwapBytes(true);
     tft.pushImage(0, 0, 240, 320, anubisLogo);
 
+    startStartupAudioClip();
     drawn = true;
   }
 
+  updateStartupAudioClip();
+
   // wait, then switch screens
-  if (millis() - splashStartTime > 3000) {
+  if (millis() - splashStartTime > STARTUP_SPLASH_DURATION_MS) {
     setScreen(SCREEN_MAIN);
   }
 }
 
+int getThreePosSwitchPosition() {
+  if (inputChannels[5] > 0.35f) return 1;
+  if (inputChannels[5] < -0.35f) return -1;
+  return 0;
+}
+
+void drawThreePosSwitchIndicator(int cx, int y, int position) {
+  const int triW = 24;
+  const int triH = 17;
+  const int square = 18;
+  const int gap = 5;
+  const int clearX = cx - 17;
+  const int clearY = y - 3;
+  const int clearW = 34;
+  const int clearH = (triH * 2) + square + (gap * 2) + 8;
+  const int topY = y;
+  const int squareY = topY + triH + gap;
+  const int bottomY = squareY + square + gap;
+
+  tft.fillRoundRect(clearX, clearY, clearW, clearH, 7, COLOR_BG);
+
+  uint16_t inactive = fadeColor(COLOR_ACCENT, 0.55f);
+  uint16_t topColor = (position > 0) ? COLOR_ACCENT_HI : inactive;
+  uint16_t midColor = (position == 0) ? COLOR_ACCENT_HI : inactive;
+  uint16_t bottomColor = (position < 0) ? COLOR_ACCENT_HI : inactive;
+  uint16_t activeFill = COLOR_ACCENT;
+
+  if (position > 0) {
+    tft.fillTriangle(cx, topY, cx - triW / 2, topY + triH, cx + triW / 2, topY + triH, activeFill);
+  }
+  tft.drawTriangle(cx, topY, cx - triW / 2, topY + triH, cx + triW / 2, topY + triH, topColor);
+
+  if (position == 0) {
+    tft.fillRoundRect(cx - square / 2, squareY, square, square, 4, activeFill);
+  }
+  tft.drawRoundRect(cx - square / 2, squareY, square, square, 4, midColor);
+
+  if (position < 0) {
+    tft.fillTriangle(cx - triW / 2, bottomY, cx + triW / 2, bottomY, cx, bottomY + triH, activeFill);
+  }
+  tft.drawTriangle(cx - triW / 2, bottomY, cx + triW / 2, bottomY, cx, bottomY + triH, bottomColor);
+}
+
+void runMainToTimerSwipeTransition() {
+  const int steps = 12;
+  for (int i = 1; i <= steps; i++) {
+    int wipeW = (240 * i) / steps;
+    tft.fillRect(240 - wipeW, 0, wipeW, 320, COLOR_BG);
+    delay(8);
+  }
+}
+
+bool handleMainSwipeGesture(bool isTouching, int x, int y, unsigned long now) {
+  if (currentScreen != SCREEN_MAIN || keyboardActive || mixNumpadActive) {
+    mainSwipeActive = false;
+    mainSwipeConsumedTouch = false;
+    return false;
+  }
+
+  if (isTouching && !mainSwipeActive) {
+    mainSwipeActive = true;
+    mainSwipeConsumedTouch = false;
+    mainSwipeStartX = x;
+    mainSwipeStartY = y;
+    mainSwipeLastX = x;
+    mainSwipeLastY = y;
+    mainSwipeStartTime = now;
+    return false;
+  }
+
+  if (isTouching && mainSwipeActive) {
+    mainSwipeLastX = x;
+    mainSwipeLastY = y;
+    int dx = mainSwipeStartX - mainSwipeLastX;
+    int dy = abs(mainSwipeLastY - mainSwipeStartY);
+    if (dx >= 24 && dy <= MAIN_SWIPE_MAX_DY) {
+      mainSwipeConsumedTouch = true;
+      waitingForRelease = false;
+      pressedButton = BTN_NONE;
+      screenChangePending = false;
+      return true;
+    }
+    return false;
+  }
+
+  if (!isTouching && mainSwipeActive) {
+    int dx = mainSwipeStartX - mainSwipeLastX;
+    int dy = abs(mainSwipeLastY - mainSwipeStartY);
+    unsigned long dt = now - mainSwipeStartTime;
+    mainSwipeActive = false;
+
+    if (dx >= MAIN_SWIPE_MIN_DX && dy <= MAIN_SWIPE_MAX_DY && dt <= MAIN_SWIPE_MAX_MS) {
+      runMainToTimerSwipeTransition();
+      setScreen(SCREEN_TIMER);
+      waitingForRelease = false;
+      pressedButton = BTN_NONE;
+      screenChangePending = false;
+      mainSwipeConsumedTouch = false;
+      return true;
+    }
+
+    bool consumed = mainSwipeConsumedTouch;
+    mainSwipeConsumedTouch = false;
+    return consumed;
+  }
+
+  return false;
+}
+
+uint32_t getTimerInputSeconds() {
+  uint32_t value = (uint32_t)timerInputBuffer.toInt();
+  uint32_t seconds = value % 100UL;
+  uint32_t minutes = value / 100UL;
+  if (seconds > 59UL) seconds = 59UL;
+  uint32_t total = (minutes * 60UL) + seconds;
+  return min(total, (uint32_t)TIMER_MAX_SECONDS);
+}
+
+unsigned long getTimerElapsedMs(unsigned long now) {
+  unsigned long elapsed = timerAccumulatedMs;
+  if (timerRunning) {
+    elapsed += now - timerRunStartedAt;
+  }
+  return elapsed;
+}
+
+bool isTimerElapsed(unsigned long now) {
+  if (timerTargetSeconds == 0) return false;
+  unsigned long targetMs = (unsigned long)timerTargetSeconds * 1000UL;
+  return getTimerElapsedMs(now) >= targetMs;
+}
+
+unsigned long getTimerDisplayMs(unsigned long now) {
+  unsigned long elapsed = getTimerElapsedMs(now);
+  if (timerMode == TIMER_MODE_COUNT_UP) {
+    if (timerTargetSeconds > 0) {
+      unsigned long targetMs = (unsigned long)timerTargetSeconds * 1000UL;
+      if (elapsed >= targetMs) {
+        if (timerRunning) {
+          timerRunning = false;
+          timerAccumulatedMs = targetMs;
+          timerNeedsRedraw = true;
+        }
+        return targetMs;
+      }
+    }
+    return elapsed;
+  }
+
+  unsigned long targetMs = (unsigned long)timerTargetSeconds * 1000UL;
+  if (elapsed >= targetMs) {
+    if (timerRunning) {
+      timerRunning = false;
+      timerAccumulatedMs = targetMs;
+      timerNeedsRedraw = true;
+    }
+    return 0;
+  }
+  return targetMs - elapsed;
+}
+
+void formatTimerDisplay(unsigned long displayMs, char *out, size_t outSize) {
+  unsigned long totalSeconds = displayMs / 1000UL;
+  unsigned int minutes = (unsigned int)(totalSeconds / 60UL);
+  unsigned int seconds = (unsigned int)(totalSeconds % 60UL);
+  snprintf(out, outSize, "%02u:%02u", minutes, seconds);
+}
+
+void formatTimerTargetBuffer(char *out, size_t outSize) {
+  if (timerTargetSeconds == 0) {
+    snprintf(out, outSize, "tap time to set");
+    return;
+  }
+
+  unsigned int minutes = (unsigned int)(timerTargetSeconds / 60UL);
+  unsigned int seconds = (unsigned int)(timerTargetSeconds % 60UL);
+  snprintf(out, outSize, "target %02u:%02u", minutes, seconds);
+}
+
+void resetTimerRuntime() {
+  timerRunning = false;
+  timerRunStartedAt = 0;
+  timerAccumulatedMs = 0;
+  lastTimerAlarmActive = false;
+  lastTimerAlarmVisible = true;
+  timerNeedsRedraw = true;
+}
+
+void drawTimerScreen() {
+  tft.fillScreen(COLOR_BG);
+  drawButtonBubble(BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H, "BACK",
+                   pressedButton == BTN_BACK, selectedButton == BTN_BACK, -1);
+  tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
+
+  tft.setTextColor(COLOR_TEXT, COLOR_BG);
+  tft.setTextFont(4);
+  tft.drawCentreString("Timer", 120, 37, 4);
+
+  drawGradientControl(TIMER_DISPLAY_X, TIMER_DISPLAY_Y, TIMER_DISPLAY_W, TIMER_DISPLAY_H, 12, COLOR_PANEL, COLOR_ACCENT);
+
+  drawButtonBubble(TIMER_COUNT_DOWN_X, TIMER_MODE_Y, TIMER_MODE_W, TIMER_MODE_H, "COUNT DN",
+                   pressedButton == BTN_TIMER_COUNT_DOWN,
+                   timerMode == TIMER_MODE_COUNT_DOWN || selectedButton == BTN_TIMER_COUNT_DOWN,
+                   -1);
+  drawButtonBubble(TIMER_COUNT_UP_X, TIMER_MODE_Y, TIMER_MODE_W, TIMER_MODE_H, "COUNT UP",
+                   pressedButton == BTN_TIMER_COUNT_UP,
+                   timerMode == TIMER_MODE_COUNT_UP || selectedButton == BTN_TIMER_COUNT_UP,
+                   -1);
+  drawButtonBubble(TIMER_START_X, TIMER_ACTION_Y, TIMER_ACTION_W, TIMER_ACTION_H, timerRunning ? "PAUSE" : "START",
+                   pressedButton == BTN_TIMER_START_PAUSE,
+                   selectedButton == BTN_TIMER_START_PAUSE,
+                   -1);
+  drawButtonBubble(TIMER_RESET_X, TIMER_ACTION_Y, TIMER_ACTION_W, TIMER_ACTION_H, "RESET",
+                   pressedButton == BTN_TIMER_RESET,
+                   selectedButton == BTN_TIMER_RESET,
+                   -1);
+
+  lastTimerDisplayText[0] = '\0';
+  lastTimerDrawMode = timerMode;
+  lastTimerDrawRunning = timerRunning;
+  lastTimerAlarmActive = false;
+  lastTimerAlarmVisible = true;
+  timerNeedsRedraw = true;
+}
+
+void drawTimerDynamic() {
+  unsigned long now = millis();
+  bool alarmActive = isTimerElapsed(now);
+  bool alarmVisible = !alarmActive || ((now / TIMER_ALARM_BLINK_MS) % 2 == 0);
+  char displayText[12];
+  formatTimerDisplay(getTimerDisplayMs(now), displayText, sizeof(displayText));
+
+  bool buttonsChanged = (lastTimerDrawMode != timerMode || lastTimerDrawRunning != timerRunning);
+  if (buttonsChanged) {
+    tft.fillRect(TIMER_COUNT_DOWN_X - 4, TIMER_MODE_Y - 4, 216, 78, COLOR_BG);
+    drawButtonBubble(TIMER_COUNT_DOWN_X, TIMER_MODE_Y, TIMER_MODE_W, TIMER_MODE_H, "COUNT DN",
+                     false, timerMode == TIMER_MODE_COUNT_DOWN, -1);
+    drawButtonBubble(TIMER_COUNT_UP_X, TIMER_MODE_Y, TIMER_MODE_W, TIMER_MODE_H, "COUNT UP",
+                     false, timerMode == TIMER_MODE_COUNT_UP, -1);
+    drawButtonBubble(TIMER_START_X, TIMER_ACTION_Y, TIMER_ACTION_W, TIMER_ACTION_H, timerRunning ? "PAUSE" : "START",
+                     false, selectedButton == BTN_TIMER_START_PAUSE, -1);
+    drawButtonBubble(TIMER_RESET_X, TIMER_ACTION_Y, TIMER_ACTION_W, TIMER_ACTION_H, "RESET",
+                     false, selectedButton == BTN_TIMER_RESET, -1);
+    lastTimerDrawMode = timerMode;
+    lastTimerDrawRunning = timerRunning;
+  }
+
+  if (strcmp(displayText, lastTimerDisplayText) != 0 ||
+      alarmActive != lastTimerAlarmActive ||
+      alarmVisible != lastTimerAlarmVisible ||
+      timerNeedsRedraw) {
+    tft.fillRoundRect(TIMER_DISPLAY_X + 4, TIMER_DISPLAY_Y + 4,
+                      TIMER_DISPLAY_W - 8, TIMER_DISPLAY_H - 8, 10, COLOR_PANEL);
+    if (alarmVisible) {
+      tft.setTextColor(alarmActive ? TFT_RED : COLOR_ACCENT_HI, COLOR_PANEL);
+      tft.drawCentreString(displayText, 120, TIMER_DISPLAY_Y + 10, 7);
+    }
+
+    tft.setTextFont(2);
+    tft.setTextColor(fadeColor(COLOR_TEXT, 0.72f), COLOR_PANEL);
+    char targetText[18];
+    formatTimerTargetBuffer(targetText, sizeof(targetText));
+    tft.drawCentreString(targetText, 120, TIMER_DISPLAY_Y + 62, 2);
+
+    strncpy(lastTimerDisplayText, displayText, sizeof(lastTimerDisplayText) - 1);
+    lastTimerDisplayText[sizeof(lastTimerDisplayText) - 1] = '\0';
+    lastTimerAlarmActive = alarmActive;
+    lastTimerAlarmVisible = alarmVisible;
+  }
+
+  timerNeedsRedraw = false;
+}
+
+void handleTimerTouch(int x, int y) {
+  if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
+    queueScreenButton(BTN_BACK, SCREEN_MAIN);
+    return;
+  }
+
+  if (waitingForRelease) return;
+
+  if (isInside(x, y, TIMER_DISPLAY_X, TIMER_DISPLAY_Y, TIMER_DISPLAY_W, TIMER_DISPLAY_H)) {
+    openMixNumpad(NUMPAD_TARGET_TIMER_VALUE);
+    waitingForRelease = true;
+    return;
+  }
+
+  if (isInside(x, y, TIMER_COUNT_DOWN_X, TIMER_MODE_Y, TIMER_MODE_W, TIMER_MODE_H)) {
+    pressedButton = BTN_TIMER_COUNT_DOWN;
+    selectedButton = BTN_TIMER_COUNT_DOWN;
+    timerMode = TIMER_MODE_COUNT_DOWN;
+    resetTimerRuntime();
+    waitingForRelease = true;
+    uiNeedsRedraw = true;
+    return;
+  }
+
+  if (isInside(x, y, TIMER_COUNT_UP_X, TIMER_MODE_Y, TIMER_MODE_W, TIMER_MODE_H)) {
+    pressedButton = BTN_TIMER_COUNT_UP;
+    selectedButton = BTN_TIMER_COUNT_UP;
+    timerMode = TIMER_MODE_COUNT_UP;
+    resetTimerRuntime();
+    waitingForRelease = true;
+    uiNeedsRedraw = true;
+    return;
+  }
+
+  if (isInside(x, y, TIMER_START_X, TIMER_ACTION_Y, TIMER_ACTION_W, TIMER_ACTION_H)) {
+    pressedButton = BTN_TIMER_START_PAUSE;
+    selectedButton = BTN_TIMER_START_PAUSE;
+    if (timerRunning) {
+      timerAccumulatedMs = getTimerElapsedMs(millis());
+      timerRunning = false;
+    } else {
+      timerRunStartedAt = millis();
+      timerRunning = true;
+    }
+    timerNeedsRedraw = true;
+    waitingForRelease = true;
+    uiNeedsRedraw = true;
+    return;
+  }
+
+  if (isInside(x, y, TIMER_RESET_X, TIMER_ACTION_Y, TIMER_ACTION_W, TIMER_ACTION_H)) {
+    pressedButton = BTN_TIMER_RESET;
+    selectedButton = BTN_TIMER_RESET;
+    timerInputBuffer = "";
+    timerTargetSeconds = 0;
+    resetTimerRuntime();
+    waitingForRelease = true;
+    uiNeedsRedraw = true;
+    return;
+  }
+
+}
+
 // ==== STATIC MAIN SCREEN ====
 void drawMainScreenStatic() {
+  updateMainModelPanelBounds();
 
   int stickY = 50;
   int stickSize = 80;
@@ -9564,6 +15029,7 @@ void drawMainScreenStatic() {
 
   drawStickBase(20, stickY, stickSize);
   drawStickBase(140, stickY, stickSize);
+  drawThreePosSwitchIndicator(120, stickY + 7, getThreePosSwitchPosition());
 
   drawButtonBubble(
     MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H,
@@ -9575,6 +15041,8 @@ void drawMainScreenStatic() {
 }
 
 void drawModelPanelSemiStatic() {
+updateMainModelPanelBounds();
+  mainOutputPanelNeedsRedraw = true;
   
   int stickY = 50;
   int stickSize = 80;
@@ -9615,6 +15083,7 @@ void drawModelPanelSemiStatic() {
 
 // ==== DYNAMIC MAIN SCREEN ====
 void drawMainScreenDynamic() {
+updateMainModelPanelBounds();
 
 int stickY = 50;
 int stickSize = 80;
@@ -9640,25 +15109,49 @@ int ry = -inputChannels[1] * range;
 
 static int lastLX = 0, lastLY = 0;
 static int lastRX = 0, lastRY = 0;
+static int lastThreePos = 99;
 static int lastLatency = -1;
 static float lastTelemetryVoltage = -1;
 static String lastModel = "";
-static unsigned long lastRightPanelRefreshTime = 0;
+static ProtocolType lastRightPanelProtocol = PROTOCOL_ESPNOW;
+static bool lastRightPanelElrsLink = false;
+static uint8_t lastRightPanelLq = 255;
+static int8_t lastRightPanelSnr = 127;
+static uint8_t lastRightPanelRssi1 = 255;
+static uint8_t lastRightPanelRssi2 = 255;
 
-if (espNowLatency != lastLatency ||
-    abs(telemetryVoltage - lastTelemetryVoltage) > 0.01 ||
+ProtocolType rightPanelProtocol = getModelProtocol(activeModel);
+bool rightPanelChanged =
     currentModelName != lastModel ||
-    (millis() - lastRightPanelRefreshTime >= 200)) {
+    rightPanelProtocol != lastRightPanelProtocol ||
+    espNowLatency != lastLatency ||
+    abs(telemetryVoltage - lastTelemetryVoltage) > 0.01;
+
+if (rightPanelProtocol == PROTOCOL_ELRS) {
+  rightPanelChanged = rightPanelChanged ||
+    elrsLinkActive != lastRightPanelElrsLink ||
+    elrsUplinkLq != lastRightPanelLq ||
+    elrsUplinkSnr != lastRightPanelSnr ||
+    elrsUplinkRssi1 != lastRightPanelRssi1 ||
+    elrsUplinkRssi2 != lastRightPanelRssi2;
+}
+
+if (rightPanelChanged) {
 
   int rightX = panelX + panelW / 2;
   int rightW = panelW / 2;
 
-  drawRightPanel(rightX, modelY, rightW, modelH);
+  drawRightPanelDynamic(rightX, modelY, rightW, modelH);
 
   lastLatency = espNowLatency;
   lastTelemetryVoltage = telemetryVoltage;
   lastModel = currentModelName;
-  lastRightPanelRefreshTime = millis();
+  lastRightPanelProtocol = rightPanelProtocol;
+  lastRightPanelElrsLink = elrsLinkActive;
+  lastRightPanelLq = elrsUplinkLq;
+  lastRightPanelSnr = elrsUplinkSnr;
+  lastRightPanelRssi1 = elrsUplinkRssi1;
+  lastRightPanelRssi2 = elrsUplinkRssi2;
 }
 
   // ===== ERASE OLD KNOBS =====
@@ -9673,6 +15166,12 @@ if (rx != lastRX || ry != lastRY) {
   drawStickKnob(20, stickY, stickSize, lx, ly);
   drawStickKnob(140, stickY, stickSize, rx, ry);
 
+int threePos = getThreePosSwitchPosition();
+if (threePos != lastThreePos || fullRedraw) {
+  drawThreePosSwitchIndicator(120, stickY + 7, threePos);
+  lastThreePos = threePos;
+}
+
 lastLX = lx;
 lastLY = ly;
 lastRX = rx;
@@ -9684,61 +15183,73 @@ int iconY = modelY + 10;
 int iconW = (panelW - 20) / 2;
 int iconH = modelH - 20;
 
+float protocolChannels[CHANNEL_COUNT];
+buildProtocolOutputChannels(protocolChannels);
+
 if (currentDrive == DRIVE_TANK) {
 
 static float lastLeft = 0;
 static float lastRight = 0;
-float tankLeftOutput = leftThrottle;
-float tankRightOutput = rightThrottle;
-
-if (getModelTankMode(activeModel) == TANK_MODE_DUAL_STICK) {
-  tankLeftOutput = leftY;
-  tankRightOutput = rightY;
+static float lastTurret = 0;
+static float lastWeapon = 0;
+static bool lastShowTurret = true;
+static bool lastShowWeapon = true;
+uint8_t leftChannel = getModelTankLeftEscChannel(activeModel);
+uint8_t rightChannel = getModelTankRightEscChannel(activeModel);
+if (leftChannel >= CHANNEL_COUNT || rightChannel >= CHANNEL_COUNT || leftChannel == rightChannel) {
+  leftChannel = 1;
+  rightChannel = 0;
 }
-else {
-  float throttle = rightY;
-  float turn = rightThrottle;
-  tankLeftOutput = constrain(throttle + turn, -1.0, 1.0);
-  tankRightOutput = constrain(throttle - turn, -1.0, 1.0);
-}
+float tankLeftOutput = getVehicleDisplayOutput(protocolChannels, leftChannel);
+float tankRightOutput = getVehicleDisplayOutput(protocolChannels, rightChannel);
+bool tankCh3IsDrive = (leftChannel == 2 || rightChannel == 2);
+bool tankCh4IsDrive = (leftChannel == 3 || rightChannel == 3);
+bool tankShowTurretArc = !tankCh4IsDrive;
+bool tankShowWeaponBar = (getModelTankMode(activeModel) == TANK_MODE_RIGHT_STICK) && !tankCh3IsDrive;
+float tankTurretOutput = tankShowTurretArc
+  ? getVehicleDisplayOutput(protocolChannels, 3)  // CH4
+  : 0.0f;
+float tankWeaponOutput = tankShowWeaponBar
+  ? getVehicleDisplayOutput(protocolChannels, 2)  // CH3
+  : -1.0f;
 
-if (abs(tankLeftOutput - lastLeft) > 0.01 ||
-    abs(tankRightOutput - lastRight) > 0.01) {
+if (mainOutputPanelNeedsRedraw ||
+    abs(tankLeftOutput - lastLeft) > 0.01 ||
+    abs(tankRightOutput - lastRight) > 0.01 ||
+    abs(tankTurretOutput - lastTurret) > 0.01 ||
+    abs(tankWeaponOutput - lastWeapon) > 0.01 ||
+    tankShowTurretArc != lastShowTurret ||
+    tankShowWeaponBar != lastShowWeapon) {
 
-  int barW = 6;
-
-  int cx = iconX + iconW / 2;
-  int bodyW = iconW / 2;
-  int trackOffset = bodyW / 2 + 8;
-
-  int leftX  = cx - trackOffset;
-  int rightX = cx + trackOffset - barW;
-
-  int top = iconY + 10;
-  int height = iconH - 20;
+  tft.fillRect(iconX - 2, iconY, iconW + 4, iconH, COLOR_STICK_PANEL);
 
   // ✅ CLEAR FIRST
-  tft.fillRect(leftX - 1,  top, barW + 2, height, COLOR_STICK_PANEL);
-  tft.fillRect(rightX - 1, top, barW + 2, height, COLOR_STICK_PANEL);
 
   // ✅ THEN redraw icon (restores tracks)
   drawLegacyTankIcon(iconX, iconY, iconW, iconH, COLOR_ACCENT);
 
   // ✅ THEN bars on top
   drawTankBars(iconX, iconY, iconW, iconH, tankLeftOutput, tankRightOutput);
+  drawTankAuxBars(iconX, iconY, iconW, iconH, tankTurretOutput, tankWeaponOutput);
 
   lastLeft = tankLeftOutput;
   lastRight = tankRightOutput;
+  lastTurret = tankTurretOutput;
+  lastWeapon = tankWeaponOutput;
+  lastShowTurret = tankShowTurretArc;
+  lastShowWeapon = tankShowWeaponBar;
+  mainOutputPanelNeedsRedraw = false;
 }
 }
 else if (currentDrive == DRIVE_CAR) {
 
 static float lastSteering = 0.0f;
 static float lastThrottle = 0.0f;
-float carSteeringOutput = getCarSteeringOutput();
-float carThrottleOutput = getCarThrottleOutput();
+float carSteeringOutput = getVehicleDisplayOutput(protocolChannels, 0);
+float carThrottleOutput = getVehicleDisplayOutput(protocolChannels, 1);
 
-if (abs(carSteeringOutput - lastSteering) > 0.01 ||
+if (mainOutputPanelNeedsRedraw ||
+    abs(carSteeringOutput - lastSteering) > 0.01 ||
     abs(carThrottleOutput - lastThrottle) > 0.01) {
 
   tft.fillRect(iconX - 2, iconY, iconW + 2, iconH, COLOR_STICK_PANEL);
@@ -9747,6 +15258,7 @@ if (abs(carSteeringOutput - lastSteering) > 0.01 ||
 
   lastSteering = carSteeringOutput;
   lastThrottle = carThrottleOutput;
+  mainOutputPanelNeedsRedraw = false;
 }
 }
 else if (currentDrive == DRIVE_OMNI) {
@@ -9754,11 +15266,12 @@ else if (currentDrive == DRIVE_OMNI) {
 static float lastOmniArc = 0.0f;
 static float lastOmniX = 0.0f;
 static float lastOmniY = 0.0f;
-float omniArcOutput = outputChannels[3];
-float omniXOutput = outputChannels[0];
-float omniYOutput = outputChannels[1];
+float omniArcOutput = getVehicleDisplayOutput(protocolChannels, 3);
+float omniXOutput = getVehicleDisplayOutput(protocolChannels, 0);
+float omniYOutput = getVehicleDisplayOutput(protocolChannels, 1);
 
-if (abs(omniArcOutput - lastOmniArc) > 0.01 ||
+if (mainOutputPanelNeedsRedraw ||
+    abs(omniArcOutput - lastOmniArc) > 0.01 ||
     abs(omniXOutput - lastOmniX) > 0.01 ||
     abs(omniYOutput - lastOmniY) > 0.01) {
 
@@ -9769,6 +15282,51 @@ if (abs(omniArcOutput - lastOmniArc) > 0.01 ||
   lastOmniArc = omniArcOutput;
   lastOmniX = omniXOutput;
   lastOmniY = omniYOutput;
+  mainOutputPanelNeedsRedraw = false;
+}
+}
+else if (currentDrive == DRIVE_X_DRONE) {
+
+static float lastDroneYaw = 0.0f;
+static float lastQuad1 = -1.0f;
+static float lastQuad2 = -1.0f;
+static float lastQuad3 = -1.0f;
+static float lastQuad4 = -1.0f;
+
+// Drone visualization shows the command being sent to a flight controller,
+// not literal motor outputs. Use processed stick values before drive mixing.
+float droneYaw = driveSourceChannels[3];       // Left stick X
+float droneThrottle = (driveSourceChannels[2] + 1.0f) * 0.5f;  // Left stick Y
+float droneRoll = driveSourceChannels[0];      // Right stick X
+float dronePitch = driveSourceChannels[1];     // Right stick Y
+const float cyclicScale = 0.5f;
+
+// Motor order: 1 front-left, 2 front-right, 3 rear-right, 4 rear-left.
+float quad1Output = droneThrottle - (dronePitch * cyclicScale) + (droneRoll * cyclicScale);
+float quad2Output = droneThrottle - (dronePitch * cyclicScale) - (droneRoll * cyclicScale);
+float quad3Output = droneThrottle + (dronePitch * cyclicScale) - (droneRoll * cyclicScale);
+float quad4Output = droneThrottle + (dronePitch * cyclicScale) + (droneRoll * cyclicScale);
+
+quad1Output = constrain(quad1Output, 0.0f, 1.0f);
+quad2Output = constrain(quad2Output, 0.0f, 1.0f);
+quad3Output = constrain(quad3Output, 0.0f, 1.0f);
+quad4Output = constrain(quad4Output, 0.0f, 1.0f);
+
+if (mainOutputPanelNeedsRedraw ||
+    abs(droneYaw - lastDroneYaw) > 0.01 ||
+    abs(quad1Output - lastQuad1) > 0.01 ||
+    abs(quad2Output - lastQuad2) > 0.01 ||
+    abs(quad3Output - lastQuad3) > 0.01 ||
+    abs(quad4Output - lastQuad4) > 0.01) {
+
+  drawDroneCommandBars(iconX, iconY, iconW, iconH, droneYaw, quad1Output, quad2Output, quad3Output, quad4Output);
+
+  lastDroneYaw = droneYaw;
+  lastQuad1 = quad1Output;
+  lastQuad2 = quad2Output;
+  lastQuad3 = quad3Output;
+  lastQuad4 = quad4Output;
+  mainOutputPanelNeedsRedraw = false;
 }
 }
 
@@ -9884,6 +15442,38 @@ void drawTankBars(int x, int y, int w, int h, float left, float right) {
   drawCenteredBar(rightX, top, barW, height, right);
 }
 
+void drawTankAuxBars(int x, int y, int w, int h, float turret, float weapon) {
+  int cx = x + w / 2;
+  int bodyW = w / 2;
+  int bodyH = bodyW + 14;
+  int bodyY = y + (h - bodyH) / 2;
+  int turretCy = bodyY + bodyH / 2;
+
+  turret = constrain(turret, -1.0f, 1.0f);
+  weapon = constrain(weapon, -1.0f, 1.0f);
+
+  int turretSpan = roundf(abs(turret) * 90.0f);
+  if (turretSpan > 2) {
+    int startDeg = (turret < 0.0f) ? (-90 - turretSpan) : -90;
+    int endDeg = (turret < 0.0f) ? -90 : (-90 + turretSpan);
+    uint16_t turretColor = throttleColor(abs(turret) * 2.0f - 1.0f);
+    drawThickArc(cx, turretCy, 9, 12, startDeg, endDeg, turretColor);
+  }
+
+  int barX = x + 12;
+  int barY = min(y + h - 8, bodyY + bodyH + 8);
+  int barW = w - 24;
+  int barH = 5;
+  float weaponLevel = constrain((weapon + 1.0f) * 0.5f, 0.0f, 1.0f);
+  int fillW = roundf(weaponLevel * barW);
+
+  for (int i = 0; i < fillW; i++) {
+    float gradient = (barW <= 1) ? 0.0f : (float)i / (barW - 1);
+    uint16_t c = throttleColor(gradient * 2.0f - 1.0f);
+    tft.drawFastVLine(barX + i, barY, barH, c);
+  }
+}
+
 float getCarSteeringOutput() {
   if (getModelTankMode(activeModel) == TANK_MODE_DUAL_STICK) {
     return outputChannels[3];  // CH4 = left X
@@ -9993,6 +15583,124 @@ void drawOmniBars(int x, int y, int w, int h, float ch4, float ch1, float ch2) {
   tft.drawPixel(markerX, markerY, COLOR_TEXT);
 }
 
+void drawThickArc(int cx, int cy, int innerR, int outerR, int startDeg, int endDeg, uint16_t color) {
+  if (endDeg < startDeg) {
+    int temp = startDeg;
+    startDeg = endDeg;
+    endDeg = temp;
+  }
+
+  for (int angle = startDeg; angle <= endDeg; angle += 2) {
+    float radians = angle * 0.0174532925f;
+    float arcCos = cosf(radians);
+    float arcSin = sinf(radians);
+    for (int radius = innerR; radius <= outerR; radius++) {
+      int px = cx + (int)roundf(arcCos * radius);
+      int py = cy + (int)roundf(arcSin * radius);
+      tft.drawPixel(px, py, color);
+    }
+  }
+}
+
+void restoreQuadXIconClip(int iconX, int iconY, int iconW, int iconH, int clipX, int clipY, int clipW, int clipH) {
+  int left = max(iconX, clipX);
+  int top = max(iconY, clipY);
+  int right = min(iconX + iconW, clipX + clipW);
+  int bottom = min(iconY + iconH, clipY + clipH);
+  if (left >= right || top >= bottom) return;
+
+  for (int py = top; py < bottom; py++) {
+    int dy = py - iconY;
+    int sy = (dy * ICON_X_DRONE_H) / iconH;
+    int srcRow = sy * ICON_X_DRONE_W;
+
+    for (int px = left; px < right; px++) {
+      int dx = px - iconX;
+      int sx = (dx * ICON_X_DRONE_W) / iconW;
+      uint16_t srcColor = icon_X_DRONE[srcRow + sx];
+      if (srcColor == ICON_TRANSPARENT_RGB565) continue;
+      tft.drawPixel(px, py, tintRgb565Pixel(srcColor, COLOR_ACCENT));
+    }
+  }
+}
+
+void clearDroneIndicatorRegion(int iconX, int iconY, int iconW, int iconH, int cx, int cy, int radius) {
+  int pad = 5;
+  int clearX = cx - radius - pad;
+  int clearY = cy - radius - pad;
+  int clearW = (radius + pad) * 2 + 1;
+  int clearH = clearW;
+
+  tft.fillRect(clearX, clearY, clearW, clearH, COLOR_STICK_PANEL);
+  restoreQuadXIconClip(iconX, iconY, iconW, iconH, clearX, clearY, clearW, clearH);
+}
+
+void drawDroneThrottleArc(int cx, int cy, int radius, float value, bool topHalf) {
+  value = constrain(value, 0.0f, 1.0f);
+  if (value < 0.03f) {
+    return;
+  }
+
+  int innerR = max(2, radius - 3);
+  int outerR = radius;
+
+  int arcStart = topHalf ? 180 : 0;
+  int activeEnd = arcStart + (int)roundf(value * 180.0f);
+  if (activeEnd > arcStart + 4) {
+    for (int angle = arcStart; angle <= activeEnd; angle += 2) {
+      float radians = angle * 0.0174532925f;
+      float arcCos = cosf(radians);
+      float arcSin = sinf(radians);
+      float progress = constrain((float)(angle - arcStart) / 180.0f, 0.0f, 1.0f);
+      uint16_t c = throttleColor((progress * 2.0f) - 1.0f);
+
+      for (int radiusStep = innerR; radiusStep <= outerR; radiusStep++) {
+        int px = cx + (int)roundf(arcCos * radiusStep);
+        int py = cy + (int)roundf(arcSin * radiusStep);
+        tft.drawPixel(px, py, c);
+      }
+    }
+  }
+}
+
+void drawDroneCommandBars(int x, int y, int w, int h, float yaw, float m1, float m2, float m3, float m4) {
+  int cx = x + w / 2;
+  int cy = y + h / 2;
+  int motorR = max(6, min(w, h) / 9);
+
+  int m1x = x + (w * 24) / 100;
+  int m1y = y + (h * 16) / 100;
+  int m2x = x + (w * 76) / 100;
+  int m2y = y + (h * 16) / 100;
+  int m3x = x + (w * 76) / 100;
+  int m3y = y + (h * 84) / 100;
+  int m4x = x + (w * 24) / 100;
+  int m4y = y + (h * 84) / 100;
+
+  clearDroneIndicatorRegion(x, y, w, h, m1x, m1y, motorR);
+  clearDroneIndicatorRegion(x, y, w, h, m2x, m2y, motorR);
+  clearDroneIndicatorRegion(x, y, w, h, m3x, m3y, motorR);
+  clearDroneIndicatorRegion(x, y, w, h, m4x, m4y, motorR);
+
+  drawDroneThrottleArc(m1x, m1y, motorR, m1, true);
+  drawDroneThrottleArc(m2x, m2y, motorR, m2, true);
+  drawDroneThrottleArc(m3x, m3y, motorR, m3, false);
+  drawDroneThrottleArc(m4x, m4y, motorR, m4, false);
+
+  int yawInnerR = max(8, min(w, h) / 5);
+  int yawOuterR = yawInnerR + 4;
+  int yawClearR = yawOuterR + 2;
+  clearDroneIndicatorRegion(x, y, w, h, cx, cy, yawClearR);
+
+  int yawSpan = (int)roundf(constrain(yaw, -1.0f, 1.0f) * 90.0f);
+  if (yawSpan != 0) {
+    int yawCenter = 270;
+    int yawStart = min(yawCenter, yawCenter + yawSpan);
+    int yawEnd = max(yawCenter, yawCenter + yawSpan);
+    drawThickArc(cx, cy, yawInnerR, yawOuterR, yawStart, yawEnd, COLOR_ACCENT_HI);
+  }
+}
+
   // ==== RIGHT PANEL INFO ====
 void drawRightPanel(int x, int y, int w, int h) {
 
@@ -10009,41 +15717,103 @@ void drawRightPanel(int x, int y, int w, int h) {
   tft.setCursor(x + 10, lineY);
   tft.print("Model:");
 
-  tft.setCursor(x + 14, lineY + 15);
-  tft.setTextColor(COLOR_ACCENT);
-  tft.print(currentModelName);
+  ProtocolType protocol = getModelProtocol(activeModel);
+  if (protocol == PROTOCOL_ELRS) {
+    // ===== ELRS LINK =====
+    lineY += 30;
+    tft.setTextColor(COLOR_TEXT);
+    tft.setCursor(x + 10, lineY);
+    tft.print("Link:");
 
-  // ===== LATENCY =====
-  lineY += 30;
-
-  tft.setTextColor(COLOR_TEXT);
-  tft.setCursor(x + 10, lineY);
-  tft.print("Latency:");
-
-  int latencySnapshot = espNowLatency;
-  tft.setCursor(x + 14, lineY + 15);
-  tft.setTextColor(COLOR_ACCENT);
-  if (hasEspNowHeaderSignal(millis())) {
-    tft.print(max(0, latencySnapshot));
-    tft.print(" ms");
+    // ===== ELRS RSSI =====
+    lineY += 45;
+    tft.setTextColor(COLOR_TEXT);
+    tft.setCursor(x + 10, lineY);
+    tft.print("RSSI:");
   } else {
-    tft.print("-- ms");
+    // ===== ESP-NOW LATENCY =====
+    lineY += 30;
+
+    tft.setTextColor(COLOR_TEXT);
+    tft.setCursor(x + 10, lineY);
+    tft.print("Latency:");
+
+    // ===== ESP-NOW VOLTAGE =====
+    lineY += 30;
+
+    tft.setTextColor(COLOR_TEXT);
+    tft.setCursor(x + 10, lineY);
+    tft.print("Voltage:");
   }
 
-  // ===== VOLTAGE =====
-  lineY += 30;
+  drawRightPanelDynamic(x, y, w, h);
+}
 
-  tft.setTextColor(COLOR_TEXT);
-  tft.setCursor(x + 10, lineY);
-  tft.print("Voltage:");
+void drawRightPanelDynamic(int x, int y, int w, int h) {
+  int lineY = y + 5;
+  int valueX = x + 14;
+  int valueW = max(20, w - 24);
+  char valueText[32];
 
-  tft.setCursor(x + 14, lineY + 15);
-  tft.setTextColor(COLOR_ACCENT);
-  if (telemetryVoltage > 0.05f) {
-    tft.print(telemetryVoltage, 2);
-    tft.print(" V");
+  tft.setTextFont(2);
+
+  tft.fillRect(valueX, lineY + 15, valueW, 16, COLOR_STICK_PANEL);
+  tft.setTextColor(COLOR_ACCENT, COLOR_STICK_PANEL);
+  tft.setCursor(valueX, lineY + 15);
+  tft.print(currentModelName);
+
+  ProtocolType protocol = getModelProtocol(activeModel);
+  if (protocol == PROTOCOL_ELRS) {
+    lineY += 30;
+    tft.fillRect(valueX, lineY + 15, valueW, 31, COLOR_STICK_PANEL);
+    tft.setTextColor(COLOR_ACCENT, COLOR_STICK_PANEL);
+    if (elrsLinkActive) {
+      snprintf(valueText, sizeof(valueText), "LQ %u", (unsigned int)elrsUplinkLq);
+      tft.setCursor(valueX, lineY + 15);
+      tft.print(valueText);
+      snprintf(valueText, sizeof(valueText), "SNR %d", (int)elrsUplinkSnr);
+      tft.setCursor(valueX, lineY + 30);
+      tft.print(valueText);
+    } else {
+      tft.setCursor(valueX, lineY + 15);
+      tft.print("No Link");
+    }
+
+    lineY += 45;
+    tft.fillRect(valueX, lineY + 15, valueW, 16, COLOR_STICK_PANEL);
+    tft.setTextColor(COLOR_ACCENT, COLOR_STICK_PANEL);
+    tft.setCursor(valueX, lineY + 15);
+    if (elrsLinkActive) {
+      snprintf(valueText, sizeof(valueText), "%u / %u",
+               (unsigned int)elrsUplinkRssi1,
+               (unsigned int)elrsUplinkRssi2);
+      tft.print(valueText);
+    } else {
+      tft.print("-- / --");
+    }
   } else {
-    tft.print("--.-- V");
+    lineY += 30;
+    tft.fillRect(valueX, lineY + 15, valueW, 16, COLOR_STICK_PANEL);
+    tft.setTextColor(COLOR_ACCENT, COLOR_STICK_PANEL);
+    tft.setCursor(valueX, lineY + 15);
+    if (hasEspNowHeaderSignal(millis())) {
+      int latencySnapshot = espNowLatency;
+      snprintf(valueText, sizeof(valueText), "%d ms", max(0, latencySnapshot));
+      tft.print(valueText);
+    } else {
+      tft.print("-- ms");
+    }
+
+    lineY += 30;
+    tft.fillRect(valueX, lineY + 15, valueW, 16, COLOR_STICK_PANEL);
+    tft.setTextColor(COLOR_ACCENT, COLOR_STICK_PANEL);
+    tft.setCursor(valueX, lineY + 15);
+    if (telemetryVoltage > 0.05f) {
+      tft.print(telemetryVoltage, 2);
+      tft.print(" V");
+    } else {
+      tft.print("--.-- V");
+    }
   }
 }
 
@@ -10121,15 +15891,15 @@ void drawBottomBar(int x, int y, int w, int h, float value) {
   void drawBattery(int x, int y, int level, bool present, bool charging) {
   // level = 0–100
 
-  int w = 24;
-  int h = 12;
+  int w = 32;
+  int h = 16;
   int padding = 2;
 
   // ===== OUTLINE =====
   tft.drawRoundRect(x, y, w, h, 2, COLOR_TEXT);
 
   // terminal
-  tft.fillRect(x + w, y + (h / 3), 3, h / 3, COLOR_TEXT);
+  tft.fillRect(x + w, y + (h / 3), 4, h / 3, COLOR_TEXT);
 
   if (!present) {
     tft.drawLine(x + 4, y + 3, x + w - 4, y + h - 3, COLOR_ACCENT_HI);
@@ -10157,16 +15927,14 @@ void drawBottomBar(int x, int y, int w, int h, float value) {
   );
 
   if (charging) {
-    int boltX = x + 9;
-    int boltY = y + 1;
-    tft.fillTriangle(boltX + 3, boltY, boltX, boltY + 5, boltX + 4, boltY + 5, COLOR_BG);
-    tft.fillTriangle(boltX + 3, boltY + 10, boltX + 2, boltY + 5, boltX + 6, boltY + 5, COLOR_BG);
+    int boltX = x + 13;
+    int boltY = y + 2;
+    tft.fillTriangle(boltX + 4, boltY, boltX, boltY + 7, boltX + 5, boltY + 7, COLOR_TEXT);
+    tft.fillTriangle(boltX + 4, boltY + 12, boltX + 3, boltY + 7, boltX + 8, boltY + 7, COLOR_TEXT);
   }
 }
 
 void drawTopBarStatic() {
-  ProtocolType protocol = getModelProtocol(activeModel);
-
   // ===== CLEAR AREA =====
   tft.fillRect(0, 0, 240, 35, COLOR_BG);
 
@@ -10175,31 +15943,21 @@ void drawTopBarStatic() {
   tft.setTextColor(COLOR_TEXT);
   tft.setCursor(10, 5);
   tft.print("Anubis");
+  tft.setTextFont(1);
+  tft.setTextSize(1);
 
-  // ===== STATUS LABEL =====
-  tft.setTextFont(2);
-  tft.setTextColor(COLOR_TEXT);
-
-  if (protocol == PROTOCOL_ESPNOW) {
-    tft.setCursor(104, 10);
-    tft.print("Latency");
-  }
-  else {
-    tft.setCursor(110, 10);
-    tft.print("RSSI");
-  }
+  topBarForceRedraw = true;
 }
 
 void drawTopBarDynamic() {
 
-  static unsigned long lastBlinkTime = 0;
-  static bool blinkState = true;
-  static bool lastBlinkState = true;
   static bool lastBatteryPresent = true;
   static bool lastBatteryCharging = false;
-  static bool lastNoSignalFlashState = true;
   static bool lastNoSignalEligible = false;
   static bool lastEspNowSignalState = false;
+  static bool lastElrsLinkState = false;
+  static bool lastElrsModuleState = false;
+  static uint8_t lastHeaderElrsLq = 255;
   static ProtocolType lastProtocol = PROTOCOL_ELRS;
   static int lastHeaderLatency = -1;
 
@@ -10213,28 +15971,26 @@ void drawTopBarDynamic() {
     lastSignal = -1;
     lastHeaderLatency = -1;
     lastEspNowSignalState = false;
-    lastNoSignalFlashState = true;
+    lastElrsLinkState = false;
+    lastElrsModuleState = false;
+    lastHeaderElrsLq = 255;
   }
 
-  if (batteryPresent && !batteryCharging && batteryLevel < 10) {
-    if (now - lastBlinkTime >= 1000) {
-      blinkState = !blinkState;
-      lastBlinkTime = now;
-    }
-  } 
-    else {
-      blinkState = true; // always visible if not low
-    }
-
   bool espNowSignalPresent = hasEspNowHeaderSignal(now);
-  bool noSignalEligible = (lastEspNowAliveTime > 0) ||
-    (espNowProtocolStartTime > 0 &&
-     (now - espNowProtocolStartTime) > ESPNOW_HEADER_SIGNAL_TIMEOUT_MS);
-  bool noSignalFlashState = ((now / 400) % 2) == 0;
+  bool elrsSignalPresent = elrsLinkActive;
+  bool elrsNoSignalEligible = elrsModulePresent || lastElrsSerialRxTime > 0;
+  bool noSignalEligible = false;
+  if (protocol == PROTOCOL_ESPNOW) {
+    noSignalEligible = (lastEspNowAliveTime > 0) ||
+      (espNowProtocolStartTime > 0 &&
+       (now - espNowProtocolStartTime) > ESPNOW_HEADER_SIGNAL_TIMEOUT_MS);
+  } else {
+    noSignalEligible = elrsNoSignalEligible;
+  }
 
-  bool headerStateChanged = protocolChanged ||
+  bool headerStateChanged = topBarForceRedraw ||
+    protocolChanged ||
     batteryLevel != lastBattery ||
-    blinkState != lastBlinkState ||
     batteryPresent != lastBatteryPresent ||
     batteryCharging != lastBatteryCharging;
 
@@ -10242,12 +15998,15 @@ void drawTopBarDynamic() {
     headerStateChanged = headerStateChanged ||
       espNowSignalPresent != lastEspNowSignalState ||
       noSignalEligible != lastNoSignalEligible ||
-      latencySnapshot != lastHeaderLatency ||
-      noSignalFlashState != lastNoSignalFlashState;
+      latencySnapshot != lastHeaderLatency;
   }
   else {
     headerStateChanged = headerStateChanged ||
-      signalStrength != lastSignal;
+      signalStrength != lastSignal ||
+      elrsSignalPresent != lastElrsLinkState ||
+      elrsModulePresent != lastElrsModuleState ||
+      noSignalEligible != lastNoSignalEligible ||
+      elrsUplinkLq != lastHeaderElrsLq;
   }
 
   if (headerStateChanged) {
@@ -10265,10 +16024,8 @@ void drawTopBarDynamic() {
       else {
         tft.setTextFont(2);
         if (noSignalEligible) {
-          if (noSignalFlashState) {
-            tft.setTextColor(TFT_RED, COLOR_BG);
-            tft.drawString("No Signal", 118, 10, 2);
-          }
+          tft.setTextColor(TFT_RED, COLOR_BG);
+          tft.drawString("No Signal", 118, 10, 2);
         } else {
           tft.setTextColor(COLOR_TEXT, COLOR_BG);
           tft.drawRightString("-- ms", 194, 10, 2);
@@ -10276,28 +16033,36 @@ void drawTopBarDynamic() {
       }
     }
     else {
-      drawSignalBars(150, 10, signalStrength);
+      if (elrsSignalPresent) {
+        drawSignalBars(150, 10, signalStrength);
+      }
+      else {
+        tft.setTextFont(2);
+        if (noSignalEligible) {
+          tft.setTextColor(TFT_RED, COLOR_BG);
+          tft.drawString("No Signal", 118, 10, 2);
+        } else {
+          tft.setTextColor(COLOR_TEXT, COLOR_BG);
+          tft.drawRightString("--", 178, 10, 2);
+        }
+      }
     }
 
-    tft.fillRect(200, 10, 30, 20, COLOR_BG);
-    if (blinkState) {
-      drawBattery(200, 10, batteryLevel, batteryPresent, batteryCharging);
-    }
-    else {
-      // clear battery area when "off"
-      tft.fillRect(200, 10, 30, 20, COLOR_BG);
-    }
+    tft.fillRect(198, 8, 40, 22, COLOR_BG);
+    drawBattery(200, 10, batteryLevel, batteryPresent, batteryCharging);
 
     lastSignal = signalStrength;
     lastHeaderLatency = latencySnapshot;
     lastBattery = batteryLevel;
-    lastBlinkState = blinkState;
     lastBatteryPresent = batteryPresent;
     lastBatteryCharging = batteryCharging;
     lastEspNowSignalState = espNowSignalPresent;
-    lastNoSignalFlashState = noSignalFlashState;
+    lastElrsLinkState = elrsSignalPresent;
+    lastElrsModuleState = elrsModulePresent;
+    lastHeaderElrsLq = elrsUplinkLq;
     lastNoSignalEligible = noSignalEligible;
     lastProtocol = protocol;
+    topBarForceRedraw = false;
   }
 
   if (protocol == PROTOCOL_ELRS && !elrsLinkActive) {
@@ -10518,8 +16283,8 @@ void drawReverseStatic() {
 
   tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
 
-  int startY = 40;
-  int spacing = 45;
+  int startY = 42;
+  int spacing = 38;
 
   for (int i = 0; i < CHANNEL_COUNT; i++) {
 
@@ -10561,8 +16326,8 @@ void drawReverseStatic() {
 // ==== DYNAMIC REVERSE ====
 void drawReverseDynamic() {
 
-  int startY = 40;
-  int spacing = 45;
+  int startY = 42;
+  int spacing = 38;
 
   for (int i = 0; i < CHANNEL_COUNT; i++) {
 
@@ -11017,22 +16782,21 @@ void drawModelNameStatic() {
   tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
 
   // ===== LABEL =====
-  tft.setTextColor(COLOR_TEXT);
-  tft.setCursor(10, 45);
-  tft.print("Model Name:");
+  tft.setTextColor(COLOR_TEXT, COLOR_BG);
+  tft.drawString("Model Name", 12, 42, 2);
 
   // ===== INPUT BOX =====
-  tft.drawRoundRect(10, 65, 220, 30, 6, COLOR_ACCENT);
+  tft.drawRoundRect(MODEL_NAME_INPUT_X, MODEL_NAME_INPUT_Y, MODEL_NAME_INPUT_W, MODEL_NAME_INPUT_H, 8, COLOR_ACCENT);
   if (dpadFocusVisible && focusIndex == 1) {
-    tft.drawRoundRect(8, 63, 224, 34, 6, COLOR_ACCENT_HI);
+    tft.drawRoundRect(MODEL_NAME_INPUT_X - 2, MODEL_NAME_INPUT_Y - 2,
+                      MODEL_NAME_INPUT_W + 4, MODEL_NAME_INPUT_H + 4, 8, COLOR_ACCENT_HI);
   }
 
   // ===== DIVIDER =====
-  tft.drawFastHLine(10, 105, 220, COLOR_ACCENT);
+  tft.drawFastHLine(10, 112, 220, COLOR_ACCENT);
 
   // ===== LIST LABEL =====
-  tft.setCursor(10, 115);
-  tft.print("Saved:");
+  tft.drawString("Saved", 12, 116, 2);
 }
 
 // ==== MODEL NAME DYNAMIC ====
@@ -11041,63 +16805,61 @@ void drawModelNameDynamic() {
   if (!modelNameDirty && !modelNameNeedsRedraw) return;
 
   // ===== INPUT TEXT =====
-  tft.fillRect(12, 67, 216, 26, COLOR_BG);
+  tft.fillRect(MODEL_NAME_INPUT_X + 4, MODEL_NAME_INPUT_Y + 4,
+               MODEL_NAME_INPUT_W - 8, MODEL_NAME_INPUT_H - 8, COLOR_BG);
 
-  tft.setTextColor(COLOR_TEXT);
-  tft.setCursor(15, 72);
-  tft.print(keyboardBuffer);
+  tft.setTextColor(COLOR_TEXT, COLOR_BG);
+  int inputFont = (keyboardBuffer.length() > 12) ? 2 : 4;
+  int inputTextY = (inputFont == 4) ? (MODEL_NAME_INPUT_Y + 9) : (MODEL_NAME_INPUT_Y + 13);
+  tft.drawString(keyboardBuffer, MODEL_NAME_INPUT_X + 8, inputTextY, inputFont);
 
   // ===== MODEL LIST =====
   for (int i = 0; i < 4; i++) {
 
-    int y = 130 + (i * 25);
+    int y = MODEL_NAME_LIST_Y + (i * MODEL_NAME_ROW_H);
 
-    int numberX = 5;
-    int nameX   = 35;
-    int boxX    = 30;
+    int numberX = 7;
+    int nameX   = MODEL_NAME_NAME_X;
+    int boxX    = MODEL_NAME_BOX_X;
 
     // ===== CLEAR ROW =====
-    tft.fillRect(0, y - 2, 240, 22, COLOR_BG);
+    tft.fillRect(0, y - 3, 240, MODEL_NAME_ROW_H, COLOR_BG);
 
     bool isActive = (i == activeModel);
 
     // ===== HIGHLIGHT BOX =====
     if (isActive) {
-      tft.fillRoundRect(boxX, y - 2, 150, 20, 5, COLOR_ACCENT);
+      tft.fillRoundRect(boxX, y - 2, MODEL_NAME_BOX_W, MODEL_NAME_ROW_H - 6, 7, COLOR_ACCENT);
     }
     if (dpadFocusVisible && focusIndex == i + 2) {
-      tft.drawRoundRect(boxX - 2, y - 4, 154, 24, 5, COLOR_ACCENT_HI);
+      tft.drawRoundRect(boxX - 2, y - 4, MODEL_NAME_BOX_W + 4, MODEL_NAME_ROW_H - 2, 7, COLOR_ACCENT_HI);
     }
 
     // ===== SELECTOR ARROW =====
     if (isActive) {
       tft.setTextColor(COLOR_ACCENT);
-      tft.setCursor(0, y);
-      tft.print(">");
+      tft.drawString(">", 0, y + 4, 2);
     }
 
     // ===== INDEX NUMBER =====
-    tft.setTextColor(COLOR_TEXT);
-    tft.setCursor(numberX, y);
-    tft.print("[");
-    tft.print(i + 1);
-    tft.print("]");
+    tft.setTextColor(COLOR_TEXT, COLOR_BG);
+    char slotText[8];
+    snprintf(slotText, sizeof(slotText), "[%d]", i + 1);
+    tft.drawString(slotText, numberX, y + 4, 2);
 
     // ===== MODEL NAME =====
-    tft.setTextColor(isActive ? COLOR_BG : COLOR_TEXT);
-    tft.setCursor(nameX, y);
-    tft.print(modelNames[i]);
+    tft.setTextColor(isActive ? COLOR_BG : COLOR_TEXT, isActive ? COLOR_ACCENT : COLOR_BG);
+    tft.drawString(modelNames[i], nameX, y + 4, 2);
 
     // ===== DELETE BUTTON =====
-    tft.fillRoundRect(200, y - 2, 25, 18, 4, COLOR_PANEL);
-    tft.drawRoundRect(200, y - 2, 25, 18, 4, COLOR_ACCENT);
+    tft.fillRoundRect(MODEL_NAME_DELETE_X, y - 2, MODEL_NAME_DELETE_W, MODEL_NAME_ROW_H - 6, 6, COLOR_PANEL);
+    tft.drawRoundRect(MODEL_NAME_DELETE_X, y - 2, MODEL_NAME_DELETE_W, MODEL_NAME_ROW_H - 6, 6, COLOR_ACCENT);
     if (dpadFocusVisible && focusIndex == i + 6) {
-      tft.drawRoundRect(198, y - 4, 29, 22, 4, COLOR_ACCENT_HI);
+      tft.drawRoundRect(MODEL_NAME_DELETE_X - 2, y - 4, MODEL_NAME_DELETE_W + 4, MODEL_NAME_ROW_H - 2, 6, COLOR_ACCENT_HI);
     }
 
-    tft.setTextColor(COLOR_TEXT);
-    tft.setCursor(208, y);
-    tft.print("-");
+    tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+    tft.drawCentreString("-", MODEL_NAME_DELETE_X + (MODEL_NAME_DELETE_W / 2), y + 4, 2);
   }
 
   modelNameDirty = false;
@@ -11122,6 +16884,11 @@ void drawMixNumpad() {
   else if (mixNumpadTarget == NUMPAD_TARGET_MIX_OFFSET) title = "Offset";
   else if (mixNumpadTarget == NUMPAD_TARGET_EXPO_VALUE) title = "Expo";
   else if (mixNumpadTarget == NUMPAD_TARGET_ENDPOINT_VALUE) title = "End Point";
+  else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_TX_POWER) title = "TX Power";
+  else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_MODEL_ID) title = "Model ID";
+  else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_FAILSAFE) title = "Failsafe";
+  else if (mixNumpadTarget == NUMPAD_TARGET_ELRS_RX_PWM_FAILSAFE) title = "PWM Failsafe";
+  else if (mixNumpadTarget == NUMPAD_TARGET_TIMER_VALUE) title = "Timer MMSS";
   tft.drawString(title, MIX_NUMPAD_X + 10, MIX_NUMPAD_Y + 8, 2);
 
   tft.fillRoundRect(MIX_NUMPAD_BOX_X, MIX_NUMPAD_BOX_Y, MIX_NUMPAD_BOX_W, MIX_NUMPAD_BOX_H, 6, COLOR_PANEL);
@@ -11168,16 +16935,29 @@ void drawMixingStatic() {
 void drawMixingDynamic() {
   if (!mixingNeedsRedraw) return;
 
+  tft.setTextFont(1);
+  tft.setTextSize(1);
+
   char valueText[32];
+  int pageBase = getMixPageBase(selectedMixPage);
+  int localMixIndex = getMixLocalIndex();
   MixData &mix = models[activeModel].mixes[selectedMixIndex];
   uint8_t source = getMixSource(mix);
   uint8_t destination = getMixDestination(mix);
   bool reverseLinked = isMixReverseLinked(mix);
 
+  drawButtonBubble(
+    MIX_PAGE_BTN_X, MIX_PAGE_BTN_Y, MIX_PAGE_BTN_W, MIX_PAGE_BTN_H,
+    selectedMixPage == MIX_PAGE_PRESET ? "USER MIX" : "PRESET",
+    false,
+    (dpadFocusVisible && focusIndex == 15),
+    -1);
+
   tft.fillRect(0, 38, 240, FOOTER_Y - 44, COLOR_BG);
 
-  for (int i = 0; i < MIX_COUNT; i++) {
-    bool isSelected = (i == selectedMixIndex);
+  for (int i = 0; i < MIXES_PER_PAGE; i++) {
+    int absoluteMixIndex = pageBase + i;
+    bool isSelected = (i == localMixIndex);
     int tabX = MIX_TAB_X(i);
 
     tft.fillRoundRect(
@@ -11189,17 +16969,21 @@ void drawMixingDynamic() {
     }
 
     tft.setTextColor(isSelected ? COLOR_BG : COLOR_TEXT);
-    snprintf(valueText, sizeof(valueText), "M%d", i + 1);
+    snprintf(valueText, sizeof(valueText), "%c%d",
+             selectedMixPage == MIX_PAGE_USER ? 'U' : 'P',
+             (absoluteMixIndex - pageBase) + 1);
     tft.drawCentreString(valueText, tabX + (MIX_TAB_W / 2), MIX_TAB_Y + 7, 2);
   }
 
   tft.setTextColor(COLOR_ACCENT_HI);
   if (mix.enabled) {
-    snprintf(valueText, sizeof(valueText), "CH%d %s > CH%d %s",
+    snprintf(valueText, sizeof(valueText), "%s %d: CH%d %s > CH%d %s",
+             getMixPageLabel(selectedMixPage), localMixIndex + 1,
              source + 1, getChannelAxisName(source),
              destination + 1, getChannelAxisName(destination));
   } else {
-    snprintf(valueText, sizeof(valueText), "Mix %d Disabled", selectedMixIndex + 1);
+    snprintf(valueText, sizeof(valueText), "%s Mix %d Disabled",
+             getMixPageLabel(selectedMixPage), localMixIndex + 1);
   }
   tft.drawCentreString(valueText, 120, 72, 2);
 
