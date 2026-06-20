@@ -27,6 +27,8 @@
   #define EXPO_STORAGE_VERSION 3
   #define ENDPOINT_STORAGE_VERSION 2
   #define ESC_MAP_STORAGE_VERSION 1
+  #define ACTIVE_MODEL_STORAGE_VERSION 1
+  #define ESPNOW_OUTPUT_MODE_STORAGE_VERSION 1
   #define EEPROM_MIX_VERSION_ADDR (EEPROM_SIZE - 1)
   #define EEPROM_BIND_VERSION_ADDR (EEPROM_SIZE - 2)
   #define EEPROM_FAILSAFE_VERSION_ADDR (EEPROM_SIZE - 3)
@@ -35,6 +37,10 @@
   #define EEPROM_ENDPOINT_VERSION_ADDR (EEPROM_SIZE - 6)
   #define EEPROM_ESC_MAP_VERSION_ADDR (EEPROM_ENDPOINT_VERSION_ADDR - 1)
   #define EEPROM_ESC_MAP_DATA_ADDR (EEPROM_ESC_MAP_VERSION_ADDR - 2)
+  #define EEPROM_ACTIVE_MODEL_VERSION_ADDR (EEPROM_ESC_MAP_DATA_ADDR - 1)
+  #define EEPROM_ACTIVE_MODEL_INDEX_ADDR (EEPROM_ACTIVE_MODEL_VERSION_ADDR - 1)
+  #define EEPROM_ESPNOW_OUTPUT_MODE_VERSION_ADDR (EEPROM_ACTIVE_MODEL_INDEX_ADDR - 1)
+  #define EEPROM_ESPNOW_OUTPUT_MODE_DATA_ADDR (EEPROM_ESPNOW_OUTPUT_MODE_VERSION_ADDR - MAX_MODELS)
   #define MIX_CHANNEL_MASK 0x0F
   #define MIX_REVERSE_SEPARATE_FLAG 0x80
 
@@ -50,6 +56,7 @@
   SCREEN_EXPO,
   SCREEN_RATES,
   SCREEN_PROTOCOL,
+  SCREEN_TX_UPDATE,
   SCREEN_STICK_CALIBRATION,
   SCREEN_OTA_SETTINGS,
   SCREEN_ELRS,
@@ -89,6 +96,7 @@
   BTN_PROTOCOL_BIND,
   BTN_PROTOCOL_OTA,
   BTN_PROTOCOL_OTA_CFG,
+  BTN_TX_UPDATE,
   BTN_ELRS_BIND,
   BTN_ELRS_RX_CONFIG,
   BTN_ELRS_TX_POWER_SLIDER,
@@ -99,6 +107,7 @@
   BTN_ELRS_RX_PWM2,
   BTN_ELRS_RX_PWM3,
   BTN_ELRS_RX_PWM4,
+  BTN_ELRS_RX_PUSH_FAILSAFE,
   BTN_ELRS_RX_SAVE,
   BTN_DRIVE_TYPE,
   BTN_DRIVE_TANK,
@@ -129,6 +138,7 @@
   BTN_TIMER_START_PAUSE,
   BTN_TIMER_RESET,
   BTN_TIMER_KEY,
+  BTN_DRONE_ARM,
   BTN_GAME,
   BTN_OPTION_2,
   BTN_OPTION_3,
@@ -157,6 +167,13 @@
   #define MAX_MODELS 4
   #define STICK_AXIS_COUNT 4
   #define CHANNEL_COUNT 6
+  #define DRONE_ROLL_CHANNEL 0
+  #define DRONE_PITCH_CHANNEL 1
+  #define DRONE_THROTTLE_CHANNEL 2
+  #define DRONE_YAW_CHANNEL 3
+  #define DRONE_ARM_CHANNEL 4
+  #define DRONE_ARM_DISARMED_VALUE -1.0f
+  #define DRONE_ARM_ARMED_VALUE 1.0f
   #define PRESET_MIX_COUNT 4
   #define USER_MIX_COUNT 4
   #define MIXES_PER_PAGE 4
@@ -205,6 +222,7 @@
   #define ESPNOW_HEADER_SIGNAL_TIMEOUT_MS 2000
   #define ESPNOW_BIND_TIMEOUT_MS 15000
   #define ESPNOW_BIND_COMMIT_RETRY_MS 300
+  #define ESPNOW_UNBIND_BURST_COUNT 5
   #define ESPNOW_SEND_SERIAL_DEBUG false
   // ELRS module profile:
   //   ELRS_MODULE_PROFILE_INTERNAL     = RadioMaster Pocket/internal-style full-duplex module
@@ -262,8 +280,9 @@
   #define ELRS_BIND_BURST_INTERVAL_MS 150UL
   #define ELRS_BIND_COMMAND_WINDOW_MS 10000UL
   #define ELRS_BIND_SERIAL_DEBUG false
-  #define ELRS_LOW_POWER_NO_LINK_TIMEOUT_MS 30000UL
+  #define ELRS_LOW_POWER_NO_LINK_TIMEOUT_MS 0UL
   #define ELRS_LOW_POWER_FALLBACK_MW 10
+  #define ELRS_LINK_DEFAULT_POWER_MW 100
   #define ELRS_RX_WIFI_SSID "ExpressLRS RX"
   #define ELRS_RX_WIFI_PASSWORD "expresslrs"
   #define ELRS_RX_WIFI_CONNECT_TIMEOUT_MS 150000UL
@@ -295,7 +314,8 @@
   ESPNOW_MSG_PING_ACK = 0x51,
   ESPNOW_MSG_BIND_BEACON = 0x42,
   ESPNOW_MSG_BIND_COMMIT = 0x62,
-  ESPNOW_MSG_BIND_ACK = 0x41
+  ESPNOW_MSG_BIND_ACK = 0x41,
+  ESPNOW_MSG_UNBIND = 0x55
   };
 
 enum NumpadTarget {
@@ -325,7 +345,13 @@ enum StickCalibrationState {
 
   enum EspNowLinkFlags : uint8_t {
   ESPNOW_FLAG_BATTERY_PRESENT = 0x01,
-  ESPNOW_FLAG_BATTERY_CHARGING = 0x02
+  ESPNOW_FLAG_BATTERY_CHARGING = 0x02,
+  ESPNOW_FLAG_OUTPUT_IBUS = 0x80
+  };
+
+  enum EspNowReceiverOutputMode : uint8_t {
+  ESPNOW_OUTPUT_PWM = 0,
+  ESPNOW_OUTPUT_IBUS = 1
   };
 
   struct __attribute__((packed)) EspNowControlPacket {
@@ -429,6 +455,8 @@ enum StickCalibrationState {
   bool espNowReady = false;
   bool espNowProtocolActive = false;
   bool espNowBindingMode = false;
+  bool espNowOutputModePromptVisible = false;
+  bool espNowOutputModePromptDirty = false;
   unsigned long espNowProtocolStartTime = 0;
   unsigned long lastEspNowSendTime = 0;
   unsigned long lastEspNowPingTime = 0;
@@ -446,12 +474,14 @@ enum StickCalibrationState {
   unsigned long otaStaConnectStartTime = 0;
   unsigned long espNowBindingStartTime = 0;
   unsigned long espNowBindSuccessTime = 0;
+  unsigned long espNowUnbindTime = 0;
   unsigned long espNowLastBindCommitTime = 0;
   uint32_t espNowSequence = 0;
   uint32_t espNowPingSequence = 0;
   uint32_t espNowBindingToken = 0;
   esp_now_send_status_t lastEspNowSendStatus = ESP_NOW_SEND_FAIL;
   uint8_t boundReceiverMacs[MAX_MODELS][ESP_NOW_ETH_ALEN] = {};
+  uint8_t espNowReceiverOutputModes[MAX_MODELS] = {};
   uint8_t espNowPendingBindMac[ESP_NOW_ETH_ALEN] = { 0, 0, 0, 0, 0, 0 };
   const uint8_t espNowBroadcastAddress[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
   HardwareSerial &elrsSerial = Serial1;
@@ -531,6 +561,7 @@ enum StickCalibrationState {
   bool elrsTxPowerWritePending = false;
   bool elrsTxPowerWritePersistPending = true;
   bool elrsLowPowerFallbackActive = false;
+  bool elrsTxPowerUserOverrideActive = false;
   unsigned long elrsNoLinkPowerTimerStart = 0;
   uint16_t modelElrsTxPowerMw[MAX_MODELS] = {100, 100, 100, 100};
   uint8_t elrsBindCommandStep = 0;
@@ -596,6 +627,9 @@ enum StickCalibrationState {
   int elrsReceiverUartBaud = -1;
   int elrsReceiverFailsafe = -1;
   int elrsReceiverModelId = -1;
+  bool elrsReceiverHasFailsafe = false;
+  bool elrsReceiverHasModelId = false;
+  bool elrsReceiverHasPwmConfig = false;
   int elrsReceiverEditFailsafe = 0;
   int elrsReceiverEditModelId = 255;
   uint8_t elrsReceiverPwmCount = 0;
@@ -627,6 +661,12 @@ enum StickCalibrationState {
   const int controllerSettingsPageCount = STICK_CAL_SCREEN_ENABLED ? 3 : 2;
 
   DriveType currentDrive = DRIVE_TANK;
+  bool droneArmActive = false;
+  bool droneArmWarningVisible = false;
+  bool droneArmWarningTouchLocked = false;
+  bool droneArmWarningStaticDirty = false;
+  bool droneArmWarningDynamicDirty = false;
+  bool droneSafetyThrottleLockActive = false;
   Screen currentScreen = SCREEN_SPLASH;
   ButtonID pressedButton = BTN_NONE;
   ButtonID selectedButton = BTN_NONE;
@@ -765,7 +805,7 @@ enum StickCalibrationState {
   #define STARTUP_THROTTLE_SCREEN_REFRESH_MS 150UL
   #define STARTUP_THROTTLE_BYPASS_TAPS 8
   #define STARTUP_THROTTLE_BYPASS_Y_MIN 232
-  #define ELRS_AUTO_RETRY_NO_MODULE_MS 5000UL
+  #define ELRS_AUTO_RETRY_NO_MODULE_MS 30000UL
   #define POWER_BUTTON_ENABLED true
   #define POWER_BUTTON_SENSE_PIN 2
   #define POWER_BUTTON_REF_PIN 3
@@ -965,6 +1005,11 @@ enum StickCalibrationState {
   #define DISPLAY_MENU_BTN_W 48
   #define DISPLAY_MENU_BTN_H 48
 
+  #define TX_UPDATE_MENU_BTN_X 96
+  #define TX_UPDATE_MENU_BTN_Y 228
+  #define TX_UPDATE_MENU_BTN_W 48
+  #define TX_UPDATE_MENU_BTN_H 48
+
   #define GAME_BTN_X 172
   #define GAME_BTN_Y 228
   #define GAME_BTN_W 48
@@ -1094,14 +1139,18 @@ enum StickCalibrationState {
   #define PROTOCOL_MODE_BTN_H BTN_HEIGHT
   #define PROTOCOL_ELRS_BTN_Y 56
   #define PROTOCOL_ESPNOW_BTN_Y 122
-  #define PROTOCOL_OTA_BTN_W 88
-  #define PROTOCOL_OTA_BTN_H 28
-  #define PROTOCOL_OTA_BTN_X 10
-  #define PROTOCOL_OTA_BTN_Y PROTOCOL_BIND_BTN_Y
-  #define PROTOCOL_OTA_CFG_BTN_W 52
-  #define PROTOCOL_OTA_CFG_BTN_H 28
-  #define PROTOCOL_OTA_CFG_BTN_X (PROTOCOL_OTA_BTN_X + PROTOCOL_OTA_BTN_W + 6)
-  #define PROTOCOL_OTA_CFG_BTN_Y PROTOCOL_BIND_BTN_Y
+  #define TX_UPDATE_OTA_BTN_W 112
+  #define TX_UPDATE_OTA_BTN_H 36
+  #define TX_UPDATE_OTA_BTN_X 18
+  #define TX_UPDATE_OTA_BTN_Y 148
+  #define TX_UPDATE_CFG_BTN_W 82
+  #define TX_UPDATE_CFG_BTN_H 36
+  #define TX_UPDATE_CFG_BTN_X 140
+  #define TX_UPDATE_CFG_BTN_Y TX_UPDATE_OTA_BTN_Y
+  #define TX_UPDATE_STATUS_X 12
+  #define TX_UPDATE_STATUS_Y 96
+  #define TX_UPDATE_STATUS_W 216
+  #define TX_UPDATE_STATUS_H 40
   #define PROTOCOL_STATUS_X 14
   #define PROTOCOL_STATUS_Y (PROTOCOL_BIND_BTN_Y - 24)
   #define PROTOCOL_STATUS_W 212
@@ -1126,9 +1175,13 @@ enum StickCalibrationState {
   #define ELRS_RX_PWM_LEFT_FIELD_X 50
   #define ELRS_RX_PWM_RIGHT_LABEL_X 124
   #define ELRS_RX_PWM_RIGHT_FIELD_X 160
-  #define ELRS_RX_SAVE_X 72
+  #define ELRS_RX_PUSH_FS_X 14
+  #define ELRS_RX_PUSH_FS_Y 252
+  #define ELRS_RX_PUSH_FS_W 94
+  #define ELRS_RX_PUSH_FS_H 28
+  #define ELRS_RX_SAVE_X 132
   #define ELRS_RX_SAVE_Y 252
-  #define ELRS_RX_SAVE_W 96
+  #define ELRS_RX_SAVE_W 94
   #define ELRS_RX_SAVE_H 28
   #define ELRS_RX_PWM_FAILSAFE_MIN_US 1000
   #define ELRS_RX_PWM_FAILSAFE_MAX_US 2000
@@ -1418,6 +1471,10 @@ enum StickCalibrationState {
   void clearModelEndpointValues(int modelIndex);
   void loadReceiverBindings();
   void saveReceiverBindings();
+  void loadEspNowReceiverOutputModes();
+  void saveEspNowReceiverOutputModes();
+  EspNowReceiverOutputMode getModelEspNowOutputMode(int modelIndex);
+  void setModelEspNowOutputMode(int modelIndex, EspNowReceiverOutputMode mode);
   void loadFailsafeValues();
   void saveFailsafeValues();
   void loadRateValues();
@@ -1428,8 +1485,18 @@ enum StickCalibrationState {
   void saveEndpointValues();
   bool loadTankEscChannelMap();
   void saveTankEscChannelMap();
+  int loadActiveModelIndex();
+  void saveActiveModelIndex();
   void initDefaultMixSlot(int modelIndex, int mixIndex);
   void applyDrivePresetMixes(int modelIndex);
+  void setDroneArmActive(bool armed);
+  float getDroneArmOutput();
+  void showDroneArmWarning();
+  void closeDroneArmWarning();
+  void drawDroneArmWarning();
+  void drawDroneArmWarningStatic();
+  void drawDroneArmWarningDynamic();
+  bool handleDroneArmWarningTouch(bool isTouching, int x, int y);
   bool drivePresetUsesVisibleMixes(int modelIndex);
   bool sanitizeModelMixes(int modelIndex);
   bool sanitizeModelDriveType(int modelIndex);
@@ -1555,6 +1622,8 @@ enum StickCalibrationState {
   void composeElrsStatusText(char *statusText, size_t statusTextSize, uint16_t *statusColor);
   void drawProtocolScreen();
   void drawProtocolDynamic();
+  void drawTxUpdateScreen();
+  void drawTxUpdateDynamic();
   void drawElrsScreen();
   void drawElrsDynamic();
   void sanitizeWifiText(char *value, size_t maxLen, bool allowEmpty);
@@ -1583,6 +1652,8 @@ enum StickCalibrationState {
   bool isElrsReceiverPwmConfigEdited(int index);
   bool replaceElrsPwmConfigValues(String &json);
   bool isElrsReceiverConfigEdited();
+  int modelFailsafePercentToPwmUs(int percent);
+  bool applyModelFailsafesToElrsReceiverPwm();
   ButtonID getElrsReceiverPwmButton(int index);
   int getElrsReceiverPwmIndexForButton(ButtonID button);
   void logElrsReceiverWriteEndpoints();
@@ -1645,6 +1716,11 @@ enum StickCalibrationState {
   void sendEspNowControlPacket(unsigned long now);
   void sendEspNowPing(unsigned long now);
   void sendEspNowBindCommit(const uint8_t *receiverMac);
+  void sendEspNowUnbindCommand();
+  void showEspNowOutputModePrompt();
+  void drawEspNowOutputModePrompt();
+  bool handleEspNowOutputModePromptTouch(bool isTouching, int x, int y);
+  void startEspNowBindingWithOutputMode(EspNowReceiverOutputMode mode);
   bool hasEspNowPendingBindMac();
   void beginEspNowBinding();
   void cancelEspNowBinding(bool clearPendingMac);
@@ -2100,6 +2176,63 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
     EEPROM.write(EEPROM_ESC_MAP_DATA_ADDR + 1, packed1);
     EEPROM.write(EEPROM_ESC_MAP_VERSION_ADDR, ESC_MAP_STORAGE_VERSION);
     EEPROM.commit();
+  }
+
+  int loadActiveModelIndex() {
+    if (EEPROM.read(EEPROM_ACTIVE_MODEL_VERSION_ADDR) != ACTIVE_MODEL_STORAGE_VERSION) {
+      return 0;
+    }
+
+    uint8_t storedIndex = EEPROM.read(EEPROM_ACTIVE_MODEL_INDEX_ADDR);
+    if (storedIndex >= MAX_MODELS) return 0;
+    return storedIndex;
+  }
+
+  void saveActiveModelIndex() {
+    uint8_t index = (activeModel >= 0 && activeModel < MAX_MODELS) ? activeModel : 0;
+    EEPROM.write(EEPROM_ACTIVE_MODEL_INDEX_ADDR, index);
+    EEPROM.write(EEPROM_ACTIVE_MODEL_VERSION_ADDR, ACTIVE_MODEL_STORAGE_VERSION);
+    EEPROM.commit();
+  }
+
+  void loadEspNowReceiverOutputModes() {
+    if (EEPROM.read(EEPROM_ESPNOW_OUTPUT_MODE_VERSION_ADDR) != ESPNOW_OUTPUT_MODE_STORAGE_VERSION) {
+      for (int i = 0; i < MAX_MODELS; i++) {
+        espNowReceiverOutputModes[i] = ESPNOW_OUTPUT_PWM;
+      }
+      return;
+    }
+
+    for (int i = 0; i < MAX_MODELS; i++) {
+      uint8_t storedMode = EEPROM.read(EEPROM_ESPNOW_OUTPUT_MODE_DATA_ADDR + i);
+      espNowReceiverOutputModes[i] = (storedMode == ESPNOW_OUTPUT_IBUS)
+        ? ESPNOW_OUTPUT_IBUS
+        : ESPNOW_OUTPUT_PWM;
+    }
+  }
+
+  void saveEspNowReceiverOutputModes() {
+    for (int i = 0; i < MAX_MODELS; i++) {
+      uint8_t storedMode = (espNowReceiverOutputModes[i] == ESPNOW_OUTPUT_IBUS)
+        ? ESPNOW_OUTPUT_IBUS
+        : ESPNOW_OUTPUT_PWM;
+      EEPROM.write(EEPROM_ESPNOW_OUTPUT_MODE_DATA_ADDR + i, storedMode);
+    }
+    EEPROM.write(EEPROM_ESPNOW_OUTPUT_MODE_VERSION_ADDR, ESPNOW_OUTPUT_MODE_STORAGE_VERSION);
+    EEPROM.commit();
+  }
+
+  EspNowReceiverOutputMode getModelEspNowOutputMode(int modelIndex) {
+    if (modelIndex < 0 || modelIndex >= MAX_MODELS) return ESPNOW_OUTPUT_PWM;
+    return (espNowReceiverOutputModes[modelIndex] == ESPNOW_OUTPUT_IBUS)
+      ? ESPNOW_OUTPUT_IBUS
+      : ESPNOW_OUTPUT_PWM;
+  }
+
+  void setModelEspNowOutputMode(int modelIndex, EspNowReceiverOutputMode mode) {
+    if (modelIndex < 0 || modelIndex >= MAX_MODELS) return;
+    espNowReceiverOutputModes[modelIndex] =
+      (mode == ESPNOW_OUTPUT_IBUS) ? ESPNOW_OUTPUT_IBUS : ESPNOW_OUTPUT_PWM;
   }
 
   void sanitizeDisplaySettings() {
@@ -3365,7 +3498,17 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
       reverseChannelDirty[ch] = true;
     }
 
-    if (getModelDriveType(modelIndex) != DRIVE_TANK) {
+    DriveType driveType = getModelDriveType(modelIndex);
+    if (driveType == DRIVE_X_DRONE) {
+      // Flight controllers handle motor mixing. Keep the transmitter on the
+      // standard Betaflight-style AETR channel map:
+      // CH1 roll, CH2 pitch, CH3 throttle, CH4 yaw.
+      mixingNeedsRedraw = true;
+      reverseNeedsRedraw = true;
+      return;
+    }
+
+    if (driveType != DRIVE_TANK) {
       mixingNeedsRedraw = true;
       reverseNeedsRedraw = true;
       return;
@@ -3407,6 +3550,49 @@ void setModelEndpointHighValue(int modelIndex, int channel, int value) {
   void setModelDriveType(int modelIndex, DriveType driveType) {
     models[modelIndex].driveType =
       (models[modelIndex].driveType & 0xF0) | ((uint8_t)driveType & 0x0F);
+    if (modelIndex == activeModel) {
+      droneArmWarningVisible = false;
+      droneArmWarningTouchLocked = false;
+      droneArmWarningStaticDirty = false;
+      droneArmWarningDynamicDirty = false;
+      droneSafetyThrottleLockActive = false;
+      setDroneArmActive(false);
+    }
+  }
+
+  void setDroneArmActive(bool armed) {
+    bool nextState = armed && (currentDrive == DRIVE_X_DRONE);
+    if (droneArmActive == nextState) return;
+    droneArmActive = nextState;
+    mainOutputPanelNeedsRedraw = true;
+    uiNeedsRedraw = true;
+  }
+
+  float getDroneArmOutput() {
+    return droneArmActive ? DRONE_ARM_ARMED_VALUE : DRONE_ARM_DISARMED_VALUE;
+  }
+
+  void showDroneArmWarning() {
+    if (currentDrive != DRIVE_X_DRONE) return;
+    droneArmWarningVisible = true;
+    droneArmWarningTouchLocked = true;
+    droneArmWarningStaticDirty = true;
+    droneArmWarningDynamicDirty = true;
+    screenAwake = true;
+    displayDimmed = false;
+    screenOffManual = false;
+    applyDisplayBacklight();
+    uiNeedsRedraw = true;
+  }
+
+  void closeDroneArmWarning() {
+    if (!droneArmWarningVisible) return;
+    droneArmWarningVisible = false;
+    droneArmWarningTouchLocked = true;
+    droneArmWarningStaticDirty = false;
+    droneArmWarningDynamicDirty = false;
+    fullRedraw = true;
+    uiNeedsRedraw = true;
   }
 
   TankControlMode getModelTankMode(int modelIndex) {
@@ -3752,6 +3938,7 @@ const int KB_TOUCH_X_MAX = 232;
   char otaStaPassword[OTA_STA_PASSWORD_STORAGE_BYTES + 1] = OTA_STA_PASSWORD;
   char otaApSsid[OTA_AP_SSID_STORAGE_BYTES + 1] = OTA_AP_SSID;
   bool otaSettingsNeedsRedraw = true;
+  bool txUpdateNeedsRedraw = true;
 
 const char* getKeyboardKey(int row, int col) {
   if (row < 0 || row >= KB_ROWS || col < 0 || col >= KB_COLS) return "";
@@ -3874,14 +4061,23 @@ void processKeyboardKey(const char* key) {
 void selectModelSlot(int modelIndex) {
   activeModel = modelIndex;
   selectedModelIndex = modelIndex;
+  saveActiveModelIndex();
   clearActiveEspNowSessionTelemetry();
   sanitizeModelTankEscChannels(modelIndex);
   currentModelName = String(models[modelIndex].name);
   currentDrive = getModelDriveType(modelIndex);
-  elrsTxPowerMw = clampElrsTxPowerMw(modelElrsTxPowerMw[modelIndex]);
+  droneArmWarningVisible = false;
+  droneArmWarningTouchLocked = false;
+  droneArmWarningStaticDirty = false;
+  droneArmWarningDynamicDirty = false;
+  droneSafetyThrottleLockActive = false;
+  setDroneArmActive(false);
+  elrsTxPowerUserOverrideActive = false;
+  elrsLowPowerFallbackActive = true;
+  elrsTxPowerMw = clampElrsTxPowerMw(ELRS_LOW_POWER_FALLBACK_MW);
   if (getModelProtocol(modelIndex) == PROTOCOL_ELRS) {
     initElrsUart();
-    sendElrsTxPowerWrite(elrsTxPowerMw);
+    sendElrsTxPowerWrite(ELRS_LOW_POWER_FALLBACK_MW, false);
   } else {
     stopElrsUart();
   }
@@ -4397,7 +4593,7 @@ void beginElrsReceiverConfig() {
   elrsReceiverConfigLastUiTime = 0;
   elrsBindBurstUntil = 0;
   elrsBindAwaitingResult = false;
-  snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Waiting for ER4 WiFi...");
+  snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Waiting for ELRS RX WiFi...");
   snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "SSID: %s", ELRS_RX_WIFI_SSID);
   elrsReceiverConfigLastEndpoint[0] = '\0';
   strncpy(elrsReceiverProductName, "-", sizeof(elrsReceiverProductName) - 1);
@@ -4410,6 +4606,9 @@ void beginElrsReceiverConfig() {
   elrsReceiverUartBaud = -1;
   elrsReceiverFailsafe = -1;
   elrsReceiverModelId = -1;
+  elrsReceiverHasFailsafe = false;
+  elrsReceiverHasModelId = false;
+  elrsReceiverHasPwmConfig = false;
   elrsReceiverEditFailsafe = 0;
   elrsReceiverEditModelId = 255;
   elrsReceiverPwmCount = 0;
@@ -4660,6 +4859,7 @@ bool parseElrsReceiverPwmConfig(const String &json) {
   }
 
   elrsReceiverPwmCount = count;
+  elrsReceiverHasPwmConfig = count > 0;
   if (count > 0) {
     Serial.print("ELRS RX PWM decoded:");
     for (int i = 0; i < count; i++) {
@@ -4744,8 +4944,8 @@ bool replaceElrsPwmConfigValues(String &json) {
 
 bool isElrsReceiverConfigEdited() {
   if (!elrsReceiverSaveArmed) return false;
-  if (elrsReceiverEditModelId != elrsReceiverModelId) return true;
-  if (elrsReceiverEditFailsafe != elrsReceiverFailsafe) return true;
+  if (elrsReceiverHasModelId && elrsReceiverEditModelId != elrsReceiverModelId) return true;
+  if (elrsReceiverHasFailsafe && elrsReceiverEditFailsafe != elrsReceiverFailsafe) return true;
   for (int i = 0; i < elrsReceiverPwmCount; i++) {
     if (isElrsReceiverPwmConfigEdited(i)) return true;
   }
@@ -4757,6 +4957,64 @@ bool hasElrsReceiverPwmEdits() {
     if (isElrsReceiverPwmConfigEdited(i)) return true;
   }
   return false;
+}
+
+int modelFailsafePercentToPwmUs(int percent) {
+  return constrain(1500 + (constrain(percent, -100, 100) * 5),
+                   ELRS_RX_PWM_FAILSAFE_MIN_US,
+                   ELRS_RX_PWM_FAILSAFE_MAX_US);
+}
+
+bool applyModelFailsafesToElrsReceiverPwm() {
+  if (elrsReceiverConfigState != RX_CONFIG_DONE || elrsReceiverPwmCount == 0) {
+    snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "No PWM outputs found");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Load receiver config first");
+    uiNeedsRedraw = true;
+    return false;
+  }
+
+  int applied = 0;
+  for (int i = 0; i < elrsReceiverPwmCount; i++) {
+    uint8_t inputChannel = decodeElrsPwmInputChannel(elrsReceiverPwmRaw[i]);
+    bool channelKnown = inputChannel < CHANNEL_COUNT;
+    if (!channelKnown) {
+      Serial.printf("ELRS RX PWM apply TX failsafe skipped out%d input=CH%u (not stored by TX)\n",
+                    i + 1,
+                    (unsigned int)(inputChannel + 1));
+      continue;
+    }
+
+    int nextFailsafeUs = 1500;
+    if (channelKnown && models[activeModel].failsafe[inputChannel]) {
+      nextFailsafeUs = modelFailsafePercentToPwmUs(getModelFailsafeValue(activeModel, inputChannel));
+    }
+
+    elrsReceiverPwmEditFailsafeUs[i] = nextFailsafeUs;
+    elrsReceiverPwmEditRaw[i] = encodeElrsPwmFailsafeUs(elrsReceiverPwmRaw[i], nextFailsafeUs);
+    elrsReceiverPwmEditTouched[i] = true;
+    elrsReceiverPwmEditGeneration[i] = elrsReceiverConfigGeneration;
+    applied++;
+
+    Serial.printf("ELRS RX PWM apply TX failsafe out%d input=CH%u known=%d enabled=%d value=%d\n",
+                  i + 1,
+                  (unsigned int)(inputChannel + 1),
+                  1,
+                  models[activeModel].failsafe[inputChannel] ? 1 : 0,
+                  nextFailsafeUs);
+  }
+
+  elrsReceiverSaveArmed = true;
+  elrsReceiverConfigDirty = isElrsReceiverConfigEdited();
+  if (applied > 0) {
+    snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "TX failsafes loaded");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Review values, then press SAVE");
+  } else {
+    snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "No matching TX channels");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Receiver outputs are CH7+");
+  }
+  fullRedraw = true;
+  uiNeedsRedraw = true;
+  return applied > 0;
 }
 
 ButtonID getElrsReceiverPwmButton(int index) {
@@ -4829,16 +5087,18 @@ bool saveElrsReceiverConfig() {
   if (pwmEdited) {
     replacedPwm = replaceElrsPwmConfigValues(postBody);
   }
-  if (!replacedModel || !replacedFailsafe || !replacedPwm) {
+  if ((elrsReceiverHasModelId && !replacedModel) ||
+      (elrsReceiverHasFailsafe && !replacedFailsafe) ||
+      !replacedPwm) {
     snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Config edit failed");
-    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Missing model/failsafe key");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Missing edited config key");
     fullRedraw = true;
     uiNeedsRedraw = true;
     return false;
   }
 
   String response;
-  snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Saving ER4 config...");
+  snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "Saving RX config...");
   snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "POST /config");
   fullRedraw = true;
   uiNeedsRedraw = true;
@@ -4985,6 +5245,8 @@ bool parseElrsReceiverConfigJson(const String &response) {
 
   elrsReceiverWifiInterval = extractJsonIntValue(json, "wifi-on-interval", -1);
   elrsReceiverUartBaud = extractJsonIntValue(json, "rcvr-uart-baud", -1);
+  elrsReceiverHasFailsafe = json.indexOf("\"sbus-failsafe\":") >= 0;
+  elrsReceiverHasModelId = json.indexOf("\"modelid\":") >= 0;
   elrsReceiverFailsafe = extractJsonIntValue(json, "sbus-failsafe", -1);
   elrsReceiverModelId = extractJsonIntValue(json, "modelid", -1);
   elrsReceiverEditFailsafe = (elrsReceiverFailsafe >= 0) ? elrsReceiverFailsafe : 0;
@@ -4994,8 +5256,9 @@ bool parseElrsReceiverConfigJson(const String &response) {
 
   parsedAny |= (elrsReceiverWifiInterval >= 0);
   parsedAny |= (elrsReceiverUartBaud >= 0);
-  parsedAny |= (elrsReceiverFailsafe >= 0);
-  parsedAny |= (elrsReceiverModelId >= 0);
+  parsedAny |= elrsReceiverHasFailsafe;
+  parsedAny |= elrsReceiverHasModelId;
+  parsedAny |= elrsReceiverHasPwmConfig;
 
   if (parsedAny) {
     Serial.printf("ELRS RX config parsed: product='%s' lua='%s' uid=%s wifi=%d uart=%d failsafe=%d model=%d\n",
@@ -5081,11 +5344,11 @@ bool fetchElrsReceiverConfig() {
   }
 
   if (sawCompressedPage) {
-    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail),
-             "ER4 web UI found, gzip only");
+      snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail),
+             "ELRS RX web UI found, gzip only");
     return true;
   } else if (anyResponse) {
-    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "ER4 answered, no config endpoint yet");
+    snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "ELRS RX answered, no config API");
   } else {
     snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "No HTTP response from 10.0.0.1");
   }
@@ -5111,14 +5374,14 @@ void updateElrsReceiverConfig() {
       IPAddress ip = WiFi.localIP();
       snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus),
                "Connected %u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
-      snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Fetching ER4 config...");
+      snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Fetching RX config...");
       Serial.printf("ELRS RX config: WiFi connected, IP %u.%u.%u.%u\n",
                     ip[0], ip[1], ip[2], ip[3]);
       elrsReceiverConfigState = RX_CONFIG_FETCHING;
       fullRedraw = true;
       uiNeedsRedraw = true;
     } else if (now - elrsReceiverConfigStartTime >= ELRS_RX_WIFI_CONNECT_TIMEOUT_MS) {
-      snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "ER4 WiFi not found");
+      snprintf(elrsReceiverConfigStatus, sizeof(elrsReceiverConfigStatus), "RX WiFi not found");
       snprintf(elrsReceiverConfigDetail, sizeof(elrsReceiverConfigDetail), "Put RX in WiFi mode and retry");
       Serial.printf("ELRS RX config: connect timed out, WiFi status=%d\n", (int)status);
       elrsReceiverConfigState = RX_CONFIG_FAILED;
@@ -5189,6 +5452,9 @@ void sendEspNowControlPacket(unsigned long now) {
 
   if (batteryPresent) packet.flags |= ESPNOW_FLAG_BATTERY_PRESENT;
   if (batteryCharging) packet.flags |= ESPNOW_FLAG_BATTERY_CHARGING;
+  if (getModelEspNowOutputMode(activeModel) == ESPNOW_OUTPUT_IBUS) {
+    packet.flags |= ESPNOW_FLAG_OUTPUT_IBUS;
+  }
 
   for (int i = 0; i < CHANNEL_COUNT; i++) {
     float constrainedValue = constrain(protocolChannels[i], -1.0f, 1.0f);
@@ -5248,6 +5514,9 @@ void sendEspNowBindCommit(const uint8_t *receiverMac) {
   packet.version = ESPNOW_LINK_VERSION;
   packet.messageType = ESPNOW_MSG_BIND_COMMIT;
   packet.token = espNowBindingToken;
+  if (getModelEspNowOutputMode(activeModel) == ESPNOW_OUTPUT_IBUS) {
+    packet.flags |= ESPNOW_FLAG_OUTPUT_IBUS;
+  }
 
   esp_err_t sendResult = esp_now_send(receiverMac, (const uint8_t *)&packet, sizeof(packet));
   if (sendResult != ESP_OK) {
@@ -5260,6 +5529,44 @@ void sendEspNowBindCommit(const uint8_t *receiverMac) {
   espNowLastBindCommitTime = millis();
 }
 
+void sendEspNowUnbindCommand() {
+  const uint8_t *receiverMac = getBoundReceiverMac(activeModel);
+  if (receiverMac == nullptr) return;
+
+  uint8_t receiverCopy[ESP_NOW_ETH_ALEN];
+  memcpy(receiverCopy, receiverMac, ESP_NOW_ETH_ALEN);
+
+  if (initEspNowLink() && ensureEspNowPeer(receiverCopy)) {
+    EspNowBindPacket packet = {};
+    packet.magic = ESPNOW_LINK_MAGIC;
+    packet.version = ESPNOW_LINK_VERSION;
+    packet.messageType = ESPNOW_MSG_UNBIND;
+    packet.token = ++espNowSequence;
+    if (getModelEspNowOutputMode(activeModel) == ESPNOW_OUTPUT_IBUS) {
+      packet.flags |= ESPNOW_FLAG_OUTPUT_IBUS;
+    }
+
+    for (int i = 0; i < ESPNOW_UNBIND_BURST_COUNT; i++) {
+      esp_err_t sendResult = esp_now_send(receiverCopy, (const uint8_t *)&packet, sizeof(packet));
+      if (sendResult != ESP_OK && RADIO_PROTOCOL_SERIAL_DEBUG) {
+        Serial.printf("ESP-NOW unbind send failed: %d\n", (int)sendResult);
+      }
+      delay(2);
+    }
+  }
+
+  clearBoundReceiver(activeModel);
+  saveReceiverBindings();
+  clearActiveEspNowSessionTelemetry();
+  espNowUnbindTime = millis();
+  espNowBindSuccessTime = 0;
+  espNowBindingMode = false;
+  memset(espNowPendingBindMac, 0, ESP_NOW_ETH_ALEN);
+  topBarNeedsRedraw = true;
+  fullRedraw = true;
+  uiNeedsRedraw = true;
+}
+
 bool hasEspNowPendingBindMac() {
   for (int i = 0; i < ESP_NOW_ETH_ALEN; i++) {
     if (espNowPendingBindMac[i] != 0) {
@@ -5270,6 +5577,8 @@ bool hasEspNowPendingBindMac() {
 }
 
 void beginEspNowBinding() {
+  espNowOutputModePromptVisible = false;
+  espNowOutputModePromptDirty = false;
   setModelProtocol(activeModel, PROTOCOL_ESPNOW);
   stopElrsUart();
   saveModels();
@@ -5282,6 +5591,22 @@ void beginEspNowBinding() {
   memset(espNowPendingBindMac, 0, ESP_NOW_ETH_ALEN);
   uiNeedsRedraw = true;
   fullRedraw = true;
+}
+
+void showEspNowOutputModePrompt() {
+  if (otaModeActive) return;
+  espNowOutputModePromptVisible = true;
+  espNowOutputModePromptDirty = true;
+  dpadFocusVisible = false;
+  uiNeedsRedraw = true;
+}
+
+void startEspNowBindingWithOutputMode(EspNowReceiverOutputMode mode) {
+  setModelEspNowOutputMode(activeModel, mode);
+  saveEspNowReceiverOutputModes();
+  espNowOutputModePromptVisible = false;
+  espNowOutputModePromptDirty = false;
+  beginEspNowBinding();
 }
 
 void cancelEspNowBinding(bool clearPendingMac) {
@@ -5516,6 +5841,24 @@ const char* elrsModuleProfileName(uint8_t profile) {
   return "Internal";
 }
 
+const char* driveTypeName(DriveType driveType) {
+  switch (driveType) {
+    case DRIVE_TANK: return "Tank";
+    case DRIVE_CAR: return "Car";
+    case DRIVE_OMNI: return "Omni";
+    case DRIVE_X_DRONE: return "X-Drone";
+    default: return "?";
+  }
+}
+
+const char* protocolName(ProtocolType protocolType) {
+  return (protocolType == PROTOCOL_ESPNOW) ? "ESP-NOW" : "ELRS";
+}
+
+bool shouldLogElrsSerialStatus() {
+  return RADIO_PROTOCOL_SERIAL_DEBUG && getModelProtocol(activeModel) == PROTOCOL_ELRS;
+}
+
 uint8_t getElrsBindFallbackFieldIndex() {
   return (elrsActiveModuleProfile == ELRS_MODULE_PROFILE_RANGER_NANO) ? 29 : ELRS_BIND_FALLBACK_FIELD_INDEX;
 }
@@ -5678,6 +6021,22 @@ void sendElrsBindCommand() {
     bindFieldIndex = 28;
   }
   if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    DriveType driveType = getModelDriveType(activeModel);
+    ProtocolType protocolType = getModelProtocol(activeModel);
+    Serial.printf("ELRS bind request model=%d '%s' drive=%s protocol=%s profile=%s module=%d link=%d lq=%u field=%u known=%d fallback=%u name=%s pCnt=%u\n",
+                  activeModel + 1,
+                  (models[activeModel].name[0] != '\0') ? models[activeModel].name : "-",
+                  driveTypeName(driveType),
+                  protocolName(protocolType),
+                  elrsModuleProfileName(elrsActiveModuleProfile),
+                  (int)elrsModulePresent,
+                  (int)elrsLinkActive,
+                  (unsigned int)elrsUplinkLq,
+                  (unsigned int)bindFieldIndex,
+                  (int)elrsBindFieldKnown,
+                  (unsigned int)getElrsBindFallbackFieldIndex(),
+                  (elrsDeviceName[0] != '\0') ? elrsDeviceName : "-",
+                  (unsigned int)elrsParameterCount);
     Serial.printf("ELRS TX bind start field=%u known=%d name=%s pCnt=%u\n",
                   (unsigned int)bindFieldIndex,
                   (int)elrsBindFieldKnown,
@@ -5809,7 +6168,7 @@ static void updateElrsTxPowerFromRaw(uint8_t rawValue) {
   } else {
     elrsTxPowerMw = clampElrsTxPowerMw(rawValue);
   }
-  if (!elrsLowPowerFallbackActive && activeModel >= 0 && activeModel < MAX_MODELS) {
+  if (elrsTxPowerUserOverrideActive && activeModel >= 0 && activeModel < MAX_MODELS) {
     modelElrsTxPowerMw[activeModel] = elrsTxPowerMw;
   }
 }
@@ -5817,6 +6176,7 @@ static void updateElrsTxPowerFromRaw(uint8_t rawValue) {
 void sendElrsTxPowerWrite(uint16_t powerMw, bool persistToModel) {
   uint16_t clampedMw = clampElrsTxPowerMw(powerMw);
   if (persistToModel) {
+    elrsTxPowerUserOverrideActive = true;
     elrsLowPowerFallbackActive = false;
     elrsNoLinkPowerTimerStart = millis();
   }
@@ -5857,26 +6217,23 @@ void updateElrsLowPowerFallback(unsigned long now) {
     return;
   }
 
-  if (elrsLinkActive) {
+  if (elrsTxPowerUserOverrideActive) {
     elrsNoLinkPowerTimerStart = now;
-    if (elrsLowPowerFallbackActive) {
-      elrsLowPowerFallbackActive = false;
-      uint16_t modelPower = clampElrsTxPowerMw(modelElrsTxPowerMw[activeModel]);
-      if (elrsTxPowerMw != modelPower || elrsTxPowerWritePending) {
-        sendElrsTxPowerWrite(modelPower, false);
-      }
-    }
     return;
   }
 
-  if (elrsNoLinkPowerTimerStart == 0) {
-    elrsNoLinkPowerTimerStart = now;
-  }
+  uint16_t targetPower = elrsLinkActive
+    ? (uint16_t)ELRS_LINK_DEFAULT_POWER_MW
+    : (uint16_t)ELRS_LOW_POWER_FALLBACK_MW;
+  bool targetLowPower = !elrsLinkActive;
+  bool alreadyRequested = elrsTxPowerWritePending &&
+                          elrsTxPowerPendingMw == targetPower;
 
-  if (!elrsLowPowerFallbackActive &&
-      now - elrsNoLinkPowerTimerStart >= ELRS_LOW_POWER_NO_LINK_TIMEOUT_MS) {
-    elrsLowPowerFallbackActive = true;
-    sendElrsTxPowerWrite(ELRS_LOW_POWER_FALLBACK_MW, false);
+  if (elrsLowPowerFallbackActive != targetLowPower ||
+      (!alreadyRequested && elrsTxPowerMw != targetPower)) {
+    elrsLowPowerFallbackActive = targetLowPower;
+    elrsNoLinkPowerTimerStart = now;
+    sendElrsTxPowerWrite(targetPower, false);
   }
 }
 
@@ -6431,7 +6788,7 @@ void initElrsUart() {
   elrsAutoDetectLocked = (ELRS_MODULE_PROFILE != ELRS_MODULE_PROFILE_AUTO);
   restartElrsUart(elrsBaudCandidates[elrsBaudIndex]);
   elrsInitialized = true;
-  if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+  if (shouldLogElrsSerialStatus()) {
     Serial.printf("ELRS UART profile=%s mode=%s tx=%d rx=%d invert(rx=%d,tx=%d)\n",
                   elrsModuleProfileName(elrsActiveModuleProfile),
                   elrsRuntimeHalfDuplex ? "half-duplex" : "full-duplex",
@@ -6479,7 +6836,7 @@ void updateElrsProfileAutoDetect(unsigned long now) {
   if (responses > elrsProfileDetectStartResponses) {
     elrsAutoDetectLocked = true;
     elrsNoModuleDetected = false;
-    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    if (shouldLogElrsSerialStatus()) {
       Serial.printf("ELRS auto-detect: locked %s profile (%lu response frames)\n",
                     elrsModuleProfileName(elrsActiveModuleProfile),
                     (unsigned long)(responses - elrsProfileDetectStartResponses));
@@ -6493,12 +6850,12 @@ void updateElrsProfileAutoDetect(unsigned long now) {
     elrsAutoDetectLocked = true;
     elrsNoModuleDetected = true;
     elrsNoModuleRetryTime = now + ELRS_AUTO_RETRY_NO_MODULE_MS;
-    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    if (shouldLogElrsSerialStatus()) {
       Serial.println("ELRS auto-detect: internal profile silent; ELRS output paused");
     }
     return;
 #else
-    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    if (shouldLogElrsSerialStatus()) {
       Serial.println("ELRS auto-detect: internal profile silent, trying Ranger Nano one-wire profile");
     }
     applyElrsModuleProfile(ELRS_MODULE_PROFILE_RANGER_NANO, true);
@@ -6512,7 +6869,7 @@ void updateElrsProfileAutoDetect(unsigned long now) {
     elrsAutoDetectLocked = true;
     elrsNoModuleDetected = true;
     elrsNoModuleRetryTime = now + ELRS_AUTO_RETRY_NO_MODULE_MS;
-    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
+    if (shouldLogElrsSerialStatus()) {
       Serial.println("ELRS auto-detect: no module response; ELRS output paused until retry");
     }
   }
@@ -6610,20 +6967,24 @@ void updateElrsLink(unsigned long now) {
   return;
 #endif
 
-  readElrsSerial(now);
-  updateElrsProfileAutoDetect(now);
-
-  if (ELRS_MODULE_PROFILE == ELRS_MODULE_PROFILE_AUTO &&
-      elrsNoModuleDetected &&
-      now >= elrsNoModuleRetryTime) {
-    if (RADIO_PROTOCOL_SERIAL_DEBUG) {
-      Serial.println("ELRS auto-detect: retrying module detection");
+  if (ELRS_MODULE_PROFILE == ELRS_MODULE_PROFILE_AUTO && elrsNoModuleDetected) {
+    if (now >= elrsNoModuleRetryTime) {
+      if (shouldLogElrsSerialStatus()) {
+        Serial.println("ELRS auto-detect: retrying module detection");
+      }
+      elrsAutoDetectLocked = false;
+      elrsNoModuleDetected = false;
+      applyElrsModuleProfile(ELRS_MODULE_PROFILE_INTERNAL, true);
+      restartElrsUart(elrsBaudCandidates[elrsBaudIndex]);
+    } else {
+      elrsProtocolActive = false;
+      signalStrength = 0;
     }
-    elrsAutoDetectLocked = false;
-    applyElrsModuleProfile(ELRS_MODULE_PROFILE_INTERNAL, true);
-    restartElrsUart(elrsBaudCandidates[elrsBaudIndex]);
     return;
   }
+
+  readElrsSerial(now);
+  updateElrsProfileAutoDetect(now);
 
   elrsModulePresent = (lastElrsSerialRxTime > 0) &&
     ((now - lastElrsSerialRxTime) <= ELRS_MODULE_TIMEOUT_MS);
@@ -6969,7 +7330,7 @@ void onEspNowReceive(const esp_now_recv_info_t *info, const uint8_t *data, int l
 
 void setup() {
   Serial.begin(115200);
-  delay(1200);
+  delay(150);
   Serial.println();
   Serial.println("Booting Hosyond transmitter...");
   initStatusRgbLed();
@@ -7011,6 +7372,7 @@ void setup() {
   loadExpoValues();
   loadEndpointValues();
   bool escMapLoaded = loadTankEscChannelMap();
+  loadEspNowReceiverOutputModes();
   loadOtaSettings();
   loadReceiverBindings();
   applyDisplayBacklight();
@@ -7113,6 +7475,9 @@ void setup() {
   if (!escMapLoaded || initializedAnyModel || repairedAnyMix) {
     saveTankEscChannelMap();
   }
+  if (EEPROM.read(EEPROM_ESPNOW_OUTPUT_MODE_VERSION_ADDR) != ESPNOW_OUTPUT_MODE_STORAGE_VERSION) {
+    saveEspNowReceiverOutputModes();
+  }
   if (EEPROM.read(EEPROM_OTA_VERSION_ADDR) != OTA_SETTINGS_STORAGE_VERSION) {
     saveOtaSettings();
   }
@@ -7126,16 +7491,24 @@ void setup() {
   }
 
   // SET ACTIVE MODEL
-  activeModel = 0;
-  currentModelName = String(models[0].name);
-  currentDrive = getModelDriveType(0);
-  elrsTxPowerMw = clampElrsTxPowerMw(modelElrsTxPowerMw[activeModel]);
+  int startupModel = loadActiveModelIndex();
+  if (startupModel < 0 || startupModel >= MAX_MODELS || strlen(models[startupModel].name) == 0) {
+    startupModel = 0;
+  }
+  activeModel = startupModel;
+  selectedModelIndex = startupModel;
+  currentModelName = String(models[activeModel].name);
+  currentDrive = getModelDriveType(activeModel);
+  elrsTxPowerUserOverrideActive = false;
+  elrsLowPowerFallbackActive = true;
+  elrsTxPowerMw = clampElrsTxPowerMw(ELRS_LOW_POWER_FALLBACK_MW);
 
   // optional polish
   trimRenderX = models[activeModel].trimX[currentTrimPage];
   trimRenderY = models[activeModel].trimY[currentTrimPage];
   if (getModelProtocol(activeModel) == PROTOCOL_ELRS) {
     initElrsUart();
+    sendElrsTxPowerWrite(ELRS_LOW_POWER_FALLBACK_MW, false);
   }
 #if !ELRS_PASSIVE_SNIFF_MODE
   initEspNowLink();
@@ -7499,11 +7872,16 @@ void loop() {
         }
       }
     }
-    else if (currentScreen == SCREEN_MAIN) {
+    else if (currentScreen == SCREEN_MAIN && !droneArmWarningVisible) {
       if (down || up || left || right || select) dpadFocusVisible = true;
 
       if (down || up) {
-        selectedButton = BTN_MENU;
+        if (currentDrive == DRIVE_X_DRONE) {
+          const ButtonID order[] = {BTN_MENU, BTN_DRONE_ARM};
+          selectedButton = cycleButtonOrder(selectedButton, order, 2, down);
+        } else {
+          selectedButton = BTN_MENU;
+        }
         uiNeedsRedraw = true;
         didInput = true;
       }
@@ -7513,6 +7891,14 @@ void loop() {
         selectedButton = BTN_NONE;
         didInput = true;
       }
+      else if (select && selectedButton == BTN_DRONE_ARM && currentDrive == DRIVE_X_DRONE) {
+        if (droneArmActive) {
+          setDroneArmActive(false);
+        } else {
+          showDroneArmWarning();
+        }
+        didInput = true;
+      }
     }
 
   else if (currentScreen == SCREEN_MENU) {
@@ -7520,9 +7906,9 @@ void loop() {
 
     if (down || up) {
       const ButtonID order[] = {
-        BTN_CTRL, BTN_MODEL, BTN_DISPLAY_SETTINGS, BTN_GAME, BTN_BACK
+        BTN_CTRL, BTN_MODEL, BTN_DISPLAY_SETTINGS, BTN_TX_UPDATE, BTN_GAME, BTN_BACK
       };
-      selectedButton = cycleButtonOrder(selectedButton, order, 5, down);
+      selectedButton = cycleButtonOrder(selectedButton, order, 6, down);
           fullRedraw = true;
           uiNeedsRedraw = true;
           didInput = true;
@@ -7531,6 +7917,10 @@ void loop() {
 
     if (left) {
       if (selectedButton == BTN_GAME) {
+        selectedButton = BTN_TX_UPDATE;
+        fullRedraw = true;
+        uiNeedsRedraw = true;
+      } else if (selectedButton == BTN_TX_UPDATE) {
         selectedButton = BTN_DISPLAY_SETTINGS;
         fullRedraw = true;
         uiNeedsRedraw = true;
@@ -7553,6 +7943,12 @@ void loop() {
       userActive = true;
     }
     else if (right && selectedButton == BTN_DISPLAY_SETTINGS) {
+      selectedButton = BTN_TX_UPDATE;
+      uiNeedsRedraw = true;
+      didInput = true;
+      userActive = true;
+    }
+    else if (right && selectedButton == BTN_TX_UPDATE) {
       selectedButton = BTN_GAME;
       uiNeedsRedraw = true;
       didInput = true;
@@ -7565,6 +7961,7 @@ void loop() {
       else if (selectedButton == BTN_CTRL) setScreen(SCREEN_CONTROLLER_SETTINGS);
       else if (selectedButton == BTN_MODEL) setScreen(SCREEN_MODEL_SETTINGS);
       else if (selectedButton == BTN_DISPLAY_SETTINGS) setScreen(SCREEN_DISPLAY_SETTINGS);
+      else if (selectedButton == BTN_TX_UPDATE) setScreen(SCREEN_TX_UPDATE);
       else if (selectedButton == BTN_GAME) setScreen(SCREEN_SPACE_GAME);
 
       selectedButton = BTN_NONE;
@@ -7990,10 +8387,9 @@ void loop() {
 
     if (down || up) {
       const ButtonID order[] = {
-        BTN_PROTOCOL_ELRS, BTN_PROTOCOL_ESPNOW, BTN_PROTOCOL_BIND,
-        BTN_PROTOCOL_OTA, BTN_PROTOCOL_OTA_CFG, BTN_BACK
+        BTN_PROTOCOL_ELRS, BTN_PROTOCOL_ESPNOW, BTN_PROTOCOL_BIND, BTN_BACK
       };
-      selectedButton = cycleButtonOrder(selectedButton, order, 6, down);
+      selectedButton = cycleButtonOrder(selectedButton, order, 4, down);
       fullRedraw = true;
       uiNeedsRedraw = true;
       didInput = true;
@@ -8002,9 +8398,6 @@ void loop() {
     if (left) {
       if (selectedButton == BTN_PROTOCOL_ESPNOW) {
         selectedButton = BTN_PROTOCOL_ELRS;
-        uiNeedsRedraw = true;
-      } else if (selectedButton == BTN_PROTOCOL_OTA_CFG) {
-        selectedButton = BTN_PROTOCOL_OTA;
         uiNeedsRedraw = true;
       } else if (!otaUpdateInProgress && selectedButton == BTN_BACK) {
         setScreen(SCREEN_CONTROLLER_SETTINGS);
@@ -8020,10 +8413,6 @@ void loop() {
         selectedButton = BTN_PROTOCOL_ESPNOW;
         uiNeedsRedraw = true;
         didInput = true;
-      } else if (selectedButton == BTN_PROTOCOL_OTA) {
-        selectedButton = BTN_PROTOCOL_OTA_CFG;
-        uiNeedsRedraw = true;
-        didInput = true;
       }
     }
 
@@ -8036,9 +8425,11 @@ void loop() {
         if (!otaModeActive) {
           cancelEspNowBinding(true);
           setModelProtocol(activeModel, PROTOCOL_ELRS);
-          elrsTxPowerMw = clampElrsTxPowerMw(modelElrsTxPowerMw[activeModel]);
+          elrsTxPowerUserOverrideActive = false;
+          elrsLowPowerFallbackActive = true;
+          elrsTxPowerMw = clampElrsTxPowerMw(ELRS_LOW_POWER_FALLBACK_MW);
           initElrsUart();
-          sendElrsTxPowerWrite(elrsTxPowerMw);
+          sendElrsTxPowerWrite(ELRS_LOW_POWER_FALLBACK_MW, false);
           saveModels();
           fullRedraw = true;
           uiNeedsRedraw = true;
@@ -8056,11 +8447,52 @@ void loop() {
           if (getModelProtocol(activeModel) == PROTOCOL_ELRS) {
             setScreen(SCREEN_ELRS);
           } else {
-            if (espNowBindingMode) cancelEspNowBinding(true);
-            else beginEspNowBinding();
+            if (espNowBindingMode) {
+              cancelEspNowBinding(true);
+            } else if (modelHasBoundReceiver(activeModel)) {
+              sendEspNowUnbindCommand();
+            } else {
+              showEspNowOutputModePrompt();
+            }
           }
           fullRedraw = true;
           uiNeedsRedraw = true;
+        }
+      }
+      didInput = true;
+    }
+  }
+  else if (currentScreen == SCREEN_TX_UPDATE) {
+    if (down || up || left || right || select) dpadFocusVisible = true;
+
+    if (down || up) {
+      const ButtonID order[] = {BTN_PROTOCOL_OTA, BTN_PROTOCOL_OTA_CFG, BTN_BACK};
+      selectedButton = cycleButtonOrder(selectedButton, order, 3, down);
+      fullRedraw = true;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (left) {
+      if (selectedButton == BTN_PROTOCOL_OTA_CFG) {
+        selectedButton = BTN_PROTOCOL_OTA;
+        uiNeedsRedraw = true;
+      } else if (!otaUpdateInProgress) {
+        setScreen(SCREEN_MENU);
+      }
+      didInput = true;
+    }
+
+    if (right && selectedButton == BTN_PROTOCOL_OTA) {
+      selectedButton = BTN_PROTOCOL_OTA_CFG;
+      uiNeedsRedraw = true;
+      didInput = true;
+    }
+
+    if (select) {
+      if (selectedButton == BTN_BACK) {
+        if (!otaUpdateInProgress) {
+          setScreen(SCREEN_MENU);
         }
       } else if (selectedButton == BTN_PROTOCOL_OTA) {
         if (otaModeActive) stopOtaMode();
@@ -8086,13 +8518,13 @@ void loop() {
     }
 
     if (left) {
-      setScreen(SCREEN_PROTOCOL);
+      setScreen(SCREEN_TX_UPDATE);
       didInput = true;
     }
 
     if (select) {
       if (focusIndex == 0) {
-        setScreen(SCREEN_PROTOCOL);
+        setScreen(SCREEN_TX_UPDATE);
       } else if (focusIndex == 1) {
         beginOtaFieldEdit(KEYBOARD_TARGET_OTA_STA_SSID);
       } else if (focusIndex == 2) {
@@ -8174,12 +8606,14 @@ void loop() {
     if (down || up || left || right || select) dpadFocusVisible = true;
 
     if (down || up) {
-      ButtonID order[7] = {BTN_ELRS_RX_MODEL_ID, BTN_ELRS_RX_SAVE, BTN_BACK};
-      int count = 1;
+      ButtonID order[8] = {};
+      int count = 0;
+      if (elrsReceiverHasModelId) order[count++] = BTN_ELRS_RX_MODEL_ID;
       if (elrsReceiverPwmCount > 0) order[count++] = BTN_ELRS_RX_PWM1;
       if (elrsReceiverPwmCount > 1) order[count++] = BTN_ELRS_RX_PWM2;
       if (elrsReceiverPwmCount > 2) order[count++] = BTN_ELRS_RX_PWM3;
       if (elrsReceiverPwmCount > 3) order[count++] = BTN_ELRS_RX_PWM4;
+      if (elrsReceiverPwmCount > 0) order[count++] = BTN_ELRS_RX_PUSH_FAILSAFE;
       order[count++] = BTN_ELRS_RX_SAVE;
       order[count++] = BTN_BACK;
       selectedButton = cycleButtonOrder(selectedButton, order, count, down);
@@ -8195,10 +8629,12 @@ void loop() {
     if (select) {
       if (selectedButton == BTN_BACK || selectedButton == BTN_NONE) {
         setScreen(SCREEN_ELRS);
-      } else if (selectedButton == BTN_ELRS_RX_MODEL_ID) {
+      } else if (selectedButton == BTN_ELRS_RX_MODEL_ID && elrsReceiverHasModelId) {
         openMixNumpad(NUMPAD_TARGET_ELRS_RX_MODEL_ID);
       } else if (getElrsReceiverPwmIndexForButton(selectedButton) >= 0) {
         openElrsReceiverPwmNumpad(getElrsReceiverPwmIndexForButton(selectedButton));
+      } else if (selectedButton == BTN_ELRS_RX_PUSH_FAILSAFE) {
+        applyModelFailsafesToElrsReceiverPwm();
       } else if (selectedButton == BTN_ELRS_RX_SAVE) {
         saveElrsReceiverConfig();
       }
@@ -8903,6 +9339,15 @@ if (currentScreen == SCREEN_ELRS_RX_CONFIG && elrsReceiverConfigTouchLocked) {
 
   // ===== DRAW =====
   bool uiFrameRedrew = false;
+  bool droneWarningBlocksScreenRedraw =
+    droneArmWarningVisible && currentScreen == SCREEN_MAIN;
+
+  if (uiNeedsRedraw && droneWarningBlocksScreenRedraw) {
+    // The ARM warning is modal. Do not let stick/output redraws repaint
+    // behind it; only the warning's own dirty flags may update the display.
+    uiNeedsRedraw = false;
+  }
+
   if (uiNeedsRedraw) {
     frameCount++;
 
@@ -8959,6 +9404,10 @@ if (currentScreen == SCREEN_ELRS_RX_CONFIG && elrsReceiverConfigTouchLocked) {
 
           case SCREEN_PROTOCOL:
           drawProtocolScreen();
+          break;
+
+          case SCREEN_TX_UPDATE:
+          drawTxUpdateScreen();
           break;
 
           case SCREEN_STICK_CALIBRATION:
@@ -9055,6 +9504,9 @@ if (currentScreen == SCREEN_ELRS_RX_CONFIG && elrsReceiverConfigTouchLocked) {
       if (currentScreen == SCREEN_PROTOCOL) {
         drawProtocolDynamic();
       }
+      if (currentScreen == SCREEN_TX_UPDATE) {
+        drawTxUpdateDynamic();
+      }
       if (currentScreen == SCREEN_STICK_CALIBRATION && stickCalibrationNeedsRedraw) {
         drawStickCalibrationScreen();
         stickCalibrationNeedsRedraw = false;
@@ -9119,11 +9571,48 @@ if (currentScreen == SCREEN_ELRS_RX_CONFIG && elrsReceiverConfigTouchLocked) {
     topBarNeedsRedraw = false;
   }
 
+  if (droneArmWarningVisible &&
+      (droneArmWarningStaticDirty || droneArmWarningDynamicDirty)) {
+    tft.startWrite();
+    drawDroneArmWarning();
+    tft.endWrite();
+  }
+
+  if (espNowOutputModePromptVisible && (espNowOutputModePromptDirty || uiFrameRedrew)) {
+    tft.startWrite();
+    drawEspNowOutputModePrompt();
+    tft.endWrite();
+  }
+
   switch (currentScreen) {
   }
       
   // ===== TOUCH =====
-  if (isTouching) {
+  if (espNowOutputModePromptVisible) {
+    handleEspNowOutputModePromptTouch(isTouching, x, y);
+    if (isTouching) {
+      touchActive = true;
+      userActive = true;
+    } else {
+      touchActive = false;
+    }
+  }
+  else if (droneArmWarningVisible) {
+    handleDroneArmWarningTouch(isTouching, x, y);
+    if (isTouching) {
+      touchActive = true;
+      userActive = true;
+    } else {
+      if (touchActive) delay(30);
+      touchActive = false;
+      if (!waitingForRelease) {
+        pendingModelHoldIndex = -1;
+        pendingModelHoldStart = 0;
+        pendingModelHoldTriggered = false;
+      }
+    }
+  }
+  else if (isTouching) {
     if (dpadFocusVisible) {
       dpadFocusVisible = false;
       uiNeedsRedraw = true;
@@ -9571,10 +10060,10 @@ void updateStickInputs(unsigned long now) {
   }
 
   if (now - lastStickSampleTime < STICK_SAMPLE_INTERVAL_MS) {
-    inputChannels[0] = -filteredStickAxis[2];
-    inputChannels[1] = filteredStickAxis[3];
-    inputChannels[2] = -filteredStickAxis[1];
-    inputChannels[3] = filteredStickAxis[0];
+    inputChannels[DRONE_ROLL_CHANNEL] = -filteredStickAxis[2];
+    inputChannels[DRONE_PITCH_CHANNEL] = filteredStickAxis[3];
+    inputChannels[DRONE_THROTTLE_CHANNEL] = -filteredStickAxis[1];
+    inputChannels[DRONE_YAW_CHANNEL] = filteredStickAxis[0];
     inputChannels[4] = accessoryInputChannels[0];
     inputChannels[5] = accessoryInputChannels[1];
     updateChannelOutputs();
@@ -9617,11 +10106,12 @@ void updateStickInputs(unsigned long now) {
 
   // Channel map from the external ADS1115 wiring after the gimbals were
   // swapped physically:
-  // CH1 = right X (A2), CH2 = right Y (A3), CH3 = left Y (A1), CH4 = left X (A0).
-  inputChannels[0] = -filteredStickAxis[2];
-  inputChannels[1] = filteredStickAxis[3];
-  inputChannels[2] = -filteredStickAxis[1];
-  inputChannels[3] = filteredStickAxis[0];
+  // CH1 = roll/right X (A2), CH2 = pitch/right Y (A3),
+  // CH3 = throttle/left Y (A1), CH4 = yaw/left X (A0).
+  inputChannels[DRONE_ROLL_CHANNEL] = -filteredStickAxis[2];
+  inputChannels[DRONE_PITCH_CHANNEL] = filteredStickAxis[3];
+  inputChannels[DRONE_THROTTLE_CHANNEL] = -filteredStickAxis[1];
+  inputChannels[DRONE_YAW_CHANNEL] = filteredStickAxis[0];
   inputChannels[4] = accessoryInputChannels[0];
   inputChannels[5] = accessoryInputChannels[1];
   updateChannelOutputs();
@@ -9844,6 +10334,15 @@ void buildProtocolOutputChannels(float channels[CHANNEL_COUNT]) {
     // the user prefers one-stick or split-stick steering.
     channels[0] = getCarSteeringOutput();  // CH1 -> steering
     channels[1] = getCarThrottleOutput();  // CH2 -> throttle
+  } else if (driveType == DRIVE_X_DRONE) {
+    // Direct flight-controller output: do not mix motors in the transmitter.
+    channels[DRONE_ROLL_CHANNEL] = outputChannels[DRONE_ROLL_CHANNEL];
+    channels[DRONE_PITCH_CHANNEL] = outputChannels[DRONE_PITCH_CHANNEL];
+    channels[DRONE_THROTTLE_CHANNEL] = (!droneArmActive || droneSafetyThrottleLockActive)
+      ? DRONE_ARM_DISARMED_VALUE
+      : outputChannels[DRONE_THROTTLE_CHANNEL];
+    channels[DRONE_YAW_CHANNEL] = outputChannels[DRONE_YAW_CHANNEL];
+    channels[DRONE_ARM_CHANNEL] = getDroneArmOutput();
   }
 }
 
@@ -10419,6 +10918,92 @@ void drawButtonBubble(int x, int y, int w, int h,
   tft.print(label);
 }
 
+void drawDroneArmWarning() {
+  if (!droneArmWarningVisible) return;
+
+  if (droneArmWarningStaticDirty) {
+    drawDroneArmWarningStatic();
+    droneArmWarningStaticDirty = false;
+    droneArmWarningDynamicDirty = true;
+  }
+
+  if (droneArmWarningDynamicDirty) {
+    drawDroneArmWarningDynamic();
+    droneArmWarningDynamicDirty = false;
+  }
+}
+
+void drawDroneArmWarningStatic() {
+  const int panelX = 12;
+  const int panelY = 72;
+  const int panelW = 216;
+  const int panelH = 174;
+
+  tft.fillRect(0, 56, 240, 204, COLOR_BG);
+  drawGradientControl(panelX, panelY, panelW, panelH, 14, COLOR_PANEL, TFT_ORANGE);
+
+  tft.setTextFont(2);
+  tft.setTextColor(TFT_ORANGE, COLOR_PANEL);
+  tft.drawCentreString("ARM WARNING", 120, 88, 2);
+
+  tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+  tft.drawCentreString("Props removed?", 120, 118, 2);
+  tft.drawCentreString("or ready to fly?", 120, 138, 2);
+  tft.drawCentreString("YES arms AUX1/CH5", 120, 164, 2);
+  tft.drawCentreString("NO: throttle low", 120, 184, 2);
+}
+
+void drawDroneArmWarningDynamic() {
+  const int yesX = 30;
+  const int noX = 132;
+  const int btnY = 204;
+  const int btnW = 78;
+  const int btnH = 30;
+
+  tft.fillRect(yesX - 2, btnY - 2, btnW + 4, btnH + 4, COLOR_PANEL);
+  tft.fillRect(noX - 2, btnY - 2, btnW + 4, btnH + 4, COLOR_PANEL);
+  drawButtonBubble(yesX, btnY, btnW, btnH, "YES", false, false, -1);
+  drawButtonBubble(noX, btnY, btnW, btnH, "NO", false, false, -1);
+}
+
+bool handleDroneArmWarningTouch(bool isTouching, int x, int y) {
+  if (!droneArmWarningVisible) return false;
+
+  const int yesX = 30;
+  const int noX = 132;
+  const int btnY = 204;
+  const int btnW = 78;
+  const int btnH = 30;
+
+  if (!isTouching) {
+    droneArmWarningTouchLocked = false;
+    return true;
+  }
+
+  if (droneArmWarningTouchLocked) {
+    return true;
+  }
+
+  if (isInside(x, y, yesX, btnY, btnW, btnH)) {
+    droneSafetyThrottleLockActive = false;
+    closeDroneArmWarning();
+    setDroneArmActive(true);
+    waitingForRelease = true;
+    return true;
+  }
+
+  if (isInside(x, y, noX, btnY, btnW, btnH)) {
+    droneSafetyThrottleLockActive = true;
+    closeDroneArmWarning();
+    setDroneArmActive(false);
+    mainOutputPanelNeedsRedraw = true;
+    waitingForRelease = true;
+    return true;
+  }
+
+  return true;
+}
+
 void drawMenuScreen() {
   tft.fillScreen(COLOR_BG);
 
@@ -10464,6 +11049,23 @@ void drawMenuScreen() {
     gearDrawY + max(12, 5 + 7),
     gearSize,
     (dpadFocusVisible && selectedButton == BTN_DISPLAY_SETTINGS) ? COLOR_BG : COLOR_ACCENT);
+
+  drawButtonBubble(
+    TX_UPDATE_MENU_BTN_X, TX_UPDATE_MENU_BTN_Y,
+    TX_UPDATE_MENU_BTN_W, TX_UPDATE_MENU_BTN_H,
+    "",
+    pressedButton == BTN_TX_UPDATE,
+    dpadFocusVisible && selectedButton == BTN_TX_UPDATE,
+    -1);
+  int updateOffset = (pressedButton == BTN_TX_UPDATE) ? 2 : 0;
+  uint16_t updateIconColor = (dpadFocusVisible && selectedButton == BTN_TX_UPDATE) ? COLOR_BG : COLOR_ACCENT;
+  int cx = TX_UPDATE_MENU_BTN_X + (TX_UPDATE_MENU_BTN_W / 2);
+  int cy = TX_UPDATE_MENU_BTN_Y + 24 + updateOffset;
+  tft.drawFastHLine(cx - 13, cy - 7, 24, updateIconColor);
+  tft.drawFastHLine(cx - 11, cy + 7, 24, updateIconColor);
+  tft.fillTriangle(cx + 13, cy - 7, cx + 7, cy - 12, cx + 7, cy - 2, updateIconColor);
+  tft.fillTriangle(cx - 13, cy + 7, cx - 7, cy + 2, cx - 7, cy + 12, updateIconColor);
+  tft.drawCircle(cx, cy, 4, updateIconColor);
 
   drawGameMenuButton();
 }
@@ -11627,12 +12229,28 @@ void composeProtocolStatusText(char *bindStatus, size_t bindStatusSize, uint16_t
     snprintf(bindStatus, bindStatusSize, "Listening %lus", (remainingMs + 999) / 1000);
     if (espNowActive) resolvedColor = COLOR_ACCENT_HI;
   } else if (millis() - espNowBindSuccessTime < 2500) {
-    snprintf(bindStatus, bindStatusSize, "Bind complete");
+    snprintf(bindStatus, bindStatusSize, "Bind complete %s",
+             getModelEspNowOutputMode(activeModel) == ESPNOW_OUTPUT_IBUS ? "iBUS" : "PWM");
+  } else if (millis() - espNowUnbindTime < 2500) {
+    snprintf(bindStatus, bindStatusSize, "Receiver unbound");
+    resolvedColor = COLOR_ACCENT_HI;
   } else {
-    formatReceiverMacShort(getBoundReceiverMac(activeModel), bindStatus, bindStatusSize);
+    char macText[32];
+    formatReceiverMacShort(getBoundReceiverMac(activeModel), macText, sizeof(macText));
+    snprintf(bindStatus, bindStatusSize, "%s %s",
+             macText,
+             getModelEspNowOutputMode(activeModel) == ESPNOW_OUTPUT_IBUS ? "iBUS" : "PWM");
   }
 
   if (statusColor != nullptr) *statusColor = resolvedColor;
+}
+
+const char* protocolBindButtonLabel(bool elrsActive) {
+  if (otaModeActive) return "LOCK";
+  if (elrsActive) return "ELRS";
+  if (espNowBindingMode) return "CANCEL";
+  if (modelHasBoundReceiver(activeModel)) return "UNBIND";
+  return "BIND";
 }
 
 void composeElrsStatusText(char *statusText, size_t statusTextSize, uint16_t *statusColor) {
@@ -11705,22 +12323,9 @@ void drawProtocolScreen() {
   tft.setTextColor(statusColor);
   tft.drawString(bindStatus, PROTOCOL_STATUS_X + 2, PROTOCOL_STATUS_Y + 2, 2);
 
-  drawButtonBubble(PROTOCOL_OTA_BTN_X, PROTOCOL_OTA_BTN_Y,
-                   PROTOCOL_OTA_BTN_W, PROTOCOL_OTA_BTN_H,
-                   otaModeActive ? "OTA ON" : "OTA OFF",
-                   pressedButton == BTN_PROTOCOL_OTA,
-                   dpadFocusVisible && selectedButton == BTN_PROTOCOL_OTA,
-                   -1);
-  drawButtonBubble(PROTOCOL_OTA_CFG_BTN_X, PROTOCOL_OTA_CFG_BTN_Y,
-                   PROTOCOL_OTA_CFG_BTN_W, PROTOCOL_OTA_CFG_BTN_H,
-                   "CFG",
-                   pressedButton == BTN_PROTOCOL_OTA_CFG,
-                   dpadFocusVisible && selectedButton == BTN_PROTOCOL_OTA_CFG,
-                   -1);
-
   drawButtonBubble(PROTOCOL_BIND_BTN_X, PROTOCOL_BIND_BTN_Y,
                    PROTOCOL_BIND_BTN_W, PROTOCOL_BIND_BTN_H,
-                   otaModeActive ? "LOCK" : (elrsActive ? "ELRS" : (espNowBindingMode ? "CANCEL" : "BIND")),
+                   protocolBindButtonLabel(elrsActive),
                    pressedButton == BTN_PROTOCOL_BIND,
                    dpadFocusVisible && selectedButton == BTN_PROTOCOL_BIND,
                    -1);
@@ -11732,11 +12337,13 @@ void drawProtocolDynamic() {
   static bool lastBindingMode = false;
   static bool lastElrsActive = false;
   static bool lastOtaMode = false;
+  static bool lastBoundReceiver = false;
 
   char bindStatus[56];
   uint16_t statusColor = COLOR_TEXT;
   composeProtocolStatusText(bindStatus, sizeof(bindStatus), &statusColor);
   bool elrsActive = (getModelProtocol(activeModel) == PROTOCOL_ELRS);
+  bool boundReceiver = modelHasBoundReceiver(activeModel);
 
   if (strcmp(bindStatus, lastStatus) != 0 || statusColor != lastStatusColor) {
     tft.fillRect(PROTOCOL_STATUS_X, PROTOCOL_STATUS_Y, PROTOCOL_STATUS_W, PROTOCOL_STATUS_H, COLOR_BG);
@@ -11748,30 +12355,189 @@ void drawProtocolDynamic() {
     lastStatusColor = statusColor;
   }
 
-  if (lastBindingMode != espNowBindingMode || lastElrsActive != elrsActive || lastOtaMode != otaModeActive) {
-    drawButtonBubble(PROTOCOL_OTA_BTN_X, PROTOCOL_OTA_BTN_Y,
-                     PROTOCOL_OTA_BTN_W, PROTOCOL_OTA_BTN_H,
-                     otaModeActive ? "OTA ON" : "OTA OFF",
-                     pressedButton == BTN_PROTOCOL_OTA,
-                     dpadFocusVisible && selectedButton == BTN_PROTOCOL_OTA,
-                     -1);
-    drawButtonBubble(PROTOCOL_OTA_CFG_BTN_X, PROTOCOL_OTA_CFG_BTN_Y,
-                     PROTOCOL_OTA_CFG_BTN_W, PROTOCOL_OTA_CFG_BTN_H,
-                     "CFG",
-                     pressedButton == BTN_PROTOCOL_OTA_CFG,
-                     dpadFocusVisible && selectedButton == BTN_PROTOCOL_OTA_CFG,
-                     -1);
-
+  if (lastBindingMode != espNowBindingMode ||
+      lastElrsActive != elrsActive ||
+      lastOtaMode != otaModeActive ||
+      lastBoundReceiver != boundReceiver) {
     drawButtonBubble(PROTOCOL_BIND_BTN_X, PROTOCOL_BIND_BTN_Y,
                      PROTOCOL_BIND_BTN_W, PROTOCOL_BIND_BTN_H,
-                     otaModeActive ? "LOCK" : (elrsActive ? "ELRS" : (espNowBindingMode ? "CANCEL" : "BIND")),
+                     protocolBindButtonLabel(elrsActive),
                      pressedButton == BTN_PROTOCOL_BIND,
                      dpadFocusVisible && selectedButton == BTN_PROTOCOL_BIND,
                      -1);
     lastBindingMode = espNowBindingMode;
     lastElrsActive = elrsActive;
     lastOtaMode = otaModeActive;
+    lastBoundReceiver = boundReceiver;
   }
+}
+
+void drawEspNowOutputModePrompt() {
+  if (!espNowOutputModePromptVisible) return;
+
+  const int panelX = 14;
+  const int panelY = 74;
+  const int panelW = 212;
+  const int panelH = 156;
+  const int btnW = 86;
+  const int btnH = 32;
+  const int pwmX = 28;
+  const int ibusX = 126;
+  const int modeY = 154;
+  const int cancelX = 77;
+  const int cancelY = 198;
+
+  tft.fillRect(0, 56, 240, 190, COLOR_BG);
+  drawGradientControl(panelX, panelY, panelW, panelH, 14, COLOR_PANEL, COLOR_ACCENT);
+
+  tft.setTextFont(2);
+  tft.setTextColor(COLOR_ACCENT_HI, COLOR_PANEL);
+  tft.drawCentreString("Receiver Output", 120, 90, 2);
+
+  tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+  tft.drawCentreString("How is this receiver", 120, 116, 2);
+  tft.drawCentreString("connected to the model?", 120, 134, 2);
+
+  EspNowReceiverOutputMode currentMode = getModelEspNowOutputMode(activeModel);
+  drawButtonBubble(pwmX, modeY, btnW, btnH, "PWM",
+                   false, currentMode == ESPNOW_OUTPUT_PWM, -1);
+  drawButtonBubble(ibusX, modeY, btnW, btnH, "iBUS",
+                   false, currentMode == ESPNOW_OUTPUT_IBUS, -1);
+  drawButtonBubble(cancelX, cancelY, btnW, btnH, "CANCEL", false, false, -1);
+
+  espNowOutputModePromptDirty = false;
+}
+
+bool handleEspNowOutputModePromptTouch(bool isTouching, int x, int y) {
+  if (!espNowOutputModePromptVisible) return false;
+  if (!isTouching) {
+    waitingForRelease = false;
+    return true;
+  }
+  if (waitingForRelease) return true;
+
+  const int btnW = 86;
+  const int btnH = 32;
+  const int pwmX = 28;
+  const int ibusX = 126;
+  const int modeY = 154;
+  const int cancelX = 77;
+  const int cancelY = 198;
+
+  if (isInside(x, y, pwmX, modeY, btnW, btnH)) {
+    pressedButton = BTN_OPTION_2;
+    selectedButton = BTN_OPTION_2;
+    waitingForRelease = true;
+    startEspNowBindingWithOutputMode(ESPNOW_OUTPUT_PWM);
+    return true;
+  }
+
+  if (isInside(x, y, ibusX, modeY, btnW, btnH)) {
+    pressedButton = BTN_OPTION_3;
+    selectedButton = BTN_OPTION_3;
+    waitingForRelease = true;
+    startEspNowBindingWithOutputMode(ESPNOW_OUTPUT_IBUS);
+    return true;
+  }
+
+  if (isInside(x, y, cancelX, cancelY, btnW, btnH)) {
+    espNowOutputModePromptVisible = false;
+    espNowOutputModePromptDirty = false;
+    waitingForRelease = true;
+    fullRedraw = true;
+    uiNeedsRedraw = true;
+    return true;
+  }
+
+  return true;
+}
+
+void drawTxUpdateScreen() {
+  tft.fillScreen(COLOR_BG);
+  txUpdateNeedsRedraw = true;
+
+  drawButtonBubble(
+    BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H,
+    "BACK",
+    pressedButton == BTN_BACK,
+    dpadFocusVisible && selectedButton == BTN_BACK,
+    BACK_TEXT_OFFSET);
+
+  tft.drawFastHLine(0, FOOTER_Y - 5, 240, COLOR_ACCENT);
+  tft.setTextFont(2);
+  tft.setTextColor(COLOR_TEXT, COLOR_BG);
+  tft.drawCentreString("Transmitter Update", 120, 38, 2);
+  tft.drawCentreString("Send firmware to this TX", 120, 58, 2);
+
+  drawTxUpdateDynamic();
+}
+
+void drawTxUpdateDynamic() {
+  static char lastStatus[56] = "";
+  static uint16_t lastStatusColor = 0;
+  static bool lastOtaMode = false;
+  static bool lastOtaPressed = false;
+  static bool lastOtaFocus = false;
+  static bool lastCfgPressed = false;
+  static bool lastCfgFocus = false;
+  static bool cacheValid = false;
+
+  char statusText[56];
+  uint16_t statusColor = COLOR_TEXT;
+  composeProtocolStatusText(statusText, sizeof(statusText), &statusColor);
+
+  bool otaFocus = dpadFocusVisible && selectedButton == BTN_PROTOCOL_OTA;
+  bool cfgFocus = dpadFocusVisible && selectedButton == BTN_PROTOCOL_OTA_CFG;
+  bool otaPressed = pressedButton == BTN_PROTOCOL_OTA;
+  bool cfgPressed = pressedButton == BTN_PROTOCOL_OTA_CFG;
+
+  if (!cacheValid || txUpdateNeedsRedraw ||
+      strcmp(lastStatus, statusText) != 0 || lastStatusColor != statusColor) {
+    tft.fillRect(TX_UPDATE_STATUS_X, TX_UPDATE_STATUS_Y, TX_UPDATE_STATUS_W, TX_UPDATE_STATUS_H, COLOR_BG);
+    tft.setTextFont(2);
+    tft.setTextColor(statusColor, COLOR_BG);
+    tft.drawCentreString(statusText, 120, TX_UPDATE_STATUS_Y + 4, 2);
+    strncpy(lastStatus, statusText, sizeof(lastStatus) - 1);
+    lastStatus[sizeof(lastStatus) - 1] = '\0';
+    lastStatusColor = statusColor;
+  }
+
+  if (!cacheValid || txUpdateNeedsRedraw ||
+      lastOtaMode != otaModeActive ||
+      lastOtaPressed != otaPressed ||
+      lastOtaFocus != otaFocus) {
+    drawButtonBubble(TX_UPDATE_OTA_BTN_X, TX_UPDATE_OTA_BTN_Y,
+                     TX_UPDATE_OTA_BTN_W, TX_UPDATE_OTA_BTN_H,
+                     otaModeActive ? "OTA ON" : "OTA OFF",
+                     otaPressed,
+                     otaFocus,
+                     -1);
+    lastOtaMode = otaModeActive;
+    lastOtaPressed = otaPressed;
+    lastOtaFocus = otaFocus;
+  }
+
+  if (!cacheValid || txUpdateNeedsRedraw ||
+      lastCfgPressed != cfgPressed ||
+      lastCfgFocus != cfgFocus) {
+    drawButtonBubble(TX_UPDATE_CFG_BTN_X, TX_UPDATE_CFG_BTN_Y,
+                     TX_UPDATE_CFG_BTN_W, TX_UPDATE_CFG_BTN_H,
+                     "CFG",
+                     cfgPressed,
+                     cfgFocus,
+                     -1);
+    lastCfgPressed = cfgPressed;
+    lastCfgFocus = cfgFocus;
+  }
+
+  if (!cacheValid || txUpdateNeedsRedraw) {
+    tft.setTextColor(fadeColor(COLOR_TEXT, 0.72f), COLOR_BG);
+    tft.drawCentreString("OTA AP password: anubisota", 120, 206, 2);
+    tft.drawCentreString("Use CFG for WiFi/AP names", 120, 228, 2);
+  }
+
+  cacheValid = true;
+  txUpdateNeedsRedraw = false;
 }
 
 void drawOtaSettingsStatic() {
@@ -12021,6 +12787,8 @@ void drawElrsReceiverConfigDynamic() {
   static bool lastSaveDirty = false;
   static bool lastSavePressed = false;
   static bool lastSaveFocus = false;
+  static bool lastPushPressed = false;
+  static bool lastPushFocus = false;
   static bool lastBackPressed = false;
   static bool lastBackFocus = false;
 
@@ -12056,6 +12824,8 @@ void drawElrsReceiverConfigDynamic() {
     lastSaveDirty = !elrsReceiverConfigDirty;
     lastSavePressed = pressedButton == BTN_ELRS_RX_SAVE;
     lastSaveFocus = dpadFocusVisible && selectedButton == BTN_ELRS_RX_SAVE;
+    lastPushPressed = pressedButton == BTN_ELRS_RX_PUSH_FAILSAFE;
+    lastPushFocus = dpadFocusVisible && selectedButton == BTN_ELRS_RX_PUSH_FAILSAFE;
 
     tft.setTextFont(2);
     tft.setTextColor(fadeColor(COLOR_TEXT, 0.72f), COLOR_BG);
@@ -12065,8 +12835,15 @@ void drawElrsReceiverConfigDynamic() {
       tft.drawString("Serial prints page/API probe", 16, 222, 2);
     } else {
       tft.setTextColor(COLOR_TEXT, COLOR_BG);
-      tft.drawString("Model ID", 16, ELRS_RX_MODEL_ID_Y + 5, 2);
-      tft.drawString("PWM failsafe us", 16, 172, 2);
+      if (elrsReceiverHasModelId) {
+        tft.drawString("Model ID", 16, ELRS_RX_MODEL_ID_Y + 5, 2);
+      }
+      if (elrsReceiverPwmCount > 0) {
+        tft.drawString("PWM failsafe us", 16, 172, 2);
+      } else if (!elrsReceiverHasModelId) {
+        tft.setTextColor(fadeColor(COLOR_TEXT, 0.72f), COLOR_BG);
+        tft.drawString("No editable fields found", 16, 172, 2);
+      }
 
       int maxRows = min((int)elrsReceiverPwmCount, 4);
       for (int i = 0; i < maxRows; i++) {
@@ -12129,23 +12906,28 @@ void drawElrsReceiverConfigDynamic() {
     }
 
     bool modelFocus = dpadFocusVisible && selectedButton == BTN_ELRS_RX_MODEL_ID;
-    if (stateChanged ||
-        lastModelId != elrsReceiverEditModelId ||
-        lastModelFocus != modelFocus) {
+    if (elrsReceiverHasModelId) {
+      if (stateChanged ||
+          lastModelId != elrsReceiverEditModelId ||
+          lastModelFocus != modelFocus) {
+        tft.fillRect(ELRS_RX_FIELD_X - 3, ELRS_RX_MODEL_ID_Y - 3,
+                     ELRS_RX_FIELD_W + 6, ELRS_RX_FIELD_H + 6, COLOR_BG);
+        drawGradientControl(ELRS_RX_FIELD_X, ELRS_RX_MODEL_ID_Y,
+                            ELRS_RX_FIELD_W, ELRS_RX_FIELD_H, 7,
+                            COLOR_PANEL, COLOR_ACCENT);
+        if (modelFocus) {
+          tft.drawRoundRect(ELRS_RX_FIELD_X - 2, ELRS_RX_MODEL_ID_Y - 2,
+                            ELRS_RX_FIELD_W + 4, ELRS_RX_FIELD_H + 4, 7, COLOR_ACCENT_HI);
+        }
+        snprintf(line, sizeof(line), "%d", constrain(elrsReceiverEditModelId, 0, 255));
+        tft.setTextColor(elrsReceiverEditModelId != elrsReceiverModelId ? COLOR_ACCENT_HI : COLOR_TEXT, COLOR_PANEL);
+        tft.drawCentreString(line, ELRS_RX_FIELD_X + (ELRS_RX_FIELD_W / 2), ELRS_RX_MODEL_ID_Y + 5, 2);
+        lastModelId = elrsReceiverEditModelId;
+        lastModelFocus = modelFocus;
+      }
+    } else if (stateChanged) {
       tft.fillRect(ELRS_RX_FIELD_X - 3, ELRS_RX_MODEL_ID_Y - 3,
                    ELRS_RX_FIELD_W + 6, ELRS_RX_FIELD_H + 6, COLOR_BG);
-      drawGradientControl(ELRS_RX_FIELD_X, ELRS_RX_MODEL_ID_Y,
-                          ELRS_RX_FIELD_W, ELRS_RX_FIELD_H, 7,
-                          COLOR_PANEL, COLOR_ACCENT);
-      if (modelFocus) {
-      tft.drawRoundRect(ELRS_RX_FIELD_X - 2, ELRS_RX_MODEL_ID_Y - 2,
-                        ELRS_RX_FIELD_W + 4, ELRS_RX_FIELD_H + 4, 7, COLOR_ACCENT_HI);
-      }
-      snprintf(line, sizeof(line), "%d", constrain(elrsReceiverEditModelId, 0, 255));
-      tft.setTextColor(elrsReceiverEditModelId != elrsReceiverModelId ? COLOR_ACCENT_HI : COLOR_TEXT, COLOR_PANEL);
-      tft.drawCentreString(line, ELRS_RX_FIELD_X + (ELRS_RX_FIELD_W / 2), ELRS_RX_MODEL_ID_Y + 5, 2);
-      lastModelId = elrsReceiverEditModelId;
-      lastModelFocus = modelFocus;
     }
 
     int maxRows = min((int)elrsReceiverPwmCount, 4);
@@ -12189,6 +12971,25 @@ void drawElrsReceiverConfigDynamic() {
 
     bool savePressed = pressedButton == BTN_ELRS_RX_SAVE;
     bool saveFocus = dpadFocusVisible && selectedButton == BTN_ELRS_RX_SAVE;
+    bool pushPressed = pressedButton == BTN_ELRS_RX_PUSH_FAILSAFE;
+    bool pushFocus = dpadFocusVisible && selectedButton == BTN_ELRS_RX_PUSH_FAILSAFE;
+    if (elrsReceiverPwmCount > 0 &&
+        (stateChanged ||
+         lastPushPressed != pushPressed ||
+         lastPushFocus != pushFocus)) {
+      drawButtonBubble(ELRS_RX_PUSH_FS_X, ELRS_RX_PUSH_FS_Y,
+                       ELRS_RX_PUSH_FS_W, ELRS_RX_PUSH_FS_H,
+                       "TX FS",
+                       pushPressed,
+                       pushFocus,
+                       -1);
+      lastPushPressed = pushPressed;
+      lastPushFocus = pushFocus;
+    } else if (stateChanged && elrsReceiverPwmCount == 0) {
+      tft.fillRect(ELRS_RX_PUSH_FS_X - 2, ELRS_RX_PUSH_FS_Y - 2,
+                   ELRS_RX_PUSH_FS_W + 4, ELRS_RX_PUSH_FS_H + 4, COLOR_BG);
+    }
+
     if (stateChanged ||
         lastSaveDirty != elrsReceiverConfigDirty ||
         lastSavePressed != savePressed ||
@@ -12740,15 +13541,15 @@ void setScreen(Screen screen) {
   Screen previousScreen = currentScreen;
   if (previousScreen == screen) return;
 
-  if (previousScreen == SCREEN_PROTOCOL &&
-      screen != SCREEN_PROTOCOL &&
+  if (previousScreen == SCREEN_TX_UPDATE &&
+      screen != SCREEN_TX_UPDATE &&
       screen != SCREEN_OTA_SETTINGS &&
       otaModeActive &&
       !otaUpdateInProgress) {
     stopOtaMode();
   }
   if (previousScreen == SCREEN_OTA_SETTINGS &&
-      screen != SCREEN_PROTOCOL &&
+      screen != SCREEN_TX_UPDATE &&
       screen != SCREEN_OTA_SETTINGS &&
       otaModeActive &&
       !otaUpdateInProgress) {
@@ -12807,13 +13608,16 @@ void setScreen(Screen screen) {
     ratesNeedsRedraw = true;
   }
   else if (screen == SCREEN_PROTOCOL) {
-    if (otaModeActive) selectedButton = BTN_PROTOCOL_OTA;
-    else if (espNowBindingMode) selectedButton = BTN_PROTOCOL_BIND;
+    if (espNowBindingMode) selectedButton = BTN_PROTOCOL_BIND;
     else {
       selectedButton = (getModelProtocol(activeModel) == PROTOCOL_ESPNOW)
         ? BTN_PROTOCOL_ESPNOW
         : BTN_PROTOCOL_ELRS;
     }
+  }
+  else if (screen == SCREEN_TX_UPDATE) {
+    selectedButton = BTN_PROTOCOL_OTA;
+    txUpdateNeedsRedraw = true;
   }
   else if (screen == SCREEN_OTA_SETTINGS) {
     focusIndex = 1;
@@ -12823,7 +13627,9 @@ void setScreen(Screen screen) {
     selectedButton = BTN_ELRS_BIND;
   }
   else if (screen == SCREEN_ELRS_RX_CONFIG) {
-    selectedButton = BTN_ELRS_RX_MODEL_ID;
+    if (elrsReceiverHasModelId) selectedButton = BTN_ELRS_RX_MODEL_ID;
+    else if (elrsReceiverPwmCount > 0) selectedButton = BTN_ELRS_RX_PWM1;
+    else selectedButton = BTN_ELRS_RX_SAVE;
   }
   else if (screen == SCREEN_MODEL_SETTINGS) {
     selectedButton = (modelSettingsPage == 0) ? BTN_MODEL_NAME : BTN_REVERSE;
@@ -12894,12 +13700,14 @@ Screen getBackButtonShortTargetForScreen(Screen screen) {
       return SCREEN_MENU;
     case SCREEN_PROTOCOL:
       return SCREEN_CONTROLLER_SETTINGS;
+    case SCREEN_TX_UPDATE:
+      return SCREEN_MENU;
     case SCREEN_ELRS:
       return SCREEN_PROTOCOL;
     case SCREEN_ELRS_RX_CONFIG:
       return SCREEN_ELRS;
     case SCREEN_OTA_SETTINGS:
-      return SCREEN_PROTOCOL;
+      return SCREEN_TX_UPDATE;
     case SCREEN_DRIVE_TYPE:
     case SCREEN_MODEL_NAME:
       return SCREEN_MODEL_SETTINGS;
@@ -13015,6 +13823,13 @@ void saveKeyboardBufferToModelSlot() {
   activeModel = targetModel;
   selectedModelIndex = targetModel;
   clearActiveEspNowSessionTelemetry();
+  currentDrive = getModelDriveType(targetModel);
+  droneArmWarningVisible = false;
+  droneArmWarningTouchLocked = false;
+  droneArmWarningStaticDirty = false;
+  droneArmWarningDynamicDirty = false;
+  droneSafetyThrottleLockActive = false;
+  setDroneArmActive(false);
   currentModelName = String(models[targetModel].name);
 
   trimRenderX = models[targetModel].trimX[currentTrimPage];
@@ -13023,6 +13838,7 @@ void saveKeyboardBufferToModelSlot() {
   mixingNeedsRedraw = true;
 
   saveModels();
+  saveActiveModelIndex();
   if (creatingNewModel) {
     saveReceiverBindings();
   }
@@ -13079,6 +13895,19 @@ void updateMainModelPanelBounds() {
   modelPanelH = (MENU_BTN_Y - 10) - modelPanelY;
 }
 
+void getDronePanelBounds(int iconX, int iconY, int iconW, int iconH,
+                         int &droneIconH, int &armX, int &armY, int &armW, int &armH) {
+  armH = 24;
+  int gap = 4;
+  droneIconH = max(28, iconH - armH - gap);
+  armX = iconX + 6;
+  armY = iconY + droneIconH + gap;
+  armW = iconW - 12;
+  if (armY + armH > iconY + iconH) {
+    armH = max(18, (iconY + iconH) - armY);
+  }
+}
+
 void loadModels() {
   int addr = 0;
 
@@ -13113,6 +13942,13 @@ void handleTouch(int x, int y) {
     const int iconY = modelPanelY + 10;
     const int iconW = (modelPanelW - 20) / 2;
     const int iconH = modelPanelH - 20;
+    int droneIconH = 0;
+    int droneArmX = 0;
+    int droneArmY = 0;
+    int droneArmW = 0;
+    int droneArmH = 0;
+    getDronePanelBounds(iconX, iconY, iconW, iconH,
+                        droneIconH, droneArmX, droneArmY, droneArmW, droneArmH);
     const int rightPanelX = modelPanelX + (modelPanelW / 2);
     const int rightPanelW = modelPanelW / 2;
 
@@ -13147,6 +13983,28 @@ void handleTouch(int x, int y) {
         uiNeedsRedraw = true;
       }
       queueScreenButton(BTN_TRIM, SCREEN_TRIM);
+      return;
+    }
+
+    if (currentDrive == DRIVE_X_DRONE && droneArmActive &&
+        isInside(x, y, iconX, iconY, iconW, iconH)) {
+      if (!waitingForRelease) {
+        pressedButton = BTN_DRONE_ARM;
+        selectedButton = BTN_DRONE_ARM;
+        setDroneArmActive(false);
+        waitingForRelease = true;
+      }
+      return;
+    }
+
+    if (currentDrive == DRIVE_X_DRONE &&
+        isInside(x, y, droneArmX, droneArmY, droneArmW, droneArmH)) {
+      if (!waitingForRelease) {
+        pressedButton = BTN_DRONE_ARM;
+        selectedButton = BTN_DRONE_ARM;
+        showDroneArmWarning();
+        waitingForRelease = true;
+      }
       return;
     }
 
@@ -13194,6 +14052,11 @@ void handleTouch(int x, int y) {
 
     else if (isInside(x, y, DISPLAY_MENU_BTN_X, DISPLAY_MENU_BTN_Y, DISPLAY_MENU_BTN_W, DISPLAY_MENU_BTN_H)) {
       queueScreenButton(BTN_DISPLAY_SETTINGS, SCREEN_DISPLAY_SETTINGS);
+      return;
+    }
+
+    else if (isInside(x, y, TX_UPDATE_MENU_BTN_X, TX_UPDATE_MENU_BTN_Y, TX_UPDATE_MENU_BTN_W, TX_UPDATE_MENU_BTN_H)) {
+      queueScreenButton(BTN_TX_UPDATE, SCREEN_TX_UPDATE);
       return;
     }
 
@@ -13549,9 +14412,11 @@ void handleTouch(int x, int y) {
         if (!otaModeActive) {
           cancelEspNowBinding(true);
           setModelProtocol(activeModel, PROTOCOL_ELRS);
-          elrsTxPowerMw = clampElrsTxPowerMw(modelElrsTxPowerMw[activeModel]);
+          elrsTxPowerUserOverrideActive = false;
+          elrsLowPowerFallbackActive = true;
+          elrsTxPowerMw = clampElrsTxPowerMw(ELRS_LOW_POWER_FALLBACK_MW);
           initElrsUart();
-          sendElrsTxPowerWrite(elrsTxPowerMw);
+          sendElrsTxPowerWrite(ELRS_LOW_POWER_FALLBACK_MW, false);
           pressedButton = BTN_PROTOCOL_ELRS;
           selectedButton = BTN_PROTOCOL_ELRS;
           saveModels();
@@ -13585,8 +14450,13 @@ void handleTouch(int x, int y) {
         if (getModelProtocol(activeModel) == PROTOCOL_ELRS) {
           setScreen(SCREEN_ELRS);
         } else {
-          if (espNowBindingMode) cancelEspNowBinding(true);
-          else beginEspNowBinding();
+          if (espNowBindingMode) {
+            cancelEspNowBinding(true);
+          } else if (modelHasBoundReceiver(activeModel)) {
+            sendEspNowUnbindCommand();
+          } else {
+            showEspNowOutputModePrompt();
+          }
         }
 
         fullRedraw = true;
@@ -13594,21 +14464,39 @@ void handleTouch(int x, int y) {
         waitingForRelease = true;
         return;
       }
-      else if (isInside(x, y, PROTOCOL_OTA_BTN_X, PROTOCOL_OTA_BTN_Y,
-                        PROTOCOL_OTA_BTN_W, PROTOCOL_OTA_BTN_H)) {
+      else {
+        return;
+      }
+    }
+
+    return;
+  }
+  else if (currentScreen == SCREEN_TX_UPDATE) {
+    if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
+      if (!otaUpdateInProgress) {
+        queueScreenButton(BTN_BACK, SCREEN_MENU);
+      }
+      return;
+    }
+
+    if (!waitingForRelease) {
+      if (isInside(x, y, TX_UPDATE_OTA_BTN_X, TX_UPDATE_OTA_BTN_Y,
+                   TX_UPDATE_OTA_BTN_W, TX_UPDATE_OTA_BTN_H)) {
         pressedButton = BTN_PROTOCOL_OTA;
         selectedButton = BTN_PROTOCOL_OTA;
 
         if (otaModeActive) stopOtaMode();
         else startOtaMode();
 
+        txUpdateNeedsRedraw = true;
         fullRedraw = true;
         uiNeedsRedraw = true;
         waitingForRelease = true;
         return;
       }
-      else if (isInside(x, y, PROTOCOL_OTA_CFG_BTN_X, PROTOCOL_OTA_CFG_BTN_Y,
-                        PROTOCOL_OTA_CFG_BTN_W, PROTOCOL_OTA_CFG_BTN_H)) {
+
+      if (isInside(x, y, TX_UPDATE_CFG_BTN_X, TX_UPDATE_CFG_BTN_Y,
+                   TX_UPDATE_CFG_BTN_W, TX_UPDATE_CFG_BTN_H)) {
         pressedButton = BTN_PROTOCOL_OTA_CFG;
         selectedButton = BTN_PROTOCOL_OTA_CFG;
 
@@ -13620,16 +14508,11 @@ void handleTouch(int x, int y) {
         }
         return;
       }
-      else {
-        return;
-      }
     }
-
-    return;
   }
   else if (currentScreen == SCREEN_OTA_SETTINGS) {
     if (isInside(x, y, BACK_BTN_X, BACK_BTN_Y, BACK_BTN_W, BACK_BTN_H)) {
-      queueScreenButton(BTN_BACK, SCREEN_PROTOCOL);
+      queueScreenButton(BTN_BACK, SCREEN_TX_UPDATE);
       return;
     }
 
@@ -13722,7 +14605,8 @@ void handleTouch(int x, int y) {
       return;
     }
     if (!waitingForRelease && elrsReceiverConfigState == RX_CONFIG_DONE) {
-      if (isInside(x, y, ELRS_RX_FIELD_X, ELRS_RX_MODEL_ID_Y, ELRS_RX_FIELD_W, ELRS_RX_FIELD_H)) {
+      if (elrsReceiverHasModelId &&
+          isInside(x, y, ELRS_RX_FIELD_X, ELRS_RX_MODEL_ID_Y, ELRS_RX_FIELD_W, ELRS_RX_FIELD_H)) {
         pressedButton = BTN_ELRS_RX_MODEL_ID;
         selectedButton = BTN_ELRS_RX_MODEL_ID;
         openMixNumpad(NUMPAD_TARGET_ELRS_RX_MODEL_ID);
@@ -13746,6 +14630,14 @@ void handleTouch(int x, int y) {
         pressedButton = BTN_ELRS_RX_SAVE;
         selectedButton = BTN_ELRS_RX_SAVE;
         saveElrsReceiverConfig();
+        waitingForRelease = true;
+        return;
+      }
+      if (elrsReceiverPwmCount > 0 &&
+          isInside(x, y, ELRS_RX_PUSH_FS_X, ELRS_RX_PUSH_FS_Y, ELRS_RX_PUSH_FS_W, ELRS_RX_PUSH_FS_H)) {
+        pressedButton = BTN_ELRS_RX_PUSH_FAILSAFE;
+        selectedButton = BTN_ELRS_RX_PUSH_FAILSAFE;
+        applyModelFailsafesToElrsReceiverPwm();
         waitingForRelease = true;
         return;
       }
@@ -15069,7 +15961,18 @@ updateMainModelPanelBounds();
     drawLegacyTankIcon(iconX, iconY, iconW, iconH, COLOR_ACCENT);
   } 
   else if (currentDrive == DRIVE_X_DRONE) {
-    drawQuadXIcon(iconX, iconY, iconW, iconH, COLOR_ACCENT);
+    int droneIconH = 0;
+    int armX = 0;
+    int armY = 0;
+    int armW = 0;
+    int armH = 0;
+    getDronePanelBounds(iconX, iconY, iconW, iconH, droneIconH, armX, armY, armW, armH);
+    drawQuadXIcon(iconX, iconY, iconW, droneIconH, COLOR_ACCENT);
+    drawButtonBubble(armX, armY, armW, armH,
+                     droneArmActive ? "DISARM" : "ARM",
+                     pressedButton == BTN_DRONE_ARM,
+                     dpadFocusVisible && selectedButton == BTN_DRONE_ARM,
+                     -1);
   }
   else if (currentDrive == DRIVE_CAR) {
     drawCarIcon(iconX + (iconW / 2) - 36, iconY + (iconH / 2) - 36, 3, COLOR_ACCENT);
@@ -15292,13 +16195,23 @@ static float lastQuad1 = -1.0f;
 static float lastQuad2 = -1.0f;
 static float lastQuad3 = -1.0f;
 static float lastQuad4 = -1.0f;
+static bool lastDroneArmActive = false;
+static ButtonID lastDroneArmPressed = BTN_NONE;
+static ButtonID lastDroneArmSelected = BTN_NONE;
+
+int droneIconH = 0;
+int armX = 0;
+int armY = 0;
+int armW = 0;
+int armH = 0;
+getDronePanelBounds(iconX, iconY, iconW, iconH, droneIconH, armX, armY, armW, armH);
 
 // Drone visualization shows the command being sent to a flight controller,
 // not literal motor outputs. Use processed stick values before drive mixing.
-float droneYaw = driveSourceChannels[3];       // Left stick X
-float droneThrottle = (driveSourceChannels[2] + 1.0f) * 0.5f;  // Left stick Y
-float droneRoll = driveSourceChannels[0];      // Right stick X
-float dronePitch = driveSourceChannels[1];     // Right stick Y
+float droneYaw = driveSourceChannels[DRONE_YAW_CHANNEL];       // Left stick X
+float droneThrottle = (driveSourceChannels[DRONE_THROTTLE_CHANNEL] + 1.0f) * 0.5f;  // Left stick Y
+float droneRoll = driveSourceChannels[DRONE_ROLL_CHANNEL];     // Right stick X
+float dronePitch = driveSourceChannels[DRONE_PITCH_CHANNEL];   // Right stick Y
 const float cyclicScale = 0.5f;
 
 // Motor order: 1 front-left, 2 front-right, 3 rear-right, 4 rear-left.
@@ -15317,15 +16230,28 @@ if (mainOutputPanelNeedsRedraw ||
     abs(quad1Output - lastQuad1) > 0.01 ||
     abs(quad2Output - lastQuad2) > 0.01 ||
     abs(quad3Output - lastQuad3) > 0.01 ||
-    abs(quad4Output - lastQuad4) > 0.01) {
+    abs(quad4Output - lastQuad4) > 0.01 ||
+    droneArmActive != lastDroneArmActive ||
+    pressedButton != lastDroneArmPressed ||
+    selectedButton != lastDroneArmSelected) {
 
-  drawDroneCommandBars(iconX, iconY, iconW, iconH, droneYaw, quad1Output, quad2Output, quad3Output, quad4Output);
+  tft.fillRect(iconX - 2, iconY, iconW + 2, iconH, COLOR_STICK_PANEL);
+  drawQuadXIcon(iconX, iconY, iconW, droneIconH, COLOR_ACCENT);
+  drawDroneCommandBars(iconX, iconY, iconW, droneIconH, droneYaw, quad1Output, quad2Output, quad3Output, quad4Output);
+  drawButtonBubble(armX, armY, armW, armH,
+                   droneArmActive ? "DISARM" : "ARM",
+                   pressedButton == BTN_DRONE_ARM,
+                   dpadFocusVisible && selectedButton == BTN_DRONE_ARM,
+                   -1);
 
   lastDroneYaw = droneYaw;
   lastQuad1 = quad1Output;
   lastQuad2 = quad2Output;
   lastQuad3 = quad3Output;
   lastQuad4 = quad4Output;
+  lastDroneArmActive = droneArmActive;
+  lastDroneArmPressed = pressedButton;
+  lastDroneArmSelected = selectedButton;
   mainOutputPanelNeedsRedraw = false;
 }
 }

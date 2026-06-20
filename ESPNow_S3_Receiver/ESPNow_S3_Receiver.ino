@@ -5,6 +5,19 @@
 #include <Wire.h>
 #include <pgmspace.h>
 
+// Board profile:
+// 1 = Seeed Studio XIAO ESP32-S3 receiver, no onboard OLED/Vext/battery divider.
+// 0 = legacy Heltec WiFi LoRa 32 V3 receiver behavior.
+#define RECEIVER_BOARD_XIAO_ESP32S3 1
+
+#if RECEIVER_BOARD_XIAO_ESP32S3
+  #define RECEIVER_ENABLE_DISPLAY 0
+  #define RECEIVER_ENABLE_BATTERY_SENSE 0
+#else
+  #define RECEIVER_ENABLE_DISPLAY 1
+  #define RECEIVER_ENABLE_BATTERY_SENSE 1
+#endif
+
 // Receiver-side maximum accepted channel metadata. The receiver still only
 // drives RC_OUTPUT_COUNT physical PWM outputs, but packets may carry fewer
 // channels from older/smaller transmitters.
@@ -13,6 +26,7 @@
 #define ESPNOW_LINK_MAGIC 0xA614
 #define ESPNOW_LINK_VERSION 2
 #define ESPNOW_WIFI_CHANNEL 6
+#if RECEIVER_ENABLE_DISPLAY
 #define HELTEC_OLED_ADDRESS 0x3C
 #define HELTEC_OLED_SDA 17
 #define HELTEC_OLED_SCL 18
@@ -23,6 +37,7 @@
 #define OLED_PAGES (OLED_HEIGHT / 8)
 #define OLED_FLIP_HORIZONTAL true
 #define OLED_FLIP_VERTICAL false
+#endif
 #define DISPLAY_REFRESH_INTERVAL_MS 150
 #define FAILSAFE_TIMEOUT_MS 300
 #define TELEMETRY_INTERVAL_MS 100
@@ -37,6 +52,10 @@
 #define RC_PWM_NEUTRAL_US 1500
 #define RC_PWM_MAX_US 2000
 #define ESC_ARM_HOLD_MS 3000
+#define IBUS_OUTPUT_PIN D5
+#define IBUS_BAUD 115200
+#define IBUS_CHANNEL_COUNT 14
+#define IBUS_FRAME_INTERVAL_MS 7
 // Set true for typical one-direction brushless ESC arming behavior (idle at minimum throttle).
 // Set false for bidirectional ESC behavior (idle at neutral/center).
 #define ESC_IDLE_AT_MIN_THROTTLE false
@@ -61,7 +80,19 @@ enum EspNowMessageType : uint8_t {
   ESPNOW_MSG_PING_ACK = 0x51,
   ESPNOW_MSG_BIND_BEACON = 0x42,
   ESPNOW_MSG_BIND_COMMIT = 0x62,
-  ESPNOW_MSG_BIND_ACK = 0x41
+  ESPNOW_MSG_BIND_ACK = 0x41,
+  ESPNOW_MSG_UNBIND = 0x55
+};
+
+enum EspNowLinkFlags : uint8_t {
+  ESPNOW_FLAG_BATTERY_PRESENT = 0x01,
+  ESPNOW_FLAG_BATTERY_CHARGING = 0x02,
+  ESPNOW_FLAG_OUTPUT_IBUS = 0x80
+};
+
+enum ReceiverOutputMode : uint8_t {
+  RECEIVER_OUTPUT_PWM = 0,
+  RECEIVER_OUTPUT_IBUS = 1
 };
 
 struct __attribute__((packed)) EspNowControlPacket {
@@ -121,6 +152,7 @@ struct __attribute__((packed)) EspNowPingAckPacket {
   uint32_t echoedTxMillis;
 };
 
+#if RECEIVER_ENABLE_DISPLAY
 static const uint8_t GLYPH_SPACE[5] PROGMEM = {0x00, 0x00, 0x00, 0x00, 0x00};
 static const uint8_t GLYPH_DASH[5] PROGMEM = {0x08, 0x08, 0x08, 0x08, 0x08};
 static const uint8_t GLYPH_DOT[5] PROGMEM = {0x00, 0x00, 0x00, 0x18, 0x18};
@@ -291,6 +323,7 @@ struct TinyOLED {
     }
   }
 };
+#endif
 
 const uint8_t OUTPUT_PINS[RC_OUTPUT_COUNT] = {4, 5, 6, 7};
 const uint8_t OUTPUT_LEDC_CHANNEL[RC_OUTPUT_COUNT] = {0, 1, 2, 3};
@@ -316,9 +349,15 @@ const bool OUTPUT_ESC_USE_ACTIVE_HALF_ONLY[RC_OUTPUT_COUNT] = {false, false, tru
 // Heltec WiFi LoRa 32 V3 battery sense: GPIO37 controls the divider feeding
 // GPIO1 / ADC1_CH0. Different board revisions/examples disagree on polarity,
 // so the code auto-detects the state that produces a plausible LiPo voltage.
+#if RECEIVER_ENABLE_BATTERY_SENSE
 const int RECEIVER_BATTERY_ADC_PIN = 1;
 const int RECEIVER_BATTERY_ADC_CTRL_PIN = 37;
 const float RECEIVER_BATTERY_DIVIDER_RATIO = 4.9f;
+#else
+const int RECEIVER_BATTERY_ADC_PIN = -1;
+const int RECEIVER_BATTERY_ADC_CTRL_PIN = -1;
+const float RECEIVER_BATTERY_DIVIDER_RATIO = 1.0f;
+#endif
 const float RECEIVER_BATTERY_EMPTY_V = 3.30f;
 const float RECEIVER_BATTERY_FULL_V = 4.20f;
 const uint16_t RECEIVER_BATTERY_PRESENT_MIN_MV = 2500;
@@ -327,9 +366,12 @@ const uint8_t ESPNOW_BROADCAST_ADDRESS[ESP_NOW_ETH_ALEN] = {
   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
 };
 
+#if RECEIVER_ENABLE_DISPLAY
 TinyOLED display;
+#endif
 
 Preferences receiverPrefs;
+HardwareSerial ibusSerial(1);
 portMUX_TYPE controlPacketMux = portMUX_INITIALIZER_UNLOCKED;
 EspNowControlPacket latestControlPacket = {};
 uint8_t latestControlChannelCount = 0;
@@ -349,6 +391,11 @@ uint8_t boundTransmitterMac[6] = { 0, 0, 0, 0, 0, 0 };
 uint16_t lastOutputPulseUs[RC_OUTPUT_COUNT] = { RC_PWM_NEUTRAL_US, RC_PWM_NEUTRAL_US, RC_PWM_NEUTRAL_US, RC_PWM_NEUTRAL_US };
 bool outputPwmAttached[RC_OUTPUT_COUNT] = { false, false, false, false };
 bool outputUseChannelWrite[RC_OUTPUT_COUNT] = { false, false, false, false };
+ReceiverOutputMode receiverOutputMode = RECEIVER_OUTPUT_PWM;
+bool ibusStarted = false;
+uint16_t ibusChannels[IBUS_CHANNEL_COUNT] = {};
+unsigned long lastIbusFrameTime = 0;
+uint32_t ibusFrameCount = 0;
 uint32_t pwmWriteFailureCount = 0;
 bool displayReady = false;
 unsigned long lastDisplayRefreshTime = 0;
@@ -360,10 +407,19 @@ bool ensureBroadcastPeer();
 void loadReceiverBinding();
 void saveReceiverBinding();
 void clearReceiverBinding();
+void loadReceiverOutputMode();
+void saveReceiverOutputMode();
+void setReceiverOutputMode(ReceiverOutputMode mode, bool persist);
 bool parseEspNowControlPacket(const uint8_t *data, int len, EspNowControlPacket &packet, uint8_t &channelCount);
 void applyControlPacket(const EspNowControlPacket &packet);
 void applyFailsafeOutputs();
 void writeRcPulseUs(int channelIndex, uint16_t pulseUs);
+void stopRcPwmOutputs();
+void initIbusOutput();
+void stopIbusOutput();
+void applyIbusFailsafe();
+void updateIbusOutputFromPacket(const EspNowControlPacket &packet);
+void sendIbusFrameIfDue(unsigned long now);
 uint16_t normalizedToPulseUs(float value);
 uint16_t normalizedToPulseUsForOutput(float value, int outputIndex);
 uint32_t pulseUsToDuty(uint16_t pulseUs);
@@ -378,7 +434,7 @@ void sendPingAck(const uint8_t *macAddress, uint32_t sequence, uint32_t echoedTx
 void updateRebindButton(unsigned long now);
 void onEspNowReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len);
 void initRcPwmOutputs();
-void initHeltecDisplay();
+void initReceiverDisplay();
 void updateReceiverDisplay(unsigned long now, bool packetFresh);
 const char* driveTypeLabel(uint8_t driveType);
 void copyPacketModelName(const EspNowControlPacket &packet, char *buffer, size_t bufferSize);
@@ -521,6 +577,15 @@ void clearReceiverBinding() {
   Serial.println("Binding cleared; receiver is back in beacon mode");
 }
 
+void loadReceiverOutputMode() {
+  uint8_t storedMode = receiverPrefs.getUChar("outmode", RECEIVER_OUTPUT_PWM);
+  setReceiverOutputMode(storedMode == RECEIVER_OUTPUT_IBUS ? RECEIVER_OUTPUT_IBUS : RECEIVER_OUTPUT_PWM, false);
+}
+
+void saveReceiverOutputMode() {
+  receiverPrefs.putUChar("outmode", (uint8_t)receiverOutputMode);
+}
+
 bool parseEspNowControlPacket(const uint8_t *data, int len, EspNowControlPacket &packet, uint8_t &channelCount) {
   packet = {};
   channelCount = 0;
@@ -586,16 +651,21 @@ void copyPacketModelName(const EspNowControlPacket &packet, char *buffer, size_t
   buffer[copyLen] = '\0';
 }
 
-void initHeltecDisplay() {
+void initReceiverDisplay() {
+#if RECEIVER_ENABLE_DISPLAY
   display.begin();
   display.clear();
   display.drawCenteredText(8, "ESP-NOW RX", 2);
   display.drawCenteredText(32, "WAITING", 1);
   display.display();
   displayReady = true;
+#else
+  displayReady = false;
+#endif
 }
 
 void updateReceiverDisplay(unsigned long now, bool packetFresh) {
+#if RECEIVER_ENABLE_DISPLAY
   if (!displayReady) return;
   if (now - lastDisplayRefreshTime < DISPLAY_REFRESH_INTERVAL_MS) return;
   lastDisplayRefreshTime = now;
@@ -645,6 +715,10 @@ void updateReceiverDisplay(unsigned long now, bool packetFresh) {
   }
   display.drawText(0, 56, batteryText, 1);
   display.display();
+#else
+  (void)now;
+  (void)packetFresh;
+#endif
 }
 
 float packetValueToNormalized(int16_t value) {
@@ -702,7 +776,10 @@ void writeRcPulseUs(int channelIndex, uint16_t pulseUs) {
 }
 
 void initRcPwmOutputs() {
+  if (receiverOutputMode != RECEIVER_OUTPUT_PWM) return;
+
   for (int i = 0; i < RC_OUTPUT_COUNT; i++) {
+    if (outputPwmAttached[i]) continue;
     outputPwmAttached[i] = ledcAttachChannel(
       OUTPUT_PINS[i],
       RC_PWM_FREQUENCY_HZ,
@@ -730,7 +807,110 @@ void initRcPwmOutputs() {
   }
 }
 
+void stopRcPwmOutputs() {
+  for (int i = 0; i < RC_OUTPUT_COUNT; i++) {
+    if (outputPwmAttached[i]) {
+      ledcDetach(OUTPUT_PINS[i]);
+    }
+    outputPwmAttached[i] = false;
+    outputUseChannelWrite[i] = false;
+    pinMode(OUTPUT_PINS[i], INPUT);
+  }
+}
+
+void initIbusOutput() {
+  if (ibusStarted) return;
+  for (int i = 0; i < IBUS_CHANNEL_COUNT; i++) {
+    ibusChannels[i] = RC_PWM_NEUTRAL_US;
+  }
+  ibusChannels[2] = RC_PWM_MIN_US;
+  ibusSerial.begin(IBUS_BAUD, SERIAL_8N1, -1, IBUS_OUTPUT_PIN);
+  ibusStarted = true;
+  ibusFrameCount = 0;
+  lastIbusFrameTime = 0;
+  Serial.printf("iBUS output enabled on D5/GPIO%u @ %lu baud\n",
+                (unsigned int)IBUS_OUTPUT_PIN,
+                (unsigned long)IBUS_BAUD);
+}
+
+void stopIbusOutput() {
+  if (!ibusStarted) return;
+  ibusSerial.flush();
+  ibusSerial.end();
+  ibusStarted = false;
+  pinMode(IBUS_OUTPUT_PIN, INPUT);
+}
+
+void setReceiverOutputMode(ReceiverOutputMode mode, bool persist) {
+  ReceiverOutputMode nextMode = (mode == RECEIVER_OUTPUT_IBUS) ? RECEIVER_OUTPUT_IBUS : RECEIVER_OUTPUT_PWM;
+  if (receiverOutputMode == nextMode && ((nextMode == RECEIVER_OUTPUT_PWM && outputPwmAttached[0]) ||
+                                         (nextMode == RECEIVER_OUTPUT_IBUS && ibusStarted))) {
+    if (persist) saveReceiverOutputMode();
+    return;
+  }
+
+  stopRcPwmOutputs();
+  stopIbusOutput();
+  receiverOutputMode = nextMode;
+
+  if (receiverOutputMode == RECEIVER_OUTPUT_IBUS) {
+    initIbusOutput();
+  } else {
+    initRcPwmOutputs();
+  }
+
+  if (persist) {
+    saveReceiverOutputMode();
+  }
+}
+
+void applyIbusFailsafe() {
+  for (int i = 0; i < IBUS_CHANNEL_COUNT; i++) {
+    ibusChannels[i] = RC_PWM_NEUTRAL_US;
+  }
+  ibusChannels[2] = RC_PWM_MIN_US;
+}
+
+void updateIbusOutputFromPacket(const EspNowControlPacket &packet) {
+  for (int i = 0; i < IBUS_CHANNEL_COUNT; i++) {
+    if (i < CHANNEL_COUNT) {
+      ibusChannels[i] = normalizedToPulseUs(packetValueToNormalized(packet.channels[i]));
+    } else {
+      ibusChannels[i] = RC_PWM_NEUTRAL_US;
+    }
+  }
+}
+
+void sendIbusFrameIfDue(unsigned long now) {
+  if (!ibusStarted || receiverOutputMode != RECEIVER_OUTPUT_IBUS) return;
+  if (now - lastIbusFrameTime < IBUS_FRAME_INTERVAL_MS) return;
+  lastIbusFrameTime = now;
+
+  uint8_t frame[32] = {};
+  frame[0] = 0x20;
+  frame[1] = 0x40;
+  for (int i = 0; i < IBUS_CHANNEL_COUNT; i++) {
+    uint16_t value = constrain((int)ibusChannels[i], RC_PWM_MIN_US, RC_PWM_MAX_US);
+    frame[2 + (i * 2)] = (uint8_t)(value & 0xFF);
+    frame[3 + (i * 2)] = (uint8_t)((value >> 8) & 0xFF);
+  }
+
+  uint16_t checksum = 0xFFFF;
+  for (int i = 0; i < 30; i++) {
+    checksum -= frame[i];
+  }
+  frame[30] = (uint8_t)(checksum & 0xFF);
+  frame[31] = (uint8_t)((checksum >> 8) & 0xFF);
+  ibusSerial.write(frame, sizeof(frame));
+  ibusFrameCount++;
+}
+
 void applyFailsafeOutputs() {
+  if (receiverOutputMode == RECEIVER_OUTPUT_IBUS) {
+    applyIbusFailsafe();
+    return;
+  }
+
   for (int i = 0; i < RC_OUTPUT_COUNT; i++) {
     bool idleAtMin = OUTPUT_IDLE_AT_MIN_THROTTLE[i] || ESC_IDLE_AT_MIN_THROTTLE;
     uint16_t failsafePulse = idleAtMin ? RC_PWM_MIN_US : RC_PWM_NEUTRAL_US;
@@ -743,6 +923,11 @@ void applyControlPacket(const EspNowControlPacket &packet) {
 
   for (int i = 0; i < CHANNEL_COUNT; i++) {
     outputs[i] = packetValueToNormalized(packet.channels[i]);
+  }
+
+  if (receiverOutputMode == RECEIVER_OUTPUT_IBUS) {
+    updateIbusOutputFromPacket(packet);
+    return;
   }
 
   for (int i = 0; i < RC_OUTPUT_COUNT; i++) {
@@ -955,15 +1140,36 @@ void onEspNowReceive(const esp_now_recv_info_t *info, const uint8_t *data, int l
     EspNowBindPacket bindPacket = {};
     memcpy(&bindPacket, data, sizeof(bindPacket));
 
-    if (bindPacket.magic == ESPNOW_LINK_MAGIC &&
-        bindPacket.version == ESPNOW_LINK_VERSION &&
-        bindPacket.messageType == ESPNOW_MSG_BIND_COMMIT) {
+    if (bindPacket.magic != ESPNOW_LINK_MAGIC ||
+        bindPacket.version != ESPNOW_LINK_VERSION) {
+      return;
+    }
+
+    if (bindPacket.messageType == ESPNOW_MSG_UNBIND) {
+      if (receiverBound &&
+          memcmp(info->src_addr, boundTransmitterMac, ESP_NOW_ETH_ALEN) == 0) {
+        clearReceiverBinding();
+        memcpy(lastSenderMac, info->src_addr, ESP_NOW_ETH_ALEN);
+      }
+      return;
+    }
+
+    if (bindPacket.messageType == ESPNOW_MSG_BIND_COMMIT) {
 
       if (!receiverBound) {
         memcpy(boundTransmitterMac, info->src_addr, ESP_NOW_ETH_ALEN);
+        setReceiverOutputMode((bindPacket.flags & ESPNOW_FLAG_OUTPUT_IBUS)
+                              ? RECEIVER_OUTPUT_IBUS
+                              : RECEIVER_OUTPUT_PWM,
+                              true);
         saveReceiverBinding();
       } else if (memcmp(info->src_addr, boundTransmitterMac, ESP_NOW_ETH_ALEN) != 0) {
         return;
+      } else {
+        setReceiverOutputMode((bindPacket.flags & ESPNOW_FLAG_OUTPUT_IBUS)
+                              ? RECEIVER_OUTPUT_IBUS
+                              : RECEIVER_OUTPUT_PWM,
+                              true);
       }
 
       ensureSenderPeer(info->src_addr);
@@ -986,6 +1192,13 @@ void onEspNowReceive(const esp_now_recv_info_t *info, const uint8_t *data, int l
   if (!receiverBound) return;
   if (memcmp(info->src_addr, boundTransmitterMac, ESP_NOW_ETH_ALEN) != 0) return;
 
+  ReceiverOutputMode packetOutputMode = (packet.flags & ESPNOW_FLAG_OUTPUT_IBUS)
+    ? RECEIVER_OUTPUT_IBUS
+    : RECEIVER_OUTPUT_PWM;
+  if (packetOutputMode != receiverOutputMode) {
+    setReceiverOutputMode(packetOutputMode, true);
+  }
+
   memcpy(lastSenderMac, info->src_addr, ESP_NOW_ETH_ALEN);
   ensureSenderPeer(lastSenderMac);
 
@@ -1001,7 +1214,7 @@ void onEspNowReceive(const esp_now_recv_info_t *info, const uint8_t *data, int l
 
 void setup() {
   Serial.begin(115200);
-  initHeltecDisplay();
+  initReceiverDisplay();
 
   pinMode(REBIND_BUTTON_PIN, INPUT_PULLUP);
 
@@ -1015,13 +1228,12 @@ void setup() {
     analogSetPinAttenuation(RECEIVER_BATTERY_ADC_PIN, ADC_11db);
   }
 
-  initRcPwmOutputs();
+  loadReceiverBinding();
+  loadReceiverOutputMode();
 
   applyFailsafeOutputs();
   escArmHoldStart = millis();
   escArmHoldActive = true;
-
-  loadReceiverBinding();
 
   if (!initEspNowReceiver()) {
     Serial.println("Receiver ESP-NOW init failed; restarting in 5 seconds");
@@ -1041,6 +1253,8 @@ void setup() {
   Serial.println(WiFi.macAddress());
   Serial.print("Receiver bind state: ");
   Serial.println(receiverBound ? "BOUND" : "UNBOUND");
+  Serial.print("Receiver output mode: ");
+  Serial.println(receiverOutputMode == RECEIVER_OUTPUT_IBUS ? "iBUS D5/GPIO6" : "PWM GPIO4-7");
 }
 
 void loop() {
@@ -1065,6 +1279,7 @@ void loop() {
   } else {
     applyFailsafeOutputs();
   }
+  sendIbusFrameIfDue(now);
 
   sendBindBeacon(now);
   sendTelemetryPacket(now);
@@ -1088,15 +1303,28 @@ void loop() {
       Serial.println("n/a");
     }
 
-    Serial.print("PWM us [");
-    for (int i = 0; i < RC_OUTPUT_COUNT; i++) {
-      if (i > 0) Serial.print(", ");
-      Serial.print("GPIO");
-      Serial.print(OUTPUT_PINS[i]);
-      Serial.print(":");
-      Serial.print(lastOutputPulseUs[i]);
+    if (receiverOutputMode == RECEIVER_OUTPUT_IBUS) {
+      Serial.print("iBUS out D5/GPIO");
+      Serial.print(IBUS_OUTPUT_PIN);
+      Serial.print(" frames=");
+      Serial.print(ibusFrameCount);
+      Serial.print(" ch [");
+      for (int i = 0; i < min(6, IBUS_CHANNEL_COUNT); i++) {
+        if (i > 0) Serial.print(", ");
+        Serial.print(ibusChannels[i]);
+      }
+      Serial.println("]");
+    } else {
+      Serial.print("PWM us [");
+      for (int i = 0; i < RC_OUTPUT_COUNT; i++) {
+        if (i > 0) Serial.print(", ");
+        Serial.print("GPIO");
+        Serial.print(OUTPUT_PINS[i]);
+        Serial.print(":");
+        Serial.print(lastOutputPulseUs[i]);
+      }
+      Serial.println("]");
     }
-    Serial.println("]");
 
     if (hasControlPacket) {
       EspNowControlPacket debugPacket = {};
@@ -1125,19 +1353,21 @@ void loop() {
       Serial.println(debugPacket.linkLatencyMs);
     }
 
-    Serial.print("PWM attach [");
-    for (int i = 0; i < RC_OUTPUT_COUNT; i++) {
-      if (i > 0) Serial.print(", ");
-      Serial.print("GPIO");
-      Serial.print(OUTPUT_PINS[i]);
-      Serial.print(":");
-      Serial.print(outputPwmAttached[i] ? "OK" : "FAIL");
-      Serial.print("/");
-      Serial.print(outputUseChannelWrite[i] ? "ch" : "pin");
+    if (receiverOutputMode == RECEIVER_OUTPUT_PWM) {
+      Serial.print("PWM attach [");
+      for (int i = 0; i < RC_OUTPUT_COUNT; i++) {
+        if (i > 0) Serial.print(", ");
+        Serial.print("GPIO");
+        Serial.print(OUTPUT_PINS[i]);
+        Serial.print(":");
+        Serial.print(outputPwmAttached[i] ? "OK" : "FAIL");
+        Serial.print("/");
+        Serial.print(outputUseChannelWrite[i] ? "ch" : "pin");
+      }
+      Serial.println("]");
     }
-    Serial.println("]");
 
-    if (pwmWriteFailureCount > 0) {
+    if (receiverOutputMode == RECEIVER_OUTPUT_PWM && pwmWriteFailureCount > 0) {
       Serial.print("PWM write failures: ");
       Serial.println(pwmWriteFailureCount);
     }
