@@ -1,6 +1,6 @@
 "Comment","Designator","Footprint","LCSC Part #","Quantity","Purchase Link","AssemblyNote"
 "10uF 10V X5R","C1","Capacitor_SMD:C_0805_2012Metric","C440198","1","","Cached JLC match"
-"100nF 10V X7R","C2,C8,C17,C19,C27,C29","Capacitor_SMD:C_0603_1608Metric","C14663","6","","Cached JLC match"
+"100nF 10V X7R","C2,C17,C19,C27,C29","Capacitor_SMD:C_0603_1608Metric","C14663","5","","Cached JLC match; C8 removed 2026-07-09 (no longer on board)"
 "22uF 16V X5R","C3,C5","Capacitor_SMD:C_0805_2012Metric","C45783","2","","Cached JLC match"
 "100nF 16V X7R","C4,C7,C9,C10,C12,C15,C21,C24-C26,C31","Capacitor_SMD:C_0603_1608Metric","C14663","11","","Cached JLC match"
 "4.7uF 6.3V X5R","C6","Capacitor_SMD:C_0603_1608Metric","C19666","1","","Cached JLC match"

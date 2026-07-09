@@ -14,16 +14,17 @@ Evaluated: 2026-07-09 · Project: `Daughterboard/daughterboard.kicad_pcb` (KiCad
 
 ## Blockers (fix before ordering)
 
-1. **r12 is stale.** The PCB was edited *after* the r12 export: package exported 2026-07-08 03:45; commit `1a8d2fb` changed `daughterboard.kicad_pcb` (+291/−178 lines) at 06:22 the same morning. The committed Gerbers do not reflect the current board. Any order must come from a fresh export (r13).
-2. **6 DRC clearance errors around U1 (BQ25887 charger).** PACK_P pads 13–16 and CHG_IN pad 23 sit 0.20–0.225 mm from GND pad 25 against a 0.25 mm rule. Note: 0.20 mm is still within JLCPCB's 4-layer capability (~0.127 mm), so this violates the project's own rule, not the fab's — resolve it deliberately, either by adjusting the layout or by consciously relaxing the rule in that region. Don't ship with red errors in the report.
-3. **Open power-path release gate.** `power_board_design.md` states the final charge/discharge FET topology (Q1) must be reviewed against the TI BQ28Z610 reference before fabrication, and the BOM note for Q1 (PT8810, LCSC C3019811) says "verify datasheet pinout before fab." This is the highest-consequence item on the board — a wrong FET topology can prevent charging or defeat pack protection.
+1. **r12 is stale.** The PCB was edited *after* the r12 export: package exported 2026-07-08 03:45; commit `1a8d2fb` changed `daughterboard.kicad_pcb` (+291/−178 lines) at 06:22 the same morning. The committed Gerbers do not reflect the current board. Any order must come from a fresh export (r13). *Superseded by design: run `scripts\pcb-release.ps1 -Rev r13` once items 3–4 are settled.*
+2. ~~**6 DRC clearance errors around U1 (BQ25887 charger).**~~ **Resolved 2026-07-09:** the violations were the VQFN-24 footprint's intrinsic 0.20–0.225 mm pad-to-exposed-pad spacing against the project's 0.25 mm rule (JLCPCB's 4-layer capability is ~0.127 mm, so no fab risk). `daughterboard.kicad_dru` now scopes a deliberate 0.19 mm minimum to items touching U1; DRC + schematic parity passes clean.
+3. **Open power-path release gate — first-pass review done 2026-07-09, rework required.** See `q1_power_path_review.md`: the BQ28Z610 is a high-side FET-drive device but the board implements Q1 low-side with the sense resistor in parallel; the charger bypasses the FETs; USB-C pin A12 is mis-netted to the FET midpoint. Protection is non-functional as wired. Net-level rework plan is in that document; PT8810 pinout/VGS verification remains open.
 4. **No mounting holes.** 0 NPTH holes, largest PTH is 1.02 mm, and the Edge.Cuts outline contains only corner fillets and the notch — nothing a standoff screw can pass through. The README says the Hosyond board sits above this board on standoffs; confirm the mechanical plan (shell captive mounting?) or add mounting holes before r13.
 
 ## Secondary items (cheap to fix in the same spin)
 
-5. **Board metadata:** `Revision: "rev?"` and `Finish: "None"` in the `.gbrjob`. Set the title-block revision (r13) and the stackup copper finish so the files carry what is ordered.
+5. ~~**Board metadata.**~~ **Resolved 2026-07-09:** title block added to the board (rev "r13", dated) and stackup copper finish set to HAL lead-free; both verified to flow into the exported `.gbrjob`.
 6. **BOM open verifications** (flagged in the BOM's own AssemblyNote column): L1 body vs `L_APV_ANR4020` footprint; L3 ANR5040 dimensions; U5/U6 ADS1115IDGSR are VSSOP-10 at JLC vs the TSSOP-10-class KiCad footprint (same 3×3 mm 0.5 mm-pitch class, but verify).
 7. **Silkscreen warnings** (32 of the 38 DRC findings): text heights 0.65–0.7 mm vs the 0.8 mm project rule, some overlapping reference fields, and silk clipped by solder mask. Cosmetic — JLCPCB will print them fine — but small text may be illegible.
+8. ~~**Stale BOM ref C8.**~~ **Resolved 2026-07-09:** removed from the r12 JLC BOM draft (the carry-forward source); BOM/CPL gate now reconciles 108 = 108.
 
 ## Settled design intent (context for reviewers)
 
@@ -31,27 +32,14 @@ Evaluated: 2026-07-09 · Project: `Daughterboard/daughterboard.kicad_pcb` (KiCad
 - Pololu #2808 ON/OFF pads are **deliberately unused** — rail control is via CTRL nets (`CTRL_5V_SW` ← GPIO2, `CTRL_3V3_SW` ← GPIO3); each module's own pushbutton remains usable.
 - GPIO14/GPIO21 form the two-pin deep-sleep/wake button header.
 
-## Reusable test plan
+## Reusable tests (implemented 2026-07-09)
 
-### Phase 1 — Toolchain (one-time)
+Both scripts exist and are verified against this project — see `scripts/README.md` for usage. KiCad 10.0.4 is installed on the dev machine (`winget install KiCad.KiCad`; found via `Resolve-KicadCli` in `scripts/_common.ps1`).
 
-`kicad-cli` is not installed on the dev machine (the bundled reports were generated elsewhere). Install KiCad 10 (`winget install KiCad.KiCad`) and add a `Resolve-KicadCli` helper to `scripts/_common.ps1`.
+- **`scripts/pcb-check.ps1`** — six release gates: ERC; DRC + schematic parity; Gerber/drill freshness (re-export and diff, ignoring timestamp/version headers — this gate confirmed the r12 staleness: 7 layers differ from the current board, while edge cuts, drill, silks, and bottom paste are unchanged); package integrity (all layers present, upload zip matches loose files); fab metadata (revision/finish set); BOM/CPL consistency. Exits nonzero on any failure.
+- **`scripts/pcb-release.ps1 -Rev r13`** — builds a complete `fabrication/jlcpcb_<date>_<rev>/` package (gerbers, drill + map, ERC/DRC reports, position file, JLC CPLs, JLC BOM carried forward with a designator reconcile report), zips it, and gates it with `pcb-check.ps1`. It refuses to bless a package that fails any gate.
 
-### Phase 2 — Release checks: `scripts/pcb-check.ps1`
-
-Runnable before every order, targeting `Daughterboard/` and the newest `fabrication/jlcpcb_*` package:
-
-1. **ERC gate** — `kicad-cli sch erc`, fail on errors.
-2. **DRC gate** — `kicad-cli pcb drc`, fail on errors and unconnected pads (silk warnings reported but non-fatal).
-3. **Gerber freshness** — re-export Gerbers/drill to a temp dir, strip date-stamp lines, diff against the packaged `gerbers/`; fail if the board has drifted from the package. *(Would have caught the r12 staleness.)*
-4. **Package integrity** — nested upload zip matches loose files; required 4-layer set present (4× copper, 2× mask, 2× paste, 2× silk, edge cuts, drill, gbrjob).
-5. **Fab metadata lint** — parse the `.gbrjob`: 4 layers, expected size, revision ≠ "rev?", finish ≠ "None".
-6. **BOM/CPL consistency** — every CPL designator appears in the BOM with a non-empty LCSC part number; BOM quantities match designator counts; CPL is single-sided.
-7. **Netlist parity** — schematic-vs-PCB node comparison.
-
-### Phase 3 — Release script: `scripts/pcb-release.ps1 -Rev r13`
-
-One deterministic command that exports Gerbers + drill + position files, rebuilds both zips into `fabrication/jlcpcb_<date>_<rev>/`, runs `pcb-check.ps1`, and refuses to package if any gate fails — so a stale or failing package can never be produced again.
+Running the gates against r12 also surfaced one BOM data issue not in the list above: **C8 is in the JLC BOM (100 nF row, qty 6) but no longer exists on the board** — drop it from the BOM row (and quantity) when cutting r13.
 
 ---
 

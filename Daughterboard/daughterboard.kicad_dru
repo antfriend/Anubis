@@ -1,0 +1,10 @@
+(version 1)
+
+# The BQ25887 (U1) VQFN-24 footprint has intrinsic 0.20-0.225 mm spacing between
+# its perimeter pads / nearby tracks and the exposed pad, below the project's
+# 0.25 mm default clearance. JLCPCB's 4-layer capability is 0.127 mm, so a local
+# 0.19 mm minimum around U1 is a deliberate relaxation, not a fabrication risk.
+(rule "U1_BQ25887_QFN_clearance"
+	(condition "A.memberOfFootprint('U1') || B.memberOfFootprint('U1')")
+	(constraint clearance (min 0.19mm))
+)
