@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead\\(\"c:\\\\git\\\\Anubis\\\\Hosyond_apr24b\\\\Daughterboard\\\\daughterboard\\\\Daughterboard_Gerber.zip\"\\); $zip.Entries | Select-Object FullName, Length, LastWriteTime | Format-Table -AutoSize | Out-String -Width 200; $zip.Dispose\\(\\))",
+      "PowerShell($c = Get-Command kicad-cli -ErrorAction SilentlyContinue; if \\($c\\) { $c.Source; kicad-cli version } else { Get-ChildItem \"C:\\\\Program Files\\\\KiCad\" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name })",
+      "PowerShell($paths = @\\(\"C:\\\\Program Files\\\\KiCad\", \"C:\\\\Program Files \\(x86\\)\\\\KiCad\", \"$env:LOCALAPPDATA\\\\Programs\\\\KiCad\"\\); foreach \\($p in $paths\\) { if \\(Test-Path $p\\) { Get-ChildItem $p -Recurse -Filter kicad-cli.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName } }; Get-ChildItem \"C:\\\\Program Files\" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match \"kicad\" | Select-Object -ExpandProperty FullName)",
+      "PowerShell(git -C c:\\\\git\\\\Anubis log --oneline -8 -- \"Hosyond_apr24b/Daughterboard/daughterboard/daughterboard.kicad_pcb\")",
+      "PowerShell(git -C c:\\\\git\\\\Anubis log --oneline -8 -- \"Hosyond_apr24b/Daughterboard/daughterboard/GERBER\" \"Hosyond_apr24b/Daughterboard/daughterboard/Daughterboard_Gerber.zip\")"
+    ]
+  }
+}
