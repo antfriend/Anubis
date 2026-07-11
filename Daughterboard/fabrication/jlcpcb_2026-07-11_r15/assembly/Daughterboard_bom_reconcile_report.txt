@@ -1,0 +1,12 @@
+﻿BOM reconcile report - jlcpcb_2026-07-11_r15 - 2026-07-11T15:12:46
+
+In carried JLC BOM but NOT on the current board (delete from BOM or investigate):
+  (none)
+
+On the board but NOT in the JLC BOM (add LCSC mapping, or confirm hand-solder):
+  J5
+  J6
+  R49
+  R50
+  SW1
+  SW2

@@ -39,7 +39,18 @@
       "PowerShell(pip install pypdf --quiet --disable-pip-version-check 2>$null)",
       "PowerShell(python -c \"import pypdf; print\\('pypdf installed'\\)\")",
       "WebFetch(domain:www.lcsc.com)",
-      "PowerShell(\\(Get-Item c:\\\\git\\\\Anubis\\\\Daughterboard\\\\FABRICATION_REVIEW.md\\).Length; \\(Get-Content c:\\\\git\\\\Anubis\\\\Daughterboard\\\\FABRICATION_REVIEW.md | Measure-Object -Line\\).Lines)"
+      "PowerShell(\\(Get-Item c:\\\\git\\\\Anubis\\\\Daughterboard\\\\FABRICATION_REVIEW.md\\).Length; \\(Get-Content c:\\\\git\\\\Anubis\\\\Daughterboard\\\\FABRICATION_REVIEW.md | Measure-Object -Line\\).Lines)",
+      "PowerShell(c:\\\\git\\\\Anubis\\\\scripts\\\\pcb-check.ps1 2>&1)",
+      "Bash(git hash-object *)",
+      "Bash(git -C c:/git/Anubis log --oneline -3 -S CSD18502 -- Daughterboard/daughterboard.kicad_pcb)",
+      "Bash(git -C c:/git/Anubis status --porcelain Daughterboard/daughterboard.kicad_pcb Daughterboard/daughterboard.kicad_sch)",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\KiCad\\\\10.0\\\\bin\\\\python.exe\" --version; Get-ChildItem \"c:\\\\git\\\\Anubis\\\\Daughterboard\\\\fabrication\\\\jlcpcb_2026-07-10_r14\" | Select-Object Name,Length,LastWriteTime | Format-Table -AutoSize)",
+      "PowerShell(& \"c:\\\\git\\\\Anubis\\\\scripts\\\\pcb-check.ps1\" -PackageDir \"c:\\\\git\\\\Anubis\\\\Daughterboard\\\\fabrication\\\\jlcpcb_2026-07-10_r14\" 2>&1)",
+      "PowerShell(& \"c:\\\\git\\\\Anubis\\\\scripts\\\\pcb-release.ps1\" -Rev r15 2>&1)",
+      "Bash(awk 'NR>=8372 && NR<=8420' c:/git/Anubis/Daughterboard/daughterboard.kicad_pcb)",
+      "Bash(awk 'NR>=9489 && NR<=9540' c:/git/Anubis/Daughterboard/daughterboard.kicad_pcb)",
+      "PowerShell(& \"c:\\\\git\\\\Anubis\\\\scripts\\\\pcb-release.ps1\" -Rev r15 -Force 2>&1)",
+      "PowerShell(& \"c:\\\\git\\\\Anubis\\\\scripts\\\\pcb-check.ps1\" -PackageDir \"c:\\\\git\\\\Anubis\\\\Daughterboard\\\\fabrication\\\\jlcpcb_2026-07-11_r15\" 2>&1)"
     ]
   }
 }
