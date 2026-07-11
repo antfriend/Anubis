@@ -110,3 +110,5 @@
 "ADS1115IDGS 0x48","U5","Package_SO:TSSOP-10_3x3mm_P0.5mm","C37593","1"
 "ADS1115IDGS 0x49","U6","Package_SO:TSSOP-10_3x3mm_P0.5mm","C37593","1"
 "MCP23017-E/SO","U7","Daughterboard:SOIC-28W_7.5x17.9mm_P1.27mm_NoPads11_14","C47023","1"
+"10M 1%","R49","Resistor_SMD:R_0603_1608Metric","C7250","1"
+"10M 1%","R50","Resistor_SMD:R_0603_1608Metric","C7250","1"

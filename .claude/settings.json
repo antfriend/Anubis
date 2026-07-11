@@ -50,7 +50,10 @@
       "Bash(awk 'NR>=8372 && NR<=8420' c:/git/Anubis/Daughterboard/daughterboard.kicad_pcb)",
       "Bash(awk 'NR>=9489 && NR<=9540' c:/git/Anubis/Daughterboard/daughterboard.kicad_pcb)",
       "PowerShell(& \"c:\\\\git\\\\Anubis\\\\scripts\\\\pcb-release.ps1\" -Rev r15 -Force 2>&1)",
-      "PowerShell(& \"c:\\\\git\\\\Anubis\\\\scripts\\\\pcb-check.ps1\" -PackageDir \"c:\\\\git\\\\Anubis\\\\Daughterboard\\\\fabrication\\\\jlcpcb_2026-07-11_r15\" 2>&1)"
+      "PowerShell(& \"c:\\\\git\\\\Anubis\\\\scripts\\\\pcb-check.ps1\" -PackageDir \"c:\\\\git\\\\Anubis\\\\Daughterboard\\\\fabrication\\\\jlcpcb_2026-07-11_r15\" 2>&1)",
+      "Bash(awk 'NR>=11790 && NR<=11835 && /\\\\\\(name \"/{print NR\": \"$0}' daughterboard.net)",
+      "Bash(awk 'NR>=11201 && NR<=11290 && \\(/\\\\\\(name \"/||/ref \"/\\){print NR\": \"$0}' daughterboard.net)",
+      "WebFetch(domain:jlcpcb.com)"
     ]
   }
 }
