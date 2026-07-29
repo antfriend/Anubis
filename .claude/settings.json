@@ -53,7 +53,18 @@
       "PowerShell(& \"c:\\\\git\\\\Anubis\\\\scripts\\\\pcb-check.ps1\" -PackageDir \"c:\\\\git\\\\Anubis\\\\Daughterboard\\\\fabrication\\\\jlcpcb_2026-07-11_r15\" 2>&1)",
       "Bash(awk 'NR>=11790 && NR<=11835 && /\\\\\\(name \"/{print NR\": \"$0}' daughterboard.net)",
       "Bash(awk 'NR>=11201 && NR<=11290 && \\(/\\\\\\(name \"/||/ref \"/\\){print NR\": \"$0}' daughterboard.net)",
-      "WebFetch(domain:jlcpcb.com)"
+      "WebFetch(domain:jlcpcb.com)",
+      "Bash(python -c *)",
+      "Bash(python -c ' *)",
+      "Bash(find / -name \"LED_0603_1608Metric.kicad_mod\" -path \"*LED_SMD*\" 2>/dev/null | head -3)",
+      "Read(//c//**)",
+      "Bash(rm -rf /c/Users/antfr/AppData/Local/Temp/claude/c--git-Anubis/2b8c2975-8949-49ee-aebc-84119c0ce2b7/scratchpad/baseline)",
+      "Bash(mkdir -p /c/Users/antfr/AppData/Local/Temp/claude/c--git-Anubis/2b8c2975-8949-49ee-aebc-84119c0ce2b7/scratchpad/baseline)",
+      "Bash(cp -r /c/git/Anubis/Daughterboard/. /c/Users/antfr/AppData/Local/Temp/claude/c--git-Anubis/2b8c2975-8949-49ee-aebc-84119c0ce2b7/scratchpad/baseline/)",
+      "Bash(python generate_pinlevel_schematic.py)",
+      "Bash(/c/Users/antfr/AppData/Local/Programs/KiCad/10.0/bin/kicad-cli.exe version *)",
+      "Bash(/c/Users/antfr/AppData/Local/Programs/KiCad/10.0/bin/kicad-cli.exe sch *)",
+      "Bash(\"/c/Users/antfr/AppData/Local/Programs/KiCad/10.0/bin/python.exe\" verify_r17_power_topology.py)"
     ]
   }
 }

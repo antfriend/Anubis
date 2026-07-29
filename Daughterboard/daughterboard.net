@@ -1,9 +1,9 @@
 (export
 	(version "E")
 	(design
-		(source "C:\\Users\\Avala\\OneDrive\\Desktop\\Daughterboard\\Daughterboard.kicad_sch")
-		(date "2026-07-10T00:42:56")
-		(tool "Eeschema 10.0.3")
+		(source "C:\\git\\Anubis\\Daughterboard\\daughterboard.kicad_sch")
+		(date "2026-07-29T13:21:03")
+		(tool "Eeschema 10.0.4")
 		(sheet
 			(number "1")
 			(name "/")
@@ -13,7 +13,7 @@
 				(company "Daughterboard")
 				(rev "A-pinlevel")
 				(date "2026-06-30")
-				(source "Daughterboard.kicad_sch")
+				(source "daughterboard.kicad_sch")
 				(comment
 					(number "1")
 					(value "2S source: J7 pack OR installed series 18650s; do not use both at once.")
@@ -81,11 +81,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -136,11 +136,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -191,11 +191,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -243,11 +243,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -295,11 +295,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -347,11 +347,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -399,11 +399,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -451,11 +451,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -503,11 +503,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -555,11 +555,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -607,11 +607,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -659,11 +659,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -711,11 +711,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -763,11 +763,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -815,11 +815,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -867,11 +867,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -919,11 +919,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -971,11 +971,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1023,11 +1023,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1075,11 +1075,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1127,11 +1127,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1179,11 +1179,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1231,11 +1231,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1283,11 +1283,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1335,11 +1335,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1387,11 +1387,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1439,11 +1439,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1491,11 +1491,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1543,11 +1543,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1595,11 +1595,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1647,11 +1647,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1699,11 +1699,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1751,11 +1751,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1803,11 +1803,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1855,11 +1855,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1907,11 +1907,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -1959,11 +1959,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2011,11 +2011,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2063,11 +2063,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2127,11 +2127,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2191,11 +2191,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2255,11 +2255,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2319,11 +2319,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2371,11 +2371,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2423,11 +2423,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2475,11 +2475,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2527,11 +2527,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2594,11 +2594,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2649,11 +2649,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2710,11 +2710,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2768,11 +2768,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2820,11 +2820,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2875,11 +2875,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2931,11 +2931,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -2981,11 +2981,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3031,11 +3031,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3081,11 +3081,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3131,11 +3131,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3181,11 +3181,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3231,11 +3231,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3281,11 +3281,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3331,11 +3331,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3381,11 +3381,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3430,11 +3430,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3485,11 +3485,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3540,11 +3540,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3596,11 +3596,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3646,11 +3646,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3696,11 +3696,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3746,11 +3746,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3796,11 +3796,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3846,11 +3846,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3896,11 +3896,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3946,11 +3946,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -3996,11 +3996,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4046,11 +4046,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4096,11 +4096,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4146,11 +4146,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4196,11 +4196,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4246,11 +4246,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4296,11 +4296,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4346,11 +4346,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4396,11 +4396,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4446,11 +4446,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4496,11 +4496,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4546,11 +4546,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4596,11 +4596,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4645,11 +4645,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4697,11 +4697,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4749,11 +4749,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4801,11 +4801,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4871,11 +4871,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4941,11 +4941,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -4993,11 +4993,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5045,11 +5045,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5097,11 +5097,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5149,11 +5149,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5201,11 +5201,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5253,11 +5253,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5305,11 +5305,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5357,11 +5357,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5409,11 +5409,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5461,11 +5461,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5513,11 +5513,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5565,11 +5565,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5617,11 +5617,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5669,11 +5669,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5721,11 +5721,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5773,11 +5773,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5825,11 +5825,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5877,11 +5877,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5929,11 +5929,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -5981,11 +5981,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6033,11 +6033,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6085,11 +6085,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6137,11 +6137,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6189,11 +6189,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6241,11 +6241,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6293,11 +6293,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6345,11 +6345,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6397,11 +6397,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6449,11 +6449,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6501,11 +6501,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6553,11 +6553,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6605,11 +6605,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6657,11 +6657,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6709,11 +6709,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6761,11 +6761,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6813,11 +6813,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6865,11 +6865,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6917,11 +6917,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -6969,11 +6969,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7021,11 +7021,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7073,11 +7073,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7125,11 +7125,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7177,11 +7177,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7229,11 +7229,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7281,11 +7281,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7333,11 +7333,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7385,11 +7385,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7437,11 +7437,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7489,11 +7489,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7541,11 +7541,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7599,11 +7599,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7657,11 +7657,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7710,11 +7710,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7760,11 +7760,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7810,11 +7810,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7860,11 +7860,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7910,11 +7910,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -7960,11 +7960,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8010,11 +8010,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8060,11 +8060,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8110,11 +8110,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8160,11 +8160,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8210,11 +8210,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8260,11 +8260,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8310,11 +8310,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8360,11 +8360,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8410,11 +8410,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8460,11 +8460,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8510,11 +8510,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8560,11 +8560,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8609,11 +8609,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8730,11 +8730,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8815,11 +8815,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8879,11 +8879,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -8943,11 +8943,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -9019,11 +9019,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -9095,11 +9095,11 @@
 			)
 			(property
 				(name "Sheetname")
-				(value "")
+				(value "Daughterboard")
 			)
 			(property
 				(name "Sheetfile")
-				(value "Daughterboard.kicad_sch")
+				(value "daughterboard.kicad_sch")
 			)
 			(sheetpath
 				(names "/")
@@ -10692,7 +10692,7 @@
 				(pintype "passive")
 			)
 			(node
-				(ref "C32")
+				(ref "C33")
 				(pin "1")
 				(pinfunction "1_1")
 				(pintype "passive")
@@ -10704,27 +10704,21 @@
 				(pintype "passive")
 			)
 			(node
-				(ref "Q1")
-				(pin "5")
-				(pinfunction "D_5")
+				(ref "Q2")
+				(pin "1")
+				(pinfunction "S_1")
 				(pintype "passive")
 			)
 			(node
-				(ref "Q1")
-				(pin "6")
-				(pinfunction "D_6")
+				(ref "Q2")
+				(pin "2")
+				(pinfunction "S_2")
 				(pintype "passive")
 			)
 			(node
-				(ref "Q1")
-				(pin "7")
-				(pinfunction "D_7")
-				(pintype "passive")
-			)
-			(node
-				(ref "Q1")
-				(pin "8")
-				(pinfunction "D_8")
+				(ref "Q2")
+				(pin "3")
+				(pinfunction "S_3")
 				(pintype "passive")
 			)
 			(node
@@ -10743,6 +10737,12 @@
 				(ref "R16")
 				(pin "1")
 				(pinfunction "1_1")
+				(pintype "passive")
+			)
+			(node
+				(ref "R49")
+				(pin "2")
+				(pinfunction "2_2")
 				(pintype "passive")
 			)
 			(node
@@ -11150,8 +11150,8 @@
 			(class "Default")
 			(node
 				(ref "D2")
-				(pin "2")
-				(pinfunction "2_2")
+				(pin "1")
+				(pinfunction "1_1")
 				(pintype "passive")
 			)
 			(node
@@ -11729,7 +11729,7 @@
 			(name "FET_BATT_P")
 			(class "Default")
 			(node
-				(ref "C33")
+				(ref "C32")
 				(pin "1")
 				(pinfunction "1_1")
 				(pintype "passive")
@@ -11738,6 +11738,71 @@
 				(ref "F4")
 				(pin "1")
 				(pinfunction "1_1")
+				(pintype "passive")
+			)
+			(node
+				(ref "Q1")
+				(pin "1")
+				(pinfunction "S_1")
+				(pintype "passive")
+			)
+			(node
+				(ref "Q1")
+				(pin "2")
+				(pinfunction "S_2")
+				(pintype "passive")
+			)
+			(node
+				(ref "Q1")
+				(pin "3")
+				(pinfunction "S_3")
+				(pintype "passive")
+			)
+			(node
+				(ref "R50")
+				(pin "2")
+				(pinfunction "2_2")
+				(pintype "passive")
+			)
+		)
+		(net
+			(code "60")
+			(name "FET_MID_COMMON")
+			(class "Default")
+			(node
+				(ref "C32")
+				(pin "2")
+				(pinfunction "2_2")
+				(pintype "passive")
+			)
+			(node
+				(ref "C33")
+				(pin "2")
+				(pinfunction "2_2")
+				(pintype "passive")
+			)
+			(node
+				(ref "Q1")
+				(pin "5")
+				(pinfunction "D_5")
+				(pintype "passive")
+			)
+			(node
+				(ref "Q1")
+				(pin "6")
+				(pinfunction "D_6")
+				(pintype "passive")
+			)
+			(node
+				(ref "Q1")
+				(pin "7")
+				(pinfunction "D_7")
+				(pintype "passive")
+			)
+			(node
+				(ref "Q1")
+				(pin "8")
+				(pinfunction "D_8")
 				(pintype "passive")
 			)
 			(node
@@ -11762,71 +11827,6 @@
 				(ref "Q2")
 				(pin "8")
 				(pinfunction "D_8")
-				(pintype "passive")
-			)
-		)
-		(net
-			(code "60")
-			(name "FET_SRC_COMMON")
-			(class "Default")
-			(node
-				(ref "C32")
-				(pin "2")
-				(pinfunction "2_2")
-				(pintype "passive")
-			)
-			(node
-				(ref "C33")
-				(pin "2")
-				(pinfunction "2_2")
-				(pintype "passive")
-			)
-			(node
-				(ref "Q1")
-				(pin "1")
-				(pinfunction "S_1")
-				(pintype "passive")
-			)
-			(node
-				(ref "Q1")
-				(pin "2")
-				(pinfunction "S_2")
-				(pintype "passive")
-			)
-			(node
-				(ref "Q1")
-				(pin "3")
-				(pinfunction "S_3")
-				(pintype "passive")
-			)
-			(node
-				(ref "Q2")
-				(pin "1")
-				(pinfunction "S_1")
-				(pintype "passive")
-			)
-			(node
-				(ref "Q2")
-				(pin "2")
-				(pinfunction "S_2")
-				(pintype "passive")
-			)
-			(node
-				(ref "Q2")
-				(pin "3")
-				(pinfunction "S_3")
-				(pintype "passive")
-			)
-			(node
-				(ref "R49")
-				(pin "2")
-				(pinfunction "2_2")
-				(pintype "passive")
-			)
-			(node
-				(ref "R50")
-				(pin "2")
-				(pinfunction "2_2")
 				(pintype "passive")
 			)
 		)
@@ -12428,8 +12428,8 @@
 			(class "Default")
 			(node
 				(ref "D2")
-				(pin "1")
-				(pinfunction "1_1")
+				(pin "2")
+				(pinfunction "2_2")
 				(pintype "passive")
 			)
 			(node
@@ -12445,8 +12445,8 @@
 			(class "Default")
 			(node
 				(ref "D3")
-				(pin "1")
-				(pinfunction "1_1")
+				(pin "2")
+				(pinfunction "2_2")
 				(pintype "passive")
 			)
 			(node
@@ -12860,8 +12860,8 @@
 			(class "Default")
 			(node
 				(ref "D3")
-				(pin "2")
-				(pinfunction "2_2")
+				(pin "1")
+				(pinfunction "1_1")
 				(pintype "passive")
 			)
 			(node

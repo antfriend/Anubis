@@ -2814,7 +2814,7 @@
 	)
 	(wire (pts (xy 320.04 54.61) (xy 314.96 54.61)) (stroke (width 0) (type default)) (uuid "a05e2ac8-0903-4cd8-8040-5de45b11e3de"))
 	(wire (pts (xy 314.96 54.61) (xy 314.96 52.07)) (stroke (width 0) (type default)) (uuid "d263f697-c4d6-47d5-8bb1-0416c09abe76"))
-	(global_label "LED_CHG_A"
+	(global_label "CHG_STAT"
 		(shape bidirectional)
 		(at 314.96 52.07 0)
 		(fields_autoplaced yes)
@@ -2824,7 +2824,7 @@
 	)
 	(wire (pts (xy 340.36 54.61) (xy 345.44 54.61)) (stroke (width 0) (type default)) (uuid "7d9b7eb8-df35-463f-8873-b26839e560fa"))
 	(wire (pts (xy 345.44 54.61) (xy 345.44 52.07)) (stroke (width 0) (type default)) (uuid "f3844cee-b72d-4de9-a22a-7a5b42e96301"))
-	(global_label "CHG_STAT"
+	(global_label "LED_CHG_A"
 		(shape bidirectional)
 		(at 345.44 52.07 0)
 		(fields_autoplaced yes)
@@ -2924,7 +2924,7 @@
 	)
 	(wire (pts (xy 320.04 83.82) (xy 314.96 83.82)) (stroke (width 0) (type default)) (uuid "9cb80c03-5c45-440d-9294-ed9c7c80cc62"))
 	(wire (pts (xy 314.96 83.82) (xy 314.96 81.28)) (stroke (width 0) (type default)) (uuid "6c88e0ea-8e71-4abe-9ff4-8ab0b5cd8fbc"))
-	(global_label "LED_PGOOD_A"
+	(global_label "PG_STAT"
 		(shape bidirectional)
 		(at 314.96 81.28 0)
 		(fields_autoplaced yes)
@@ -2934,7 +2934,7 @@
 	)
 	(wire (pts (xy 340.36 83.82) (xy 345.44 83.82)) (stroke (width 0) (type default)) (uuid "60b5cd7b-937c-40dc-a272-58944e9e87c1"))
 	(wire (pts (xy 345.44 83.82) (xy 345.44 81.28)) (stroke (width 0) (type default)) (uuid "b2919646-6060-4141-bdae-e33e1c342f7a"))
-	(global_label "PG_STAT"
+	(global_label "LED_PGOOD_A"
 		(shape bidirectional)
 		(at 345.44 81.28 0)
 		(fields_autoplaced yes)
@@ -4091,7 +4091,7 @@
 	)
 	(wire (pts (xy 288.29 199.39) (xy 283.21 199.39)) (stroke (width 0) (type default)) (uuid "a8c55cf7-67af-431e-bbd9-7fe5e18808e1"))
 	(wire (pts (xy 283.21 199.39) (xy 283.21 196.85)) (stroke (width 0) (type default)) (uuid "b1c37ec8-266d-466b-b8f8-aedf55addf87"))
-	(global_label "FET_SRC_COMMON"
+	(global_label "FET_BATT_P"
 		(shape bidirectional)
 		(at 283.21 196.85 0)
 		(fields_autoplaced yes)
@@ -4101,7 +4101,7 @@
 	)
 	(wire (pts (xy 288.29 194.31) (xy 283.21 194.31)) (stroke (width 0) (type default)) (uuid "d04408ae-8187-448f-9b99-683cfd0ad755"))
 	(wire (pts (xy 283.21 194.31) (xy 283.21 191.77)) (stroke (width 0) (type default)) (uuid "e7da707f-7438-4191-9998-2300255785b3"))
-	(global_label "FET_SRC_COMMON"
+	(global_label "FET_BATT_P"
 		(shape bidirectional)
 		(at 283.21 191.77 0)
 		(fields_autoplaced yes)
@@ -4111,7 +4111,7 @@
 	)
 	(wire (pts (xy 288.29 189.23) (xy 283.21 189.23)) (stroke (width 0) (type default)) (uuid "4866880e-332e-489c-9d6b-b8d2a6fe8bb1"))
 	(wire (pts (xy 283.21 189.23) (xy 283.21 186.69)) (stroke (width 0) (type default)) (uuid "1b0bcaad-cf30-42a0-b57e-3f67edf88e11"))
-	(global_label "FET_SRC_COMMON"
+	(global_label "FET_BATT_P"
 		(shape bidirectional)
 		(at 283.21 186.69 0)
 		(fields_autoplaced yes)
@@ -4131,7 +4131,7 @@
 	)
 	(wire (pts (xy 323.85 199.39) (xy 328.93 199.39)) (stroke (width 0) (type default)) (uuid "763211d6-2c54-47ca-b325-c9ffb77a5a98"))
 	(wire (pts (xy 328.93 199.39) (xy 328.93 196.85)) (stroke (width 0) (type default)) (uuid "cbf221b4-8a5b-4cad-865a-e0c1e29fe64c"))
-	(global_label "BAT_SYS"
+	(global_label "FET_MID_COMMON"
 		(shape bidirectional)
 		(at 328.93 196.85 0)
 		(fields_autoplaced yes)
@@ -4141,7 +4141,7 @@
 	)
 	(wire (pts (xy 323.85 194.31) (xy 328.93 194.31)) (stroke (width 0) (type default)) (uuid "4431afcc-6ab0-4358-8fd8-2772c5560f7c"))
 	(wire (pts (xy 328.93 194.31) (xy 328.93 191.77)) (stroke (width 0) (type default)) (uuid "ad39b8ec-99cf-4f9e-af05-4907e06958a5"))
-	(global_label "BAT_SYS"
+	(global_label "FET_MID_COMMON"
 		(shape bidirectional)
 		(at 328.93 191.77 0)
 		(fields_autoplaced yes)
@@ -4151,7 +4151,7 @@
 	)
 	(wire (pts (xy 323.85 189.23) (xy 328.93 189.23)) (stroke (width 0) (type default)) (uuid "bf05072b-c9ad-4f62-8402-d662a9fdf646"))
 	(wire (pts (xy 328.93 189.23) (xy 328.93 186.69)) (stroke (width 0) (type default)) (uuid "10bd236f-a0c3-48f1-9ab0-6cab9c4ee630"))
-	(global_label "BAT_SYS"
+	(global_label "FET_MID_COMMON"
 		(shape bidirectional)
 		(at 328.93 186.69 0)
 		(fields_autoplaced yes)
@@ -4161,7 +4161,7 @@
 	)
 	(wire (pts (xy 323.85 184.15) (xy 328.93 184.15)) (stroke (width 0) (type default)) (uuid "3e89b0fd-ea0a-44cc-a13f-7ea47223eeea"))
 	(wire (pts (xy 328.93 184.15) (xy 328.93 181.61)) (stroke (width 0) (type default)) (uuid "9ea900e9-eeac-4637-8287-66788d1a06a6"))
-	(global_label "BAT_SYS"
+	(global_label "FET_MID_COMMON"
 		(shape bidirectional)
 		(at 328.93 181.61 0)
 		(fields_autoplaced yes)
@@ -4206,7 +4206,7 @@
 	)
 	(wire (pts (xy 339.09 199.39) (xy 334.01 199.39)) (stroke (width 0) (type default)) (uuid "8a9ac567-a553-4c6d-b362-cb07e155959a"))
 	(wire (pts (xy 334.01 199.39) (xy 334.01 196.85)) (stroke (width 0) (type default)) (uuid "e55d79ea-190a-46c0-93f4-47a51c4144e2"))
-	(global_label "FET_SRC_COMMON"
+	(global_label "BAT_SYS"
 		(shape bidirectional)
 		(at 334.01 196.85 0)
 		(fields_autoplaced yes)
@@ -4216,7 +4216,7 @@
 	)
 	(wire (pts (xy 339.09 194.31) (xy 334.01 194.31)) (stroke (width 0) (type default)) (uuid "7f63da02-4ddf-4f36-ab69-3890082e06d6"))
 	(wire (pts (xy 334.01 194.31) (xy 334.01 191.77)) (stroke (width 0) (type default)) (uuid "c31b19d1-3b04-429b-a6f0-e0647a3cf199"))
-	(global_label "FET_SRC_COMMON"
+	(global_label "BAT_SYS"
 		(shape bidirectional)
 		(at 334.01 191.77 0)
 		(fields_autoplaced yes)
@@ -4226,7 +4226,7 @@
 	)
 	(wire (pts (xy 339.09 189.23) (xy 334.01 189.23)) (stroke (width 0) (type default)) (uuid "073ea9a3-e626-4219-a7f6-ac5179277022"))
 	(wire (pts (xy 334.01 189.23) (xy 334.01 186.69)) (stroke (width 0) (type default)) (uuid "134011de-b540-4298-825f-249db8510b8a"))
-	(global_label "FET_SRC_COMMON"
+	(global_label "BAT_SYS"
 		(shape bidirectional)
 		(at 334.01 186.69 0)
 		(fields_autoplaced yes)
@@ -4246,7 +4246,7 @@
 	)
 	(wire (pts (xy 374.65 199.39) (xy 379.73 199.39)) (stroke (width 0) (type default)) (uuid "5d52d540-30ae-4adf-bd91-7ac070577595"))
 	(wire (pts (xy 379.73 199.39) (xy 379.73 196.85)) (stroke (width 0) (type default)) (uuid "940234ef-3625-415b-a002-53619be1274c"))
-	(global_label "FET_BATT_P"
+	(global_label "FET_MID_COMMON"
 		(shape bidirectional)
 		(at 379.73 196.85 0)
 		(fields_autoplaced yes)
@@ -4256,7 +4256,7 @@
 	)
 	(wire (pts (xy 374.65 194.31) (xy 379.73 194.31)) (stroke (width 0) (type default)) (uuid "910f4b44-e483-4e19-92ee-d0f28170a4be"))
 	(wire (pts (xy 379.73 194.31) (xy 379.73 191.77)) (stroke (width 0) (type default)) (uuid "b2b5a66a-db25-4c82-9a5e-411794abb15c"))
-	(global_label "FET_BATT_P"
+	(global_label "FET_MID_COMMON"
 		(shape bidirectional)
 		(at 379.73 191.77 0)
 		(fields_autoplaced yes)
@@ -4266,7 +4266,7 @@
 	)
 	(wire (pts (xy 374.65 189.23) (xy 379.73 189.23)) (stroke (width 0) (type default)) (uuid "ce855c4d-c20d-48d7-ba3e-8d6a222c41f2"))
 	(wire (pts (xy 379.73 189.23) (xy 379.73 186.69)) (stroke (width 0) (type default)) (uuid "df0af205-caec-4d36-b92a-069da77dd156"))
-	(global_label "FET_BATT_P"
+	(global_label "FET_MID_COMMON"
 		(shape bidirectional)
 		(at 379.73 186.69 0)
 		(fields_autoplaced yes)
@@ -4276,7 +4276,7 @@
 	)
 	(wire (pts (xy 374.65 184.15) (xy 379.73 184.15)) (stroke (width 0) (type default)) (uuid "9858dd79-fc69-48f2-b166-68f82c96ec51"))
 	(wire (pts (xy 379.73 184.15) (xy 379.73 181.61)) (stroke (width 0) (type default)) (uuid "86a33168-2e58-49eb-adf4-4f0580bc8fc3"))
-	(global_label "FET_BATT_P"
+	(global_label "FET_MID_COMMON"
 		(shape bidirectional)
 		(at 379.73 181.61 0)
 		(fields_autoplaced yes)
@@ -4331,7 +4331,7 @@
 	)
 	(wire (pts (xy 316.23 207.01) (xy 321.31 207.01)) (stroke (width 0) (type default)) (uuid "83907349-ade6-4395-8238-ab59a303cbfa"))
 	(wire (pts (xy 321.31 207.01) (xy 321.31 204.47)) (stroke (width 0) (type default)) (uuid "32f68027-4d5a-4968-aa0e-90e702fb3666"))
-	(global_label "FET_SRC_COMMON"
+	(global_label "FET_BATT_P"
 		(shape bidirectional)
 		(at 321.31 204.47 0)
 		(fields_autoplaced yes)
@@ -4386,7 +4386,7 @@
 	)
 	(wire (pts (xy 367.03 207.01) (xy 372.11 207.01)) (stroke (width 0) (type default)) (uuid "a686d6a6-9414-482f-9889-aea6018c019d"))
 	(wire (pts (xy 372.11 207.01) (xy 372.11 204.47)) (stroke (width 0) (type default)) (uuid "f910f136-854d-4430-a27b-e857f66fc067"))
-	(global_label "FET_SRC_COMMON"
+	(global_label "BAT_SYS"
 		(shape bidirectional)
 		(at 372.11 204.47 0)
 		(fields_autoplaced yes)
@@ -4431,7 +4431,7 @@
 	)
 	(wire (pts (xy 295.91 222.25) (xy 290.83 222.25)) (stroke (width 0) (type default)) (uuid "02456815-f559-4b44-afd2-aaba8955c85a"))
 	(wire (pts (xy 290.83 222.25) (xy 290.83 219.71)) (stroke (width 0) (type default)) (uuid "bd18b55f-dba9-4b54-99f7-b441fcba47d9"))
-	(global_label "BAT_SYS"
+	(global_label "FET_BATT_P"
 		(shape bidirectional)
 		(at 290.83 219.71 0)
 		(fields_autoplaced yes)
@@ -4441,7 +4441,7 @@
 	)
 	(wire (pts (xy 316.23 222.25) (xy 321.31 222.25)) (stroke (width 0) (type default)) (uuid "8e25fb5d-bb95-47cc-ac05-c47a87139f59"))
 	(wire (pts (xy 321.31 222.25) (xy 321.31 219.71)) (stroke (width 0) (type default)) (uuid "61a679c9-57e5-47c7-90cc-dfd1c09df4f2"))
-	(global_label "FET_SRC_COMMON"
+	(global_label "FET_MID_COMMON"
 		(shape bidirectional)
 		(at 321.31 219.71 0)
 		(fields_autoplaced yes)
@@ -4486,7 +4486,7 @@
 	)
 	(wire (pts (xy 346.71 222.25) (xy 341.63 222.25)) (stroke (width 0) (type default)) (uuid "32df6d49-5ec7-4fd7-8c17-ece66f72a580"))
 	(wire (pts (xy 341.63 222.25) (xy 341.63 219.71)) (stroke (width 0) (type default)) (uuid "dd406fff-aed9-4a0a-bd3f-f63189e9261e"))
-	(global_label "FET_BATT_P"
+	(global_label "BAT_SYS"
 		(shape bidirectional)
 		(at 341.63 219.71 0)
 		(fields_autoplaced yes)
@@ -4496,7 +4496,7 @@
 	)
 	(wire (pts (xy 367.03 222.25) (xy 372.11 222.25)) (stroke (width 0) (type default)) (uuid "d6c9950d-9dc3-4058-a056-af60bcb9a91e"))
 	(wire (pts (xy 372.11 222.25) (xy 372.11 219.71)) (stroke (width 0) (type default)) (uuid "1b245f70-4fdb-4ac2-94af-6c05d47feccf"))
-	(global_label "FET_SRC_COMMON"
+	(global_label "FET_MID_COMMON"
 		(shape bidirectional)
 		(at 372.11 219.71 0)
 		(fields_autoplaced yes)

@@ -854,9 +854,9 @@ def make_parts() -> list[Part]:
     part(two, "NTC1", "10k NTC", "Resistor_SMD:R_0603_1608Metric", 214, 82, {"1": "TS", "2": "GND"}, "2S charger", "0603 NTC; place against or near the selected pack/cells.")
     part(two, "RTSBIAS", "10k 1%", "Resistor_SMD:R_0603_1608Metric", 214, 94, {"1": "REGN", "2": "TS"}, "2S charger", "TS bias; verify with selected NTC curve and BQ25887 TS thresholds.")
     part(two, "RSTAT_LED", "2.2k", "Resistor_SMD:R_0603_1608Metric", 254, 34, {"1": "REGN", "2": "LED_CHG_A"}, "2S charger", "Charge-status LED resistor.")
-    part(two, "DCHG", "LED green", "LED_SMD:LED_0603_1608Metric", 254, 46, {"1": "LED_CHG_A", "2": "CHG_STAT"}, "2S charger", "STAT open-drain LED.")
+    part(two, "DCHG", "LED green", "LED_SMD:LED_0603_1608Metric", 254, 46, {"1": "CHG_STAT", "2": "LED_CHG_A"}, "2S charger", "STAT open-drain LED. KiCad LED_0603_1608Metric pad 1 is the CATHODE, so the anode net must land on pad 2.")
     part(two, "RPGOOD_LED", "2.2k", "Resistor_SMD:R_0603_1608Metric", 254, 58, {"1": "REGN", "2": "LED_PGOOD_A"}, "2S charger", "Power-good LED resistor.")
-    part(two, "DPGOOD", "LED blue", "LED_SMD:LED_0603_1608Metric", 254, 70, {"1": "LED_PGOOD_A", "2": "PG_STAT"}, "2S charger", "PG open-drain LED.")
+    part(two, "DPGOOD", "LED blue", "LED_SMD:LED_0603_1608Metric", 254, 70, {"1": "PG_STAT", "2": "LED_PGOOD_A"}, "2S charger", "PG open-drain LED. KiCad LED_0603_1608Metric pad 1 is the CATHODE, so the anode net must land on pad 2.")
 
     part("CONN_3", "BT1", "18650 Cell 1 lower", "", 35, 125, {"1": "CELL1_P", "2": "BATT_RAW_N", "3": None}, "Battery", "Lower series cell holder: negative to raw pack negative, positive through F2 to CELL_MID.")
     part("CONN_3", "BT2", "18650 Cell 2 upper", "", 35, 150, {"1": "CELL2_P", "2": "CELL_MID", "3": None}, "Battery", "Upper series cell holder: negative to CELL_MID, positive through F3 to BATT_RAW_P.")
@@ -864,7 +864,7 @@ def make_parts() -> list[Part]:
     part(two, "F3", "PTC/fuse cell2", "Fuse:Fuse_1206_3216Metric", 75, 150, {"1": "CELL2_P", "2": "BATT_RAW_P"}, "Battery", "SMD cell fuse/PTC; place close to upper cell positive.")
     part("CONN_3", "J7", "2S balance input JST-XH side-entry", "Connector_JST:JST_XH_S3B-XH-A_1x03_P2.50mm_Horizontal", 115, 137,
          {"1": "BATT_RAW_N", "2": "CELL_MID", "3": "BATT_RAW_P"},
-         "Battery", "Top-edge side-entry 2S balance connector pinout: B-, cell midpoint, B+. Pin 3 is raw cell-stack positive before high-side protection FETs.")
+         "Battery", "REAR-edge side-entry 2S balance connector pinout: B-, cell midpoint, B+. Pin 3 is raw cell-stack positive before high-side protection FETs. r17: moved from the front edge to the rear edge and rotated 180 deg; the physical flip reverses pin order along X and corrects the r16 reversed-polarity fault. Netlist pin assignment is deliberately UNCHANGED - do not also swap pin 1/pin 3 nets or the fault returns.")
 
     part("BQ28Z610_DRZ", "U2", "BQ28Z610DRZR-R1", "Daughterboard:BQ28Z610_DRZ0012A_12SON_2.5x4mm_P0.5mm", 155, 137,
          {
@@ -888,15 +888,15 @@ def make_parts() -> list[Part]:
     part(two, "RDO_GATE", "100R", "Resistor_SMD:R_0603_1608Metric", 235, 125, {"1": "BQ_DSG", "2": "DO_GATE"}, "2S protection", "Small series gate resistor for BQ28Z610 discharge FET control.")
     part(two, "RCO_GATE", "100R", "Resistor_SMD:R_0603_1608Metric", 235, 137, {"1": "BQ_CHG", "2": "CO_GATE"}, "2S protection", "Small series gate resistor for BQ28Z610 charge FET control.")
     part("CSD18502Q5B", "QCHG", "CSD18502Q5B charge FET", "Daughterboard:CSD18502Q5B_DNK0008A_VSON-CLIP_5x6mm", 235, 158,
-         {"D": "BAT_SYS", "S": "FET_SRC_COMMON", "G": "CO_GATE"},
-         "2S protection", "High-side charge-blocking N-FET; drain on protected/system side, source at the common high-side FET node.")
+         {"S": "FET_BATT_P", "D": "FET_MID_COMMON", "G": "CO_GATE"},
+         "2S protection", "High-side charge-blocking N-FET; source faces the raw cell stack because CHG-off discharges the gate to VC2, drain joins the common mid node.")
     part("CSD18502Q5B", "QDSG", "CSD18502Q5B discharge FET", "Daughterboard:CSD18502Q5B_DNK0008A_VSON-CLIP_5x6mm", 275, 158,
-         {"D": "FET_BATT_P", "S": "FET_SRC_COMMON", "G": "DO_GATE"},
-         "2S protection", "High-side discharge-blocking N-FET; drain feeds the raw cell-stack positive through F4.")
-    part(two, "RCHG_GS", "10M", "Resistor_SMD:R_0603_1608Metric", 235, 173, {"1": "CO_GATE", "2": "FET_SRC_COMMON"}, "2S protection", "Gate-source bleed for the high-side charge FET.")
-    part(two, "RDSG_GS", "10M", "Resistor_SMD:R_0603_1608Metric", 275, 173, {"1": "DO_GATE", "2": "FET_SRC_COMMON"}, "2S protection", "Gate-source bleed for the high-side discharge FET.")
-    part(two, "CCHG_FET", "100nF 25V X7R", "Capacitor_SMD:C_0603_1608Metric", 235, 185, {"1": "BAT_SYS", "2": "FET_SRC_COMMON"}, "2S protection", "ESD/transient capacitor across charge FET per BQ28Z610 layout guidance.")
-    part(two, "CDSG_FET", "100nF 25V X7R", "Capacitor_SMD:C_0603_1608Metric", 275, 185, {"1": "FET_BATT_P", "2": "FET_SRC_COMMON"}, "2S protection", "ESD/transient capacitor across discharge FET per BQ28Z610 layout guidance.")
+         {"S": "BAT_SYS", "D": "FET_MID_COMMON", "G": "DO_GATE"},
+         "2S protection", "High-side discharge-blocking N-FET; source faces the protected system node because DSG-off discharges the gate to PACK, drain joins the common mid node.")
+    part(two, "RCHG_GS", "10M", "Resistor_SMD:R_0603_1608Metric", 235, 173, {"1": "CO_GATE", "2": "FET_BATT_P"}, "2S protection", "Gate-source bleed for the high-side charge FET; returns to that FET's own source (raw cell stack).")
+    part(two, "RDSG_GS", "10M", "Resistor_SMD:R_0603_1608Metric", 275, 173, {"1": "DO_GATE", "2": "BAT_SYS"}, "2S protection", "Gate-source bleed for the high-side discharge FET; returns to that FET's own source (protected system node).")
+    part(two, "CCHG_FET", "100nF 25V X7R", "Capacitor_SMD:C_0603_1608Metric", 235, 185, {"1": "FET_BATT_P", "2": "FET_MID_COMMON"}, "2S protection", "ESD/transient capacitor across charge FET per BQ28Z610 layout guidance.")
+    part(two, "CDSG_FET", "100nF 25V X7R", "Capacitor_SMD:C_0603_1608Metric", 275, 185, {"1": "BAT_SYS", "2": "FET_MID_COMMON"}, "2S protection", "ESD/transient capacitor across discharge FET per BQ28Z610 layout guidance.")
 
     part(two, "F4", "2A battery path fuse", "Fuse:Fuse_1206_3216Metric", 315, 137, {"1": "FET_BATT_P", "2": "BATT_RAW_P"}, "Battery", "SMD high-side pack fuse between protection FETs and raw cell-stack positive.")
     part("PWR_FLAG", "#FLG1", "PWR_FLAG", "", 315, 125, {"PWR": "BAT_SYS"}, "ERC", "Marks protected 2S system bus as powered for ERC.", in_bom=False, on_board=False)

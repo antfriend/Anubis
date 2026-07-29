@@ -52,8 +52,8 @@ flowchart LR
 - `GND`: protected board/load/charger negative after the current-sense resistor.
 - `CELL_MID`: lower cell positive and upper cell negative.
 - `BATT_RAW_P`: raw upper-cell positive / raw 2S pack positive.
-- `FET_SRC_COMMON`: common source node between the high-side charge/discharge FETs.
-- `FET_BATT_P`: battery-side drain of the high-side discharge FET.
+- `FET_MID_COMMON`: common **drain** node between the high-side charge/discharge FETs (r17; replaces the r16 `FET_SRC_COMMON` common-source node).
+- `FET_BATT_P`: raw-cell-side node after `F4`; the **source** of the high-side charge FET.
 - `BAT_SYS`: protected 2S system/charger positive bus feeding the charger BAT/SNS pins and both buck regulators.
 
 The two 18650 holders are now series-connected:
@@ -75,13 +75,22 @@ R14 BQ28Z610 support parts:
 - `R46`: 2 milliohm current-sense resistor in series between `BATT_RAW_N` and protected `GND`; Kelvin route both ends.
 - `R47`, `R48`, `C31`: 100 ohm / 100 nF `SRN`/`SRP` differential input filter. `SRP` now Kelvin-senses the raw-cell-negative side of `R46`; `SRN` senses the protected/system-ground side.
 - `R21`, `R22`: 100 ohm gate-drive series resistors from `BQ_DSG` and `BQ_CHG`.
-- `Q1`: `CSD18502Q5B` high-side charge FET, source pins 1-3 on `FET_SRC_COMMON`, gate pin 4 on `CO_GATE`, and drain pins 5-8 plus the main drain island on `BAT_SYS`.
-- `Q2`: `CSD18502Q5B` high-side discharge FET, source pins 1-3 on `FET_SRC_COMMON`, gate pin 4 on `DO_GATE`, and drain pins 5-8 plus the main drain island on `FET_BATT_P`.
-- `R49`, `R50`: 10 Mohm gate-source bleed resistors for the high-side FETs.
+- `Q1`: `CSD18502Q5B` high-side charge FET, source pins 1-3 on `FET_BATT_P`, gate pin 4 on `CO_GATE`, and drain pins 5-8 plus the main drain island on `FET_MID_COMMON`.
+- `Q2`: `CSD18502Q5B` high-side discharge FET, source pins 1-3 on `BAT_SYS`, gate pin 4 on `DO_GATE`, and drain pins 5-8 plus the main drain island on `FET_MID_COMMON`.
+- `R49`, `R50`: 10 Mohm gate-source bleed resistors, each returning to its own FET's source: `R50` `CO_GATE` to `FET_BATT_P`, `R49` `DO_GATE` to `BAT_SYS`.
 - `C32`, `C33`: 100 nF capacitors across the high-side FETs for ESD/transient handling per TI layout guidance.
 - `F4`: high-side battery path fuse between `FET_BATT_P` and `BATT_RAW_P`.
 
 R14 release note: the previous low-side dual-FET topology was removed because it was incompatible with the BQ28Z610 high-side gate driver. R14 keeps the corrected high-side topology and swaps Q1/Q2 to JLC-available `CSD18502Q5B` FETs using the project-local TI DNK/VSON-CLIP footprint. The charger `BAT/SNS` pins and the buck-regulator input bus are on `BAT_SYS`, so charge and discharge current pass through the high-side protection FETs and through `R46`.
+
+R17 release note (corrects a fault found on the fabricated r16 board): r14 through r16 wired Q1/Q2 **common-source**, with the shared node floating between the two FETs. That is wrong for the BQ28Z610. The device's two gate outputs are referenced to two *different* nodes -- SLUSAS3D 8.3.13: when drive is disabled "an internal circuit discharges `CHG` to `VC2` and `DSG` to `PACK`" -- so the two FETs must have two different sources, which forces a **common-drain** pair with each source facing its own outer terminal. With the r16 common-source wiring the shared node was undriven (both body diodes point outward from it), so off-state Vgs was undefined and the protection FETs were never properly commanded. r17 re-orients the pair:
+
+```
+FET_BATT_P --[Q1 S..D]-- FET_MID_COMMON --[Q2 D..S]-- BAT_SYS
+(raw cells, post-F4)     (common drain)              (protected system = U2 PACK sense)
+```
+
+Each gate bleed now returns to its own FET's source, so both FETs have a defined off state. Two further r16 field faults are corrected in the same spin: `D2`/`D3` had the anode on pad 1, but KiCad's `LED_0603_1608Metric` pad 1 is the **cathode**, so both status LEDs were reverse-biased; and `J7` moves from the front edge to the rear edge (rotated 180 deg), which reverses its pin order along X and corrects the reversed battery polarity. `J7`'s netlist pin assignment is deliberately unchanged -- swapping the pin 1 / pin 3 nets as well would reintroduce the fault.
 
 The protector does not set the normal charge current. The BQ25887 charger should be configured so USB-C charging is firmware-limited from 500 mA minimum up to 1.5 A maximum, with the hardware input-current limit also held at or below 1.5 A.
 
